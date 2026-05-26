@@ -7,7 +7,7 @@ def toarray(x):
     return torch.from_numpy(np.array(list(x)).astype(np.int32))
 
 def toarray_float(x):
-    return torch.from_numpy(np.array(list(x)).astype(np.float))
+    return torch.from_numpy(np.array(list(x)).astype(float))
 
 def get_neighbor_id(ent, h2t, t2h, A):
     hrt = []
