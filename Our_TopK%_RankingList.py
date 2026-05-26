@@ -61,7 +61,7 @@ def main():
     parser.add_argument('--dropout', type=float, default=0.2, help='dropout for EaGNN')
 
     # optimization
-    parser.add_argument('--max_epoch', default=1, help='max epochs')
+    parser.add_argument('--max_epoch', default=1, type=int, help='max epochs')
     parser.add_argument('--learning_rate', default=0.003, type=float, help='learning rate')
     parser.add_argument('--gama', default=0.5, type=float, help="margin parameter")
     parser.add_argument('--lam', default=0.1, type=float, help="trade-off parameter")
@@ -362,8 +362,8 @@ def test(args, dataset, device):
             output_pos_z1 = output_att[:, 1, :]
             output_pos_loss = args.lam * torch.norm(output_pos_z0 - output_pos_z1, p=2, dim=1)
             loss = pos_loss + output_pos_loss
-            all_loss += loss
-            all_label += labels
+            all_loss.extend(loss.cpu().numpy())
+            all_label.extend(labels.cpu().numpy())
 
             # print('{}th test data'.format(i))
             logging.info('[Test] Evaluation on %d batch of Original graph' % i)
