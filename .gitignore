@@ -1,0 +1,7 @@
+papers
+docs
+__pycache__
+checkpoints
+logs
+*.log
+results
