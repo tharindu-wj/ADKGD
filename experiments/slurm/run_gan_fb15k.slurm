@@ -20,6 +20,8 @@
 #SBATCH --mem=16G
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:tesla_v100:1
+# Explicit account (DeepThought requires this for the gpu partition).
+#SBATCH --account=cse
 
 set -eo pipefail
 
