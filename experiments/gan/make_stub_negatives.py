@@ -6,7 +6,8 @@ prove the load_gan_negatives loader and downstream plumbing works end-to-end
 BEFORE the real GAN exists.
 
 Usage from the repo root:
-    python experiments/gan/make_stub_negatives.py --dataset FB15K-mini --count 5000
+    python experiments/gan/make_stub_negatives.py                              # defaults: --dataset dummy_kg --count 200
+    python experiments/gan/make_stub_negatives.py --dataset FB15K --count 400000
 
 Writes:
     data/<dataset>/gan_negatives_stub.tsv
@@ -26,10 +27,10 @@ from pathlib import Path
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--dataset", default="FB15K-mini",
-                    help="dataset folder under data/")
-    ap.add_argument("--count", type=int, default=5000,
-                    help="how many stub anomalous triples to emit")
+    ap.add_argument("--dataset", default="dummy_kg",
+                    help="dataset folder under data/ (default: dummy_kg — the tiny 18-fact KG for fast iteration)")
+    ap.add_argument("--count", type=int, default=200,
+                    help="how many stub anomalous triples to emit (200 is plenty for dummy_kg; bump to ~400000 for full FB15K)")
     ap.add_argument("--out", default=None,
                     help="output path; defaults to data/<dataset>/gan_negatives_stub.tsv")
     args = ap.parse_args()

@@ -206,8 +206,9 @@ The CPU `general` partition is much more available than GPU, but ADKGD on
 FB15K-237 at batch 256 is genuinely slow on CPU (paper reports ~13 min/epoch
 on V100; expect 5–10× slower on CPU). It's useful for:
 
-- **Smoke-testing** the full pipeline on `FB15K-mini` (the 2,000-triple subset
-  committed to the repo); a single epoch finishes in ~1.5 min.
+- **Smoke-testing** the full pipeline on `dummy_kg` (the 18-fact toy KG replicated
+  to 1,080 triples; data/dummy_kg/{train,valid,test}.txt). A single epoch finishes
+  in well under a minute.
 - Sanity-checking your env without burning a scarce V100 slot.
 
 To make a CPU variant, copy `run_baseline_fb15k.slurm` and:
@@ -216,7 +217,7 @@ To make a CPU variant, copy `run_baseline_fb15k.slurm` and:
 - Delete `#SBATCH --gres=gpu:tesla_v100:1`
 - Remove the `python -c "import torch; assert torch.cuda.is_available() ..."` pre-flight (it would fail)
 - Install the CPU wheel into the env: `pip install torch --index-url https://download.pytorch.org/whl/cpu`
-- Optionally swap `--dataset FB15K` for `--dataset FB15K-mini` for a fast sanity test
+- Optionally swap `--dataset FB15K` for `--dataset dummy_kg` for a fast sanity test (the older `FB15K-mini` subset still works too if you prefer ~2,600 triples)
 
 `run_experiment.py` already sets OMP/MKL thread defaults that prevent the CPU
 torch from segfaulting on multi-core nodes.

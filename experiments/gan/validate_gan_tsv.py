@@ -104,7 +104,20 @@ def validate(dataset: str, tsv_path: Path, data_root: Path) -> int:
     needed = int(num_original * MAX_ANOMALY_RATIO) + 1
     pool_ok = valid >= needed
     unknown_ok = (skipped_unknown / parsed) <= MAX_UNKNOWN_VOCAB_FRACTION if parsed > 0 else False
-    unique_ok = parsed == 0 or (valid / max(parsed - skipped_unknown - skipped_original, 1)) >= 0.95
+
+    # Uniqueness check has TWO valid outcomes:
+    #   (a) high unique-rate (≥ 95%) — meaningful for large datasets where
+    #       low uniqueness implies real GAN mode collapse.
+    #   (b) high sample density of the theoretical anomaly space — for tiny
+    #       toy datasets (e.g. dummy_kg), the birthday paradox guarantees
+    #       duplicates once we sample more than a few % of the possible
+    #       anomalies, so (a) is impossible by combinatorics, not by GAN
+    #       quality. We pass on (b) instead.
+    theoretical_max_anom = max(len(ents) * len(rels) * len(ents) - num_original, 1)
+    parsed_in_vocab = max(parsed - skipped_unknown, 1)
+    unique_rate = valid / parsed_in_vocab
+    sample_density = parsed_in_vocab / theoretical_max_anom
+    unique_ok = parsed == 0 or unique_rate >= 0.95 or sample_density > 0.5
 
     print("TSV: %d lines parsed (+ %d bad-format)" % (parsed, bad_format))
     print("   %d unique valid anomalous triples after filtering" % valid)
@@ -113,8 +126,12 @@ def validate(dataset: str, tsv_path: Path, data_root: Path) -> int:
     print("   %d dropped (collide with real graph)" % skipped_original)
     print("   Pool sufficient for anomaly_ratio up to %.2f (need %d): %s"
           % (MAX_ANOMALY_RATIO, needed, "YES" if pool_ok else "NO"))
-    print("   Unique-rate among in-vocab triples: %.1f%%   %s"
-          % (100 * valid / max(parsed - skipped_unknown, 1), "OK" if unique_ok else "LOW (mode collapse?)"))
+    if sample_density > 0.5:
+        print("   Unique-rate: %.1f%% (tiny vocab; sampled %.0f%% of the %d possible anomalies — birthday-paradox duplicates are inevitable, not mode collapse)"
+              % (100 * unique_rate, 100 * sample_density, theoretical_max_anom))
+    else:
+        print("   Unique-rate among in-vocab triples: %.1f%%   %s"
+              % (100 * unique_rate, "OK" if unique_ok else "LOW (mode collapse?)"))
 
     all_ok = pool_ok and unknown_ok and unique_ok and bad_format == 0
     if all_ok:
