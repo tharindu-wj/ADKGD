@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import random
 import torch
 import math
@@ -7,6 +8,10 @@ from random import shuffle
 
 class Reader:
     def __init__(self, args, path):
+        # Stored so get_data() can consult args.neg_source / args.gan_path
+        # (path to the KGSAGE .pt checkpoint when neg_source='gan') without changing
+        # its signature. Optional flags use getattr() below.
+        self.args = args
 
         self.ent2id = dict()
         self.rel2id = dict()
@@ -28,10 +33,6 @@ class Reader:
         self.A = {}
         #读取所有的数据，从train.txt， valid.txt, test.txt
         self.read_triples()
-        # if self.path == args.data_dir_YAGO or self.path == args.data_dir_NELL or self.path == args.data_dir_DBPEDIA:
-        #     self.read_triples_yago3()
-        # else:
-        #     self.read_triples()
         # 存储原始三元组的集合，用于快速检查是否存在某个特定的三元组
         self.triple_ori_set = set(self.triples)
         # 记录原始三元组的数量
@@ -130,45 +131,6 @@ class Reader:
                     temp = self.t2h[tail_id]
                     temp.add(head_id)
                     self.t2h[tail_id] = temp
-
-        print("Read end!")
-        return self.triples
-
-    def read_triples_yago3(self):
-        print('Read begin!')
-        for file in ["train", "valid", "test"]:
-            with open(self.path + '/' + file + ".txt", "r", encoding="utf-8") as f:
-                train = f.readlines()
-                # train_ = set({})
-                for i in range(len(train)):
-                    x = train[i].split()
-                    x_ = tuple(x)
-                    head, rel, tail = x_[0], x_[1], x_[2]
-
-                    head_id = self.get_add_ent_id(head)
-                    rel_id = self.get_add_rel_id(rel)
-                    tail_id = self.get_add_ent_id(tail)
-
-                    self.triples.append((head_id, rel_id, tail_id))
-                    # (head_id, tail_id) 在字典中只有一个唯一对应的关系 rel_id
-                    self.A[(head_id, tail_id)] = rel_id
-                    # self.A[head_id][tail_id] = rel_id
-
-                    # generate h2t
-                    if not head_id in self.h2t.keys():
-                        self.h2t[head_id] = set()
-                    temp = self.h2t[head_id]
-                    temp.add(tail_id)
-                    self.h2t[head_id] = temp
-
-                    # generate t2h
-                    if not tail_id in self.t2h.keys():
-                        self.t2h[tail_id] = set()
-                    temp = self.t2h[tail_id]
-                    temp.add(head_id)
-                    self.t2h[tail_id] = temp
-
-                del (train)
 
         print("Read end!")
         return self.triples
@@ -272,11 +234,137 @@ class Reader:
         bp_triples_label = self.bp_triples_label
         labels = [bp_triples_label[i][1] for i in range(len(bp_triples_label))]
         bp_triples = [bp_triples_label[i][0] for i in range(len(bp_triples_label))]
-        bn_triples = self.generate_anomalous_triples(bp_triples)
+
+        # Phase B: source of training-time negatives (set C).
+        # 'gan'    -> in-process call to the KGSAGE generator (loaded once from a
+        #             .pt checkpoint at --gan_path). Same masked-decode + retry +
+        #             masked decode, but returned in-process instead of via a file.
+        #             Used uniformly for both real positives AND injected eval
+        #             anomalies in bp_triples_label.
+        # 'random' -> ADKGD's original per-positive random corruption (default).
+        neg_source = getattr(self.args, 'neg_source', 'random')
+        if neg_source == 'gan':
+            bn_triples = self._gan_negatives(bp_triples)
+        else:
+            bn_triples = self.generate_anomalous_triples(bp_triples)
+
         # 前一半是正常数据，后一半是异常数据
         all_triples = bp_triples + bn_triples
 
         return self.toarray(all_triples), self.toarray(labels)
+
+    def _gan_negatives(self, pos_triples, replace_nulls=True):
+        """Generate one negative per positive by running the GAN in-process.
+
+        Treats every entry in `pos_triples` uniformly -- real positives AND
+        injected eval anomalies. The generator picks a head/tail slot by
+        corruptibility, decodes under type-pool + known-true + self masks,
+        and redraws up to a bound; rows that STILL fail come back as null
+        corruptions (the original triple), flagged in stats['null_indices'].
+
+        A null is a real fact: training on it as a 'negative' injects label
+        noise, so for the TRAINING role (replace_nulls=True) null rows are
+        replaced with ADKGD's own random corruption, counted and logged. The
+        eval role (inject_anomaly) passes replace_nulls=False and filters
+        nulls itself via the genuine-corruption check.
+        """
+        if not hasattr(self, '_gan_payload') or self._gan_payload is None:
+            self._load_gan_model()
+
+        from kgsage_bridge.bridge import generate, render_stats
+
+        negatives, stats = generate(
+            pos_triples,
+            payload=self._gan_payload,
+            adkgd_id2ent=self.id2ent,
+            adkgd_id2rel=self.id2rel,
+            adkgd_ent2id=self.ent2id,
+            adkgd_rel2id=self.rel2id,
+            rng=self._gan_rng,
+        )
+        print('[GAN] ' + render_stats(stats))
+        null_idx = stats.get('null_indices', [])
+        if replace_nulls and null_idx:
+            fillers = self.generate_anomalous_triples(
+                [pos_triples[i] for i in null_idx])
+            for j, i in enumerate(null_idx):
+                negatives[i] = fillers[j]
+            print('[GAN] %d null corruptions replaced with random fallbacks '
+                  'for the training role' % len(null_idx))
+        self._print_pair_preview('GAN', pos_triples, negatives)
+        return negatives
+
+    def _print_pair_preview(self, tag, pos_triples, negatives):
+        """Log a capped preview of (positive -> negative) pairs."""
+        _preview = int(os.environ.get('GAN_PAIR_PREVIEW', '20'))
+        n = len(pos_triples)
+        print('[%s] %d (positive -> negative) pairs (showing first %d):'
+              % (tag, n, min(_preview, n)))
+        for i in range(min(_preview, n)):
+            ph, pr, pt = pos_triples[i]
+            nh, nr, nt = negatives[i]
+            moved = []
+            if ph != nh:
+                moved.append('head')
+            if pr != nr:
+                moved.append('relation')
+            if pt != nt:
+                moved.append('tail')
+            moved_str = ','.join(moved) if moved else 'NONE'
+            print('  pos: (%s, %s, %s)'
+                  % (self.id2ent[ph], self.id2rel[pr], self.id2ent[pt]))
+            print('  neg: (%s, %s, %s)  [moved: %s]'
+                  % (self.id2ent[nh], self.id2rel[nr], self.id2ent[nt], moved_str))
+        if n > _preview:
+            print('  ... (%d more pairs suppressed; set GAN_PAIR_PREVIEW to raise)'
+                  % (n - _preview))
+
+    def _load_gan_model(self):
+        """Load the GAN checkpoint once, cache on self.
+
+        The checkpoint bundles the generator weights + the GAN's vocab maps +
+        the set of real triples, so we don't need to rebuild the KG here.
+
+        FileNotFoundError on a bad path is intentionally NOT caught -- when
+        --neg_source=gan is requested, a missing checkpoint should fail loudly.
+        """
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        # Put experiments/ on sys.path so `from kgsage_bridge.bridge import ...` works.
+        # See experiments/README.md for the bridge architecture rationale.
+        _experiments_dir = _Path(__file__).resolve().parent / 'experiments'
+        # Appended, not inserted: nothing here should outrank site-packages.
+        # (Note this does NOT protect against a stale `experiments/kgsage/`
+        # directory -- see the namespace-shadowing guard in the bridge.)
+        if str(_experiments_dir) not in _sys.path:
+            _sys.path.append(str(_experiments_dir))
+
+        from kgsage_bridge.bridge import load_gan
+        import numpy as _np
+
+        # Checkpoints are produced by the SEPARATE KGSAGE repo and handed over as
+        # files -- nothing in this repo trains a generator. KGSAGE_CKPT wins so a
+        # SLURM job can point at scratch without editing the launcher.
+        ckpt_path = os.environ.get('KGSAGE_CKPT') or getattr(self.args, 'gan_path', None)
+        if not ckpt_path:
+            raise ValueError(
+                'No KGSAGE checkpoint given. Pass --gan_path <file.pt> or set '
+                'KGSAGE_CKPT. Checkpoints come from the KGSAGE repo and are '
+                'copied into artifacts/kgsage/ here.')
+        if not os.path.isfile(ckpt_path):
+            raise FileNotFoundError(
+                'KGSAGE checkpoint not found: %s\n'
+                'Train one in the KGSAGE repo, then copy it in:\n'
+                '    python -m kgsage.gan.train --data data/WN18RR \\\n'
+                '        --out outputs/checkpoints/run_wn18rr_s0.pt\n'
+                '    cp <kgsage>/outputs/checkpoints/run_wn18rr_s0.pt artifacts/kgsage/'
+                % ckpt_path)
+        self._gan_payload = load_gan(ckpt_path)
+        seed = getattr(self.args, 'seed', 0)
+        self._gan_rng = _np.random.default_rng(seed)
+        print('[GAN] loaded checkpoint from %s (device=%s)'
+              % (ckpt_path, self._gan_payload['device']))
 
     def get_data_test(self):
         bp_triples_label = self.bp_triples_label
@@ -303,17 +391,45 @@ class Reader:
         # else:
         #
 
-        # idx = random.sample(range(0, self.num_original_triples - 1), num_anomalies)
-        # 随机选择一半的异常数量对应的索引，用于从原始三元组中选择三元组来生成第一部分的异常数据
-        idx = random.sample(range(0, self.num_original_triples - 1), self.num_anomalies // 2)
-        # 根据选定的索引从原始数据集中抽取三元组
-        selected_triples = [original_triples[idx[i]] for i in range(len(idx))]
-        # 生成anomalies。
-        # 生成anomalies1：用已有的entities对数据替换
-        # 生成anomalies2：从整个实体和关系空间中随机生成另一半的异常三元组，确保这些异常三元组不在原始数据集中
-        # anomalies1和anomalies2的数据之间，它们之间可能有重复的
-        anomalies = self.generate_anomalous_triples(selected_triples) \
-                    + self.generate_anomalous_triples_2(self.num_anomalies // 2)
+        # Source of the INJECTED eval anomalies (the label-1 triples ADKGD detects,
+        # and -- because ADKGD is transductive -- the anomalies polluting the graph).
+        #   'random' -> ADKGD original: half single-slot corruption of real triples,
+        #               half fully-random triples.
+        #   'gan'    -> KGSAGE corruptions. We OVERSAMPLE and keep only GENUINE
+        #               corruptions (differ from their source) so no real triple is
+        #               mislabelled as an anomaly -- the single-shot generator keeps
+        #               the original triple on a self-loop/collision (used_original).
+        test_source = getattr(args, 'test_anomaly_source', 'random')
+        if test_source == 'gan':
+            over = min(self.num_original_triples, int(self.num_anomalies * 1.5) + 1)
+            idx = random.sample(range(0, self.num_original_triples), over)
+            selected_triples = [original_triples[i] for i in idx]
+            # eval role: nulls are filtered below by the genuine-corruption
+            # check, so no random replacement (would blur attribution)
+            corrupted = self._gan_negatives(selected_triples, replace_nulls=False)
+            anomalies = [c for src, c in zip(selected_triples, corrupted)
+                         if tuple(c) != tuple(src)][:self.num_anomalies]
+            if len(anomalies) < self.num_anomalies:
+                print('[test-anomaly %s] only %d/%d genuine anomalies '
+                      '(generator collided on the rest)'
+                      % (test_source, len(anomalies), self.num_anomalies))
+        else:
+            # 随机选择一半的异常数量对应的索引，从原始三元组中生成第一部分异常数据
+            idx = random.sample(range(0, self.num_original_triples - 1), self.num_anomalies // 2)
+            selected_triples = [original_triples[idx[i]] for i in range(len(idx))]
+            # anomalies1：用已有的entities替换；anomalies2：从整个空间随机生成另一半
+            anomalies = self.generate_anomalous_triples(selected_triples) \
+                        + self.generate_anomalous_triples_2(self.num_anomalies // 2)
+
+        # B0 hygiene: the realised anomaly count can be smaller than requested
+        # (gan-branch shortfall after the genuine-corruption filter; random
+        # branch's //2 rounding). test() uses num_anomalies as the recall
+        # denominator and max_top_k, so keep it in sync with reality.
+        if len(anomalies) != self.num_anomalies:
+            print('[inject_anomaly] realised %d anomalies (requested %d) -- '
+                  'num_anomalies updated' % (len(anomalies), self.num_anomalies))
+        self.num_anomalies = len(anomalies)
+        args.num_anomaly_num = self.num_anomalies
 
         triple_label = [(original_triples[i], 0) for i in range(len(original_triples))]
         anomaly_label = [(anomalies[i], 1) for i in range(len(anomalies))]
