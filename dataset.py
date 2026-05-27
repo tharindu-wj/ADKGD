@@ -7,6 +7,9 @@ from random import shuffle
 
 class Reader:
     def __init__(self, args, path):
+        # Stored so get_data() can consult args.neg_source / args.gan_neg_path
+        # without changing its signature. Optional flags use getattr() below.
+        self.args = args
 
         self.ent2id = dict()
         self.rel2id = dict()
@@ -272,11 +275,70 @@ class Reader:
         bp_triples_label = self.bp_triples_label
         labels = [bp_triples_label[i][1] for i in range(len(bp_triples_label))]
         bp_triples = [bp_triples_label[i][0] for i in range(len(bp_triples_label))]
-        bn_triples = self.generate_anomalous_triples(bp_triples)
+
+        # Phase B: source of training-time negatives (set C).
+        # 'gan'    -> sample from an externally-generated TSV pool.
+        # 'random' -> ADKGD's original per-positive random corruption (default).
+        neg_source = getattr(self.args, 'neg_source', 'random')
+        if neg_source == 'gan':
+            gan_path = getattr(self.args, 'gan_neg_path', 'data/FB15K/gan_negatives.tsv')
+            bn_triples = self.load_gan_negatives(gan_path, n=len(bp_triples))
+        else:
+            bn_triples = self.generate_anomalous_triples(bp_triples)
+
         # 前一半是正常数据，后一半是异常数据
         all_triples = bp_triples + bn_triples
 
         return self.toarray(all_triples), self.toarray(labels)
+
+    def load_gan_negatives(self, path, n):
+        """Load GAN-generated string triples from `path` and return n sampled (h,r,t) ID tuples.
+
+        Contract (see Phase B plan):
+          * UTF-8 TSV, one triple per line, tab-separated: head<TAB>rel<TAB>tail
+          * Strings must match the names in data/FB15K/{train,valid,test}.txt
+            (we map them through ent2id/rel2id; lines with unknown vocab are dropped).
+          * Triples that already exist in the real graph are dropped (false-negative
+            protection -- the loss would otherwise push real facts' scores UP).
+          * If the surviving pool has >= n triples, sample n WITHOUT replacement.
+            Otherwise warn loudly and sample WITH replacement.
+        """
+        pool = []
+        skipped_unknown = 0
+        skipped_original = 0
+        try:
+            with open(path, encoding='utf-8') as f:
+                for raw in f:
+                    parts = raw.strip().split('\t')
+                    if len(parts) != 3:
+                        continue
+                    h, r, t = parts
+                    if h not in self.ent2id or r not in self.rel2id or t not in self.ent2id:
+                        skipped_unknown += 1
+                        continue
+                    triple = (self.ent2id[h], self.rel2id[r], self.ent2id[t])
+                    if triple in self.triple_ori_set:
+                        skipped_original += 1
+                        continue
+                    pool.append(triple)
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                "GAN negatives file not found: %s\n"
+                "Either generate it from your GAN pipeline, or pass --gan_neg_path "
+                "explicitly, or run with --neg_source random for the baseline." % path
+            )
+        print('[GAN loader] pool: %d valid | skipped: %d unknown-vocab, %d collide-with-original | sampling %d'
+              % (len(pool), skipped_unknown, skipped_original, n))
+        if len(pool) == 0:
+            raise RuntimeError(
+                "GAN negatives pool is empty after filtering -- nothing to train on. "
+                "Inspect %s and the validator output." % path
+            )
+        if len(pool) >= n:
+            return random.sample(pool, n)
+        print('[GAN loader] WARNING: pool (%d) < required (%d) -- sampling WITH REPLACEMENT'
+              % (len(pool), n))
+        return random.choices(pool, k=n)
 
     def get_data_test(self):
         bp_triples_label = self.bp_triples_label

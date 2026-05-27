@@ -91,6 +91,11 @@ def main() -> int:
     ap.add_argument("--max_epoch", type=int, default=1)
     ap.add_argument("--model", default="ADKGD", help="label written into output filenames")
     ap.add_argument("--script", default="Our_TopK%_RankingList.py", help="ADKGD entry-point script")
+    # Phase B (GAN integration). Forwarded verbatim to both train and test subprocesses.
+    ap.add_argument("--neg_source", default="random", choices=["random", "gan"],
+                    help="source of training-time negatives; 'random' = baseline (default)")
+    ap.add_argument("--gan_neg_path", default="data/FB15K/gan_negatives.tsv",
+                    help="path to the GAN-produced negatives TSV (used when --neg_source=gan)")
     args = ap.parse_args()
 
     # This file lives at experiments/run_experiment.py; the repo root (where
@@ -116,6 +121,11 @@ def main() -> int:
     py = sys.executable                            # use the same interpreter we were launched with
     adkgd_script = project_root / args.script      # absolute path to ADKGD's entry script
 
+    # Phase B flags get appended to BOTH the train and test invocations so the
+    # Reader sees the same neg_source in either mode (Reader is rebuilt fresh
+    # in each subprocess).
+    gan_args = ["--neg_source", args.neg_source, "--gan_neg_path", args.gan_neg_path]
+
     # Train -- cwd=project_root so ADKGD's "./data/..." / "./checkpoints/..." resolve correctly.
     _run([
         py, str(adkgd_script),
@@ -125,6 +135,7 @@ def main() -> int:
         "--anomaly_ratio", str(args.anomaly_ratio),
         "--seed", str(args.seed),
         "--max_epoch", str(args.max_epoch),
+        *gan_args,
     ], cwd=project_root)
 
     # Test (same cwd reasoning).
@@ -135,6 +146,7 @@ def main() -> int:
         "--mode", "test",
         "--anomaly_ratio", str(args.anomaly_ratio),
         "--seed", str(args.seed),
+        *gan_args,
     ], cwd=project_root)
 
     ratio = args.anomaly_ratio
