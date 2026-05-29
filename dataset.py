@@ -7,8 +7,8 @@ from random import shuffle
 
 class Reader:
     def __init__(self, args, path):
-        # Stored so get_data() can consult args.neg_source / args.gan_neg_path
-        # without changing its signature. Optional flags use getattr() below.
+        # Stored so get_data() can consult args.neg_source / args.gan_path without
+        # changing its signature. Optional flags use getattr() below.
         self.args = args
 
         self.ent2id = dict()
@@ -277,12 +277,13 @@ class Reader:
         bp_triples = [bp_triples_label[i][0] for i in range(len(bp_triples_label))]
 
         # Phase B: source of training-time negatives (set C).
-        # 'gan'    -> sample from an externally-generated TSV pool.
+        # 'gan'    -> per-positive lookup into a kggan-produced (orig -> neg)
+        #             six-column TSV. Preserves the baseline's 2-of-3-shared
+        #             structure: slot choice is baked in upstream by kggan.
         # 'random' -> ADKGD's original per-positive random corruption (default).
         neg_source = getattr(self.args, 'neg_source', 'random')
         if neg_source == 'gan':
-            gan_path = getattr(self.args, 'gan_neg_path', 'data/FB15K/gan_negatives.tsv')
-            bn_triples = self.load_gan_negatives(gan_path, n=len(bp_triples))
+            bn_triples = self._gan_negatives(bp_triples)
         else:
             bn_triples = self.generate_anomalous_triples(bp_triples)
 
@@ -291,54 +292,63 @@ class Reader:
 
         return self.toarray(all_triples), self.toarray(labels)
 
-    def load_gan_negatives(self, path, n):
-        """Load GAN-generated string triples from `path` and return n sampled (h,r,t) ID tuples.
+    def _gan_negatives(self, pos_triples):
+        """Look up one pre-generated negative per positive from kggan's TSV.
 
-        Contract (see Phase B plan):
-          * UTF-8 TSV, one triple per line, tab-separated: head<TAB>rel<TAB>tail
-          * Strings must match the names in data/FB15K/{train,valid,test}.txt
-            (we map them through ent2id/rel2id; lines with unknown vocab are dropped).
-          * Triples that already exist in the real graph are dropped (false-negative
-            protection -- the loss would otherwise push real facts' scores UP).
-          * If the surviving pool has >= n triples, sample n WITHOUT replacement.
-            Otherwise warn loudly and sample WITH replacement.
+        Contract:
+          * Six-column UTF-8 TSV (one row per unique real triple):
+                orig_h<TAB>orig_r<TAB>orig_t<TAB>neg_h<TAB>neg_r<TAB>neg_t
+            The negative differs from the original at exactly one of the three
+            slots; the slot choice is made on the kggan side at generation time
+            and is NOT stored on disk.
+          * Loaded once and cached on self._gan_table.
+          * Per-positive fallback to generate_anomalous_triples([(h,r,t)]) when:
+              - the positive's string key is absent from the table, OR
+              - the returned negative contains an entity/relation we don't have
+                an id for (vocab drift between the two repos).
+          * The injected eval anomalies in bp_triples_label will fall back by
+            construction -- kggan only sees real positives. That's expected.
         """
-        pool = []
-        skipped_unknown = 0
-        skipped_original = 0
-        try:
-            with open(path, encoding='utf-8') as f:
-                for raw in f:
-                    parts = raw.strip().split('\t')
-                    if len(parts) != 3:
-                        continue
-                    h, r, t = parts
-                    if h not in self.ent2id or r not in self.rel2id or t not in self.ent2id:
-                        skipped_unknown += 1
-                        continue
-                    triple = (self.ent2id[h], self.rel2id[r], self.ent2id[t])
-                    if triple in self.triple_ori_set:
-                        skipped_original += 1
-                        continue
-                    pool.append(triple)
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                "GAN negatives file not found: %s\n"
-                "Either generate it from your GAN pipeline, or pass --gan_neg_path "
-                "explicitly, or run with --neg_source random for the baseline." % path
-            )
-        print('[GAN loader] pool: %d valid | skipped: %d unknown-vocab, %d collide-with-original | sampling %d'
-              % (len(pool), skipped_unknown, skipped_original, n))
-        if len(pool) == 0:
-            raise RuntimeError(
-                "GAN negatives pool is empty after filtering -- nothing to train on. "
-                "Inspect %s and the validator output." % path
-            )
-        if len(pool) >= n:
-            return random.sample(pool, n)
-        print('[GAN loader] WARNING: pool (%d) < required (%d) -- sampling WITH REPLACEMENT'
-              % (len(pool), n))
-        return random.choices(pool, k=n)
+        if not hasattr(self, '_gan_table') or self._gan_table is None:
+            path = getattr(self.args, 'gan_path', 'data/FB15K/gan_negatives.tsv')
+            self._gan_table = self._load_gan_table(path)
+
+        out, hits, fallbacks = [], 0, 0
+        for h, r, t in pos_triples:
+            key = (self.id2ent[h], self.id2rel[r], self.id2ent[t])
+            neg_str = self._gan_table.get(key)
+            if neg_str is not None:
+                try:
+                    out.append((self.ent2id[neg_str[0]],
+                                self.rel2id[neg_str[1]],
+                                self.ent2id[neg_str[2]]))
+                    hits += 1
+                    continue
+                except KeyError:
+                    pass  # unknown vocab in value -> fall through to fallback
+            fallbacks += 1
+            out.extend(self.generate_anomalous_triples([(h, r, t)]))
+        print('[GAN] hits: %d / %d, fallbacks: %d'
+              % (hits, len(pos_triples), fallbacks))
+        return out
+
+    def _load_gan_table(self, path):
+        """Read kggan's six-column TSV into a dict keyed on the original string triple.
+
+        FileNotFoundError is intentionally NOT caught -- a missing path when
+        --neg_source=gan is requested should fail loudly, not silently fall back
+        to random.
+        """
+        table = {}
+        with open(path, encoding='utf-8') as f:
+            for raw in f:
+                parts = raw.rstrip('\n').split('\t')
+                if len(parts) != 6:
+                    continue
+                orig_h, orig_r, orig_t, neg_h, neg_r, neg_t = parts
+                table[(orig_h, orig_r, orig_t)] = (neg_h, neg_r, neg_t)
+        print('[GAN] loaded %d entries from %s' % (len(table), path))
+        return table
 
     def get_data_test(self):
         bp_triples_label = self.bp_triples_label

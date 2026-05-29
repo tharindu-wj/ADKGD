@@ -225,7 +225,7 @@ torch from segfaulting on multi-core nodes.
 ## What this baseline row feeds into
 
 This document covers Phase A — establishing the ADKGD baseline. The eventual
-Phase B (replace the random training negatives with a GAN-generated pool)
-re-uses the same slurm + `run_experiment.py` setup with one extra flag pair
-(`--neg_source gan --gan_neg_path ...`), so once the Phase A row is in your
+Phase B (replace the random training negatives with GAN-generated ones from
+kggan) re-uses the same slurm + `run_experiment.py` setup with one extra flag
+pair (`--neg_source gan --gan_path ...`), so once the Phase A row is in your
 table the GAN row drops in alongside it without further infrastructure work.

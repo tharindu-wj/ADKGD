@@ -3,10 +3,9 @@
 # Sibling of run_baseline_fb15k.slurm — same everything except --neg_source gan
 # and a different --job-name so the .out.txt files don't collide.
 #
-# Before submitting:
-#   1. data/FB15K/gan_negatives.tsv must exist (produced by your GAN pipeline).
-#   2. python experiments/gan/validate_gan_tsv.py --dataset FB15K \
-#          --tsv data/FB15K/gan_negatives.tsv      # should print "OK to use."
+# Before submitting: data/FB15K/gan_negatives.tsv must exist (produced by kggan).
+# Six-column TSV: orig_h<TAB>orig_r<TAB>orig_t<TAB>neg_h<TAB>neg_r<TAB>neg_t,
+# one row per unique real triple.
 #
 #   sbatch experiments/slurm/run_gan_fb15k.slurm
 
@@ -62,10 +61,10 @@ cd "$PROJECT_DIR"
 GAN_TSV="data/FB15K/gan_negatives.tsv"
 if [[ ! -f "$GAN_TSV" ]]; then
     echo "ERROR: $GAN_TSV not found at $PROJECT_DIR/$GAN_TSV" >&2
-    echo "Generate it from your GAN pipeline first, then retry." >&2
+    echo "Generate it from kggan first, then retry." >&2
     exit 1
 fi
-echo "Using GAN negatives: $GAN_TSV ($(wc -l < "$GAN_TSV") lines)"
+echo "Using GAN negatives: $GAN_TSV ($(wc -l < "$GAN_TSV") rows = unique positives covered)"
 
 # Change experiment parameters here, never inside this file's SLURM header.
 # Use $PY (absolute env python) so subprocesses spawned by run_experiment.py via
@@ -76,6 +75,6 @@ $PY experiments/run_experiment.py \
     --seed 0 \
     --max_epoch 1 \
     --neg_source gan \
-    --gan_neg_path "$GAN_TSV"
+    --gan_path "$GAN_TSV"
 
 echo "Done $(date)"
