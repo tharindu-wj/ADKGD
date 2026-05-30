@@ -34,7 +34,7 @@ CONDA_ENV="$HOME/envs/adkgd"
 # ---- Training knobs (override per submission via env vars) ----
 DATASET_DIR="${DATASET_DIR:-data/FB15K}"
 CKPT_PATH="${CKPT_PATH:-experiments/gan/outputs/checkpoints/fb15k.pt}"
-EPOCHS="${EPOCHS:-400}"
+EPOCHS="${EPOCHS:-100}"
 # 512 is a safe V100 default — fits comfortably in 32GB HBM2 and gives much
 # better GPU utilisation than train.py's CPU-friendly default of 256. Bump
 # to 1024 if you want to squeeze more throughput; back off to 256 if the

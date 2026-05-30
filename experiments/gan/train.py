@@ -50,6 +50,8 @@ import argparse
 import os
 import random
 import sys
+import time
+from datetime import datetime
 
 import torch
 import torch.nn.functional as F
@@ -252,6 +254,14 @@ def main():
 
     print(f"Training: {args.epochs} epochs, batch_size = {args.batch_size}, recon_weight = {args.recon_weight}", flush=True)
     print("-" * 60, flush=True)
+
+    # Wall-clock timing. datetime.now() for human-readable timestamps in the
+    # log; time.perf_counter() for precise elapsed duration (immune to system
+    # clock jumps).
+    train_start_wall = datetime.now()
+    train_start_perf = time.perf_counter()
+    print(f"Training started at: {train_start_wall:%Y-%m-%d %H:%M:%S}", flush=True)
+
     for epoch in range(1, args.epochs + 1):
         d_loss, g_loss = train_one_epoch(
             G, D, opt_G, opt_D, real_all, target_all, args.batch_size, device, args.recon_weight,
@@ -260,6 +270,16 @@ def main():
         log_every = max(1, args.epochs // 20)
         if epoch <= 5 or epoch % log_every == 0 or epoch == args.epochs:
             print(f"  epoch {epoch:4d}/{args.epochs}  D_loss = {d_loss:.4f}  G_loss = {g_loss:.4f}", flush=True)
+
+    train_end_wall = datetime.now()
+    total_seconds = time.perf_counter() - train_start_perf
+    hours, remainder = divmod(int(total_seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    print(f"Training finished at: {train_end_wall:%Y-%m-%d %H:%M:%S}", flush=True)
+    print(f"Total training time : {total_seconds:.2f} s   "
+          f"({hours}h {minutes}m {seconds}s)   "
+          f"average {total_seconds / args.epochs:.2f} s/epoch", flush=True)
     print("-" * 60, flush=True)
 
     save_checkpoint(G, kg, args.dim, args.z_dim, args.out)
