@@ -1,11 +1,13 @@
 #!/bin/bash
-# ADKGD with GAN-generated training negatives (Phase B / variant B1).
+# ADKGD with kggan-generated training negatives (Phase B / variant B1).
 # Sibling of run_baseline_fb15k.slurm — same everything except --neg_source gan
 # and a different --job-name so the .out.txt files don't collide.
 #
-# Before submitting: data/FB15K/gan_negatives.tsv must exist (produced by kggan).
-# Six-column TSV: orig_h<TAB>orig_r<TAB>orig_t<TAB>neg_h<TAB>neg_r<TAB>neg_t,
-# one row per unique real triple.
+# Before submitting: kggan checkpoint at $GAN_CKPT must exist. Produce it by
+# running `sbatch experiments/slurm/train_gan_fb15k.slurm` first.
+#
+# ADKGD loads the checkpoint in-process via experiments/gan/adkgd_bridge.py;
+# negatives are generated per training batch — no intermediate TSV file.
 #
 #   sbatch experiments/slurm/run_gan_fb15k.slurm
 
@@ -57,14 +59,14 @@ $PY -c "import numpy, sklearn, matplotlib; print('deps ok | numpy', numpy.__vers
 
 cd "$PROJECT_DIR"
 
-# Belt-and-braces: confirm the GAN TSV is present before we burn epoch time.
-GAN_TSV="data/FB15K/gan_negatives.tsv"
-if [[ ! -f "$GAN_TSV" ]]; then
-    echo "ERROR: $GAN_TSV not found at $PROJECT_DIR/$GAN_TSV" >&2
-    echo "Generate it from kggan first, then retry." >&2
+# Belt-and-braces: confirm the kggan checkpoint is present before we burn epoch time.
+GAN_CKPT="${GAN_CKPT:-experiments/gan/outputs/checkpoints/fb15k.pt}"
+if [[ ! -f "$GAN_CKPT" ]]; then
+    echo "ERROR: $GAN_CKPT not found at $PROJECT_DIR/$GAN_CKPT" >&2
+    echo "Train kggan first: sbatch experiments/slurm/train_gan_fb15k.slurm" >&2
     exit 1
 fi
-echo "Using GAN negatives: $GAN_TSV ($(wc -l < "$GAN_TSV") rows = unique positives covered)"
+echo "Using kggan checkpoint: $GAN_CKPT ($(du -h "$GAN_CKPT" | cut -f1))"
 
 # Change experiment parameters here, never inside this file's SLURM header.
 # Use $PY (absolute env python) so subprocesses spawned by run_experiment.py via
@@ -75,6 +77,6 @@ $PY experiments/run_experiment.py \
     --seed 0 \
     --max_epoch 1 \
     --neg_source gan \
-    --gan_path "$GAN_TSV"
+    --gan_path "$GAN_CKPT"
 
 echo "Done $(date)"

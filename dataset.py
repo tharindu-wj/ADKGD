@@ -7,8 +7,9 @@ from random import shuffle
 
 class Reader:
     def __init__(self, args, path):
-        # Stored so get_data() can consult args.neg_source / args.gan_path without
-        # changing its signature. Optional flags use getattr() below.
+        # Stored so get_data() can consult args.neg_source / args.gan_path
+        # (path to kggan .pt checkpoint when neg_source='gan') without changing
+        # its signature. Optional flags use getattr() below.
         self.args = args
 
         self.ent2id = dict()
@@ -277,9 +278,12 @@ class Reader:
         bp_triples = [bp_triples_label[i][0] for i in range(len(bp_triples_label))]
 
         # Phase B: source of training-time negatives (set C).
-        # 'gan'    -> per-positive lookup into a kggan-produced (orig -> neg)
-        #             six-column TSV. Preserves the baseline's 2-of-3-shared
-        #             structure: slot choice is baked in upstream by kggan.
+        # 'gan'    -> in-process call to kggan's generator (loaded once from a
+        #             .pt checkpoint at --gan_path). Same masked-decode + retry +
+        #             uniform-random-fallback logic as kggan's TSV exporter, but
+        #             returned directly instead of routed through a file.
+        #             Used uniformly for both real positives AND injected eval
+        #             anomalies in bp_triples_label.
         # 'random' -> ADKGD's original per-positive random corruption (default).
         neg_source = getattr(self.args, 'neg_source', 'random')
         if neg_source == 'gan':
@@ -293,62 +297,62 @@ class Reader:
         return self.toarray(all_triples), self.toarray(labels)
 
     def _gan_negatives(self, pos_triples):
-        """Look up one pre-generated negative per positive from kggan's TSV.
+        """Generate one negative per positive by running kggan in-process.
 
-        Contract:
-          * Six-column UTF-8 TSV (one row per unique real triple):
-                orig_h<TAB>orig_r<TAB>orig_t<TAB>neg_h<TAB>neg_r<TAB>neg_t
-            The negative differs from the original at exactly one of the three
-            slots; the slot choice is made on the kggan side at generation time
-            and is NOT stored on disk.
-          * Loaded once and cached on self._gan_table.
-          * Per-positive fallback to generate_anomalous_triples([(h,r,t)]) when:
-              - the positive's string key is absent from the table, OR
-              - the returned negative contains an entity/relation we don't have
-                an id for (vocab drift between the two repos).
-          * The injected eval anomalies in bp_triples_label will fall back by
-            construction -- kggan only sees real positives. That's expected.
+        Treats every entry in `pos_triples` uniformly -- real positives AND
+        injected eval anomalies -- the GAN doesn't distinguish. For each
+        positive, kggan picks a slot uniformly at random and replaces it via
+        a masked decode; collisions with the real graph are retried, and a
+        uniform-random fallback kicks in only if retries are exhausted.
         """
-        if not hasattr(self, '_gan_table') or self._gan_table is None:
-            path = getattr(self.args, 'gan_path', 'data/FB15K/gan_negatives.tsv')
-            self._gan_table = self._load_gan_table(path)
+        if not hasattr(self, '_gan_payload') or self._gan_payload is None:
+            self._load_gan_model()
 
-        out, hits, fallbacks = [], 0, 0
-        for h, r, t in pos_triples:
-            key = (self.id2ent[h], self.id2rel[r], self.id2ent[t])
-            neg_str = self._gan_table.get(key)
-            if neg_str is not None:
-                try:
-                    out.append((self.ent2id[neg_str[0]],
-                                self.rel2id[neg_str[1]],
-                                self.ent2id[neg_str[2]]))
-                    hits += 1
-                    continue
-                except KeyError:
-                    pass  # unknown vocab in value -> fall through to fallback
-            fallbacks += 1
-            out.extend(self.generate_anomalous_triples([(h, r, t)]))
-        print('[GAN] hits: %d / %d, fallbacks: %d'
-              % (hits, len(pos_triples), fallbacks))
-        return out
+        from adkgd_bridge import generate_negatives, render_stats
 
-    def _load_gan_table(self, path):
-        """Read kggan's six-column TSV into a dict keyed on the original string triple.
+        negatives, stats = generate_negatives(
+            pos_triples,
+            payload=self._gan_payload,
+            kg=self._gan_kg,
+            adkgd_id2ent=self.id2ent,
+            adkgd_id2rel=self.id2rel,
+            adkgd_ent2id=self.ent2id,
+            adkgd_rel2id=self.rel2id,
+            rng=self._gan_rng,
+        )
+        print('[GAN] ' + render_stats(stats))
+        return negatives
 
-        FileNotFoundError is intentionally NOT caught -- a missing path when
-        --neg_source=gan is requested should fail loudly, not silently fall back
-        to random.
+    def _load_gan_model(self):
+        """Load the kggan checkpoint + KG once, cache on self.
+
+        FileNotFoundError on a bad path is intentionally NOT caught -- when
+        --neg_source=gan is requested, a missing checkpoint should fail loudly.
         """
-        table = {}
-        with open(path, encoding='utf-8') as f:
-            for raw in f:
-                parts = raw.rstrip('\n').split('\t')
-                if len(parts) != 6:
-                    continue
-                orig_h, orig_r, orig_t, neg_h, neg_r, neg_t = parts
-                table[(orig_h, orig_r, orig_t)] = (neg_h, neg_r, neg_t)
-        print('[GAN] loaded %d entries from %s' % (len(table), path))
-        return table
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        # Put experiments/gan/ on sys.path so `from adkgd_bridge import ...`
+        # resolves. The bridge itself extends sys.path further to cover kggan's
+        # internal imports (kg_data/, models/, training/, sampling/).
+        _gan_dir = _Path(__file__).resolve().parent / 'experiments' / 'gan'
+        if str(_gan_dir) not in _sys.path:
+            _sys.path.insert(0, str(_gan_dir))
+
+        from adkgd_bridge import load_kggan, build_kg
+        import numpy as _np
+
+        ckpt_path = getattr(self.args, 'gan_path',
+                            'experiments/gan/outputs/checkpoints/dummy.pt')
+        self._gan_payload = load_kggan(ckpt_path)
+        # Reader.__init__ stored self.path (data_dir + '/'). Strip trailing
+        # slash so load_kg_union's Path() construction is happy on Windows.
+        dataset_dir = self.path.rstrip('/').rstrip('\\')
+        self._gan_kg = build_kg(dataset_dir)
+        seed = getattr(self.args, 'seed', 0)
+        self._gan_rng = _np.random.default_rng(seed)
+        print('[GAN] loaded checkpoint from %s (device=%s)'
+              % (ckpt_path, self._gan_payload['device']))
 
     def get_data_test(self):
         bp_triples_label = self.bp_triples_label

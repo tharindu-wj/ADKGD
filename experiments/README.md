@@ -1,118 +1,189 @@
-# experiments/ — our wrapper layer over ADKGD
+# experiments/ — research pipeline
 
-Everything in this folder is code **we authored** for running ADKGD as a
-research baseline. ADKGD's own source (the model, the data reader, the
-training/test loop) lives at the repo root and is **untouched here**.
+Orchestration layer that runs ADKGD with two negative-sample sources and
+compares them: random corruption (baseline **B0**) versus kggan-generated
+negatives (variant **B1**, called in-process).
 
-## The boundary
+Pipeline at a glance:
 
-| Layer | Lives where | Responsible for |
+```
+  Step 1: train kggan          (one-time per dataset)  →  .pt checkpoint
+  Step 2: run ADKGD              repeat per experiment  →  RESULTS table
+            ├─ B0: --neg_source random   (baseline)
+            └─ B1: --neg_source gan      (consumes the checkpoint from step 1)
+  Step 3: compare the two RESULTS tables
+```
+
+Three codebases coexist in this repo:
+
+| Codebase | Location | Status |
 |---|---|---|
-| **ADKGD upstream** | repo root — `Our_TopK%_RankingList.py`, `model.py`, `dataset.py`, `create_batch.py`, `data/` | training, scoring, writing logs/checkpoints |
-| **Our wrapper** | this folder — `run_experiment.py`, `slurm/`, `RUNNING_ON_DEEPTHOUGHT.md` | orchestration (run train, then test), parsing logs into a clean RESULTS table, HPC launch |
+| **ADKGD** (anomaly detector) | repo root — `Our_TopK%_RankingList.py`, `model.py`, `dataset.py`, `create_batch.py`, `score.py` | upstream — untouched except for the `--neg_source gan` dispatch in `dataset.py` |
+| **kggan** (negative generator) | `experiments/gan/src/`, `experiments/gan/scripts/` | upstream — untouched |
+| **Orchestration glue** | `experiments/run_experiment.py`, `experiments/slurm/`, `experiments/gan/adkgd_bridge.py` | ours |
 
-A single experiment's data flow:
+---
+
+## Folder map
 
 ```
-experiments/slurm/run_baseline_fb15k.slurm        ← HPC launcher (ours)
-        │
-        └─ $PY experiments/run_experiment.py …    ← orchestrator (ours)
-                │
-                ├─ subprocess: Our_TopK%_RankingList.py --mode train   (ADKGD's)
-                │      → writes .ckpt + log.txt + epoch_times.txt under checkpoints/
-                ├─ subprocess: Our_TopK%_RankingList.py --mode test    (ADKGD's)
-                │      → appends Precision/Recall lines to log.txt
-                └─ parses those files → prints the 5-row RESULTS table (ours)
+experiments/
+├── README.md                              ← you are here
+├── RUNNING_ON_DEEPTHOUGHT.md              ← HPC operator guide
+├── run_experiment.py                      ← ADKGD orchestrator (train+test+RESULTS)
+│
+├── slurm/                                 ← ALL HPC launchers
+│   ├── train_gan_fb15k.slurm              ← step 1: train kggan
+│   ├── run_baseline_fb15k.slurm           ← step 2a: B0 baseline
+│   └── run_gan_fb15k.slurm                ← step 2b: B1 with kggan
+│
+└── gan/
+    ├── adkgd_bridge.py                    ← OUR boundary file (kggan ↔ ADKGD adapter)
+    ├── src/                               ← kggan source — untouched
+    │   ├── corruption_strategies/
+    │   ├── dataset_builders/
+    │   ├── kg_data/                       (KnowledgeGraph loader)
+    │   ├── models/                        (TripleGenerator + embeddings)
+    │   ├── sampling/                      (masked-decode helpers)
+    │   ├── training/                      (train loop, TrainConfig)
+    │   └── validation/
+    ├── scripts/                           ← kggan operator CLIs
+    │   ├── train_gan.py                   ← used by train_gan_fb15k.slurm
+    │   └── build_pseudo_types.py          ← prerequisite for FB15K kggan training
+    └── outputs/checkpoints/               ← kggan checkpoint drop zone
+        └── dummy.pt                       ← bundled fixture (dummy_kg, 30 epochs)
 ```
 
-## Datasets at a glance
+---
 
-| Dataset | Files | Triples | Purpose |
-|---|---|---|---|
-| `dummy_kg` | `data/dummy_kg/{train,valid,test}.txt` | **18 unique facts, replicated to 1,080** | Tiny smoke-test dataset (6 people, 3 relations, 4 countries — eyeball-friendly). The 60× replication is purely so ADKGD's `K=0.1%` cutoff math (`int(0.001 × num_original) >= 1`) doesn't crash. The vocabulary stays minimal so you can read the GAN's output and tell at a glance whether it's producing sensible "wrong-but-plausible" triples. |
-| `FB15K` | `data/FB15K/{train,valid,test}.txt` | 310,116 | The paper's benchmark (FB15K-237). Real research runs. |
-| `FB15K-mini` | `data/FB15K-mini/{train,valid,test}.txt` | 2,600 | Legacy 2k-triple subset; superseded by `dummy_kg` for local iteration but still works. |
+## Step 1 — Setup
 
-## How to run
+**Local** (Windows/macOS/Linux):
 
-**Always from the repo root** (one directory above this one).
+```powershell
+pip install torch numpy scikit-learn matplotlib
+```
 
-### Baseline (B0) — random training negatives, default behaviour
+On Windows local CPU, PyTorch segfaults under multi-threaded OpenMP/MKL.
+`experiments/run_experiment.py` sets `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
+KMP_DUPLICATE_LIB_OK=TRUE` automatically; no action needed.
+
+**HPC** (Flinders DeepThought, Tesla V100): see [RUNNING_ON_DEEPTHOUGHT.md](RUNNING_ON_DEEPTHOUGHT.md)
+for one-time conda env creation with the CUDA wheel.
+
+All commands below run from the **repo root**.
+
+---
+
+## Step 2 — Train kggan (one-time per dataset)
+
+The kggan generator is trained once per dataset; the resulting checkpoint
+feeds every subsequent ADKGD-with-GAN run. **Skip this step entirely** if
+you already have a checkpoint at the expected path (e.g.
+`experiments/gan/outputs/checkpoints/dummy.pt` ships bundled).
+
+### 2a. Build entity pseudo-types (FB15K only — prerequisite)
+
+Fast — login node, no GPU:
 
 ```bash
-# Local CPU smoke test on dummy_kg (18 unique facts, replicated to 1,080 triples for
-# ADKGD's K=0.1% math). OMP_NUM_THREADS=1 is set automatically by the script.
-python experiments/run_experiment.py --dataset dummy_kg --anomaly_ratio 0.15 --max_epoch 1
+python experiments/gan/scripts/build_pseudo_types.py --data data/FB15K
+```
 
-# HPC GPU run (full FB15K-237, ~12 min/epoch on V100)
+Writes `data/FB15K/entity_metadata.txt`, used by kggan for type-coherent
+corruption operators. `dummy_kg` already ships with metadata.
+
+### 2b. Train the generator
+
+Local (dummy KG, CPU, ~minutes):
+
+```powershell
+python experiments/gan/scripts/train_gan.py `
+    --data data/dummy_kg `
+    --epochs 30 `
+    --batch-size 32 `
+    --device cpu `
+    --out experiments/gan/outputs/checkpoints/dummy.pt
+```
+
+HPC (FB15K-237, V100):
+
+```bash
+sbatch experiments/slurm/train_gan_fb15k.slurm
+# → experiments/gan/outputs/checkpoints/fb15k.pt
+```
+
+Override hyperparameters via env vars:
+
+```bash
+EPOCHS=600 BATCH_SIZE=512 sbatch experiments/slurm/train_gan_fb15k.slurm
+DATASET_DIR=data/other_kg \
+    CKPT_PATH=experiments/gan/outputs/checkpoints/other.pt \
+    sbatch experiments/slurm/train_gan_fb15k.slurm
+```
+
+---
+
+## Step 3 — Run ADKGD
+
+Same orchestrator, same RESULTS table for both variants. The **only**
+difference is `--neg_source`.
+
+### 3a. Baseline (B0) — random negatives
+
+Local:
+
+```powershell
+python experiments/run_experiment.py --dataset dummy_kg --anomaly_ratio 0.15 --max_epoch 1
+```
+
+HPC:
+
+```bash
 sbatch experiments/slurm/run_baseline_fb15k.slurm
 ```
 
-### GAN variant (B1) — training negatives loaded from a TSV
+### 3b. Variant (B1) — kggan negatives (in-process)
+
+Local (uses the bundled dummy checkpoint):
+
+```powershell
+python experiments/run_experiment.py --dataset dummy_kg --anomaly_ratio 0.15 --max_epoch 1 `
+    --neg_source gan `
+    --gan_path experiments/gan/outputs/checkpoints/dummy.pt
+```
+
+HPC (after step 2b produced `fb15k.pt`):
 
 ```bash
-# Local smoke against the dummy_kg fixture (proves the loader path; ~5 seconds end to end)
-python experiments/run_experiment.py --dataset dummy_kg --anomaly_ratio 0.15 --max_epoch 1 \
-    --neg_source gan --gan_path data/dummy_kg/gan_negatives.tsv
-
-# HPC GPU run (expects data/FB15K/gan_negatives.tsv to exist, produced by kggan)
 sbatch experiments/slurm/run_gan_fb15k.slurm
 ```
 
-The script writes its artifacts to `<repo-root>/checkpoints/<dataset>/`, not
-under `experiments/`. That's intentional — ADKGD's own paths assume the repo
-root as cwd, and we honour that.
+### What B1 prints (diagnostic)
 
-## What's in this folder
+```
+[GAN] loaded checkpoint from experiments/gan/outputs/checkpoints/dummy.pt (device=cpu)
+[GAN] processed=1,242  retries=374  uniform_fallbacks=0
+       slot_distribution: head=399/1242(32.1%) rel=395/1242(31.8%) tail=448/1242(36.1%)
+```
 
-| File | Purpose |
+| Field | Meaning |
 |---|---|
-| [run_experiment.py](run_experiment.py) | The orchestrator. Wipes stale logs, invokes ADKGD's train then test, parses the resulting log files, prints the RESULTS table. Accepts `--neg_source {random,gan}` and `--gan_path`. |
-| [slurm/run_baseline_fb15k.slurm](slurm/run_baseline_fb15k.slurm) | DeepThought launcher for the **B0 baseline** (random negatives). Tesla V100, env activation, GPU pre-flight, calls `run_experiment.py` with defaults. |
-| [slurm/run_gan_fb15k.slurm](slurm/run_gan_fb15k.slurm) | DeepThought launcher for the **B1 GAN variant**. Same as baseline but adds `--neg_source gan --gan_path data/FB15K/gan_negatives.tsv`, plus a pre-flight check that the TSV exists. |
-| [RUNNING_ON_DEEPTHOUGHT.md](RUNNING_ON_DEEPTHOUGHT.md) | Step-by-step HPC guide: env setup, submission, monitoring, troubleshooting, CUDA-wheel selection, CPU-fallback variant. |
+| `processed` | Every entry in `bp_triples` got a kggan negative — real positives AND injected eval anomalies, treated uniformly |
+| `retries` | kggan's masked decode hit a real-graph collision and was re-rolled with fresh Gumbel noise |
+| `uniform_fallbacks` | Retries exhausted → fell back to uniform-random replacement for that one slot |
+| `slot_distribution` | Slot pick is uniform random per-positive (≈ 1/3 each, matches baseline) |
 
-## GAN workflow (Phase B)
+A healthy run has `uniform_fallbacks` near zero and slot distribution close to uniform.
 
-The full sequence from "kggan produced a TSV" to "I have the B1 row of the results table." All commands run from the repo root.
+---
 
-### File contract — `gan_negatives.tsv`
+## Step 4 — Compare results
 
-Six tab-separated columns, one row per unique real triple in the merged graph:
+Each `run_experiment.py` invocation prints a 5-row RESULTS table. Drop B0
+and B1 side by side:
 
-```
-orig_h<TAB>orig_r<TAB>orig_t<TAB>neg_h<TAB>neg_r<TAB>neg_t
-```
-
-- UTF-8, LF endings, no header.
-- All strings match the surface forms in `data/<dataset>/{train,valid,test}.txt`.
-- The negative differs from the original at **exactly one** of the three slots; which slot was corrupted is decided on the kggan side at generation time and is **not** stored on disk.
-- Expected size: ~310k rows for FB15K-237; 18 rows for `dummy_kg` (see the fixture at [data/dummy_kg/gan_negatives.tsv](../data/dummy_kg/gan_negatives.tsv)).
-
-### 1. Place the negatives TSV
-
-Drop the kggan output at `data/FB15K/gan_negatives.tsv` (or pass a different path via `--gan_path`).
-
-### 2. Submit the GAN run
-
-```bash
-sbatch experiments/slurm/run_gan_fb15k.slurm
-# → prints a job id, e.g. 2884600
-squeue -u $USER
-tail -f adkgd_gan_fb15k-<jobid>.out.txt
-```
-
-Watch for, in order:
-
-- `Using GAN negatives: data/FB15K/gan_negatives.tsv (N rows = unique positives covered)` — slurm pre-flight is happy
-- `[GAN] loaded N entries from data/FB15K/gan_negatives.tsv` — ADKGD's loader read the file
-- `[GAN] hits: H / T, fallbacks: F` — H positives found a kggan match; F (~ # injected anomalies + any missed positives) fell back to per-positive random corruption
-- per-batch `Epoch: 0-N, pos_loss, neg_loss, Loss` lines
-- the RESULTS block at the bottom (5 rows of Precision@K / Recall@K + total train time)
-
-### 3. Compare against B0
-
-| K | B0 (run_baseline_fb15k.slurm) | B1 (run_gan_fb15k.slurm) | Delta |
+| K | B0 (random) | B1 (kggan) | Δ |
 |---|---|---|---|
 | 1% | 0.9581 (paper 0.951) | _from B1 .out.txt_ | _to fill_ |
 | 2% | 0.8836 | _from B1 .out.txt_ | _to fill_ |
@@ -120,46 +191,93 @@ Watch for, in order:
 | 4% | 0.6929 | _from B1 .out.txt_ | _to fill_ |
 | 5% | 0.6148 | _from B1 .out.txt_ | _to fill_ |
 
-### Common commands you'll reach for
+Numbers above are from a single seed=0 run on V100; multi-seed mean±std
+populates the final research-paper table.
+
+---
+
+## Architecture
+
+```
+Step 1 — kggan training (one-time)
+  experiments/slurm/train_gan_fb15k.slurm
+        └─ experiments/gan/scripts/train_gan.py
+                └─ experiments/gan/src/training/train_triple_gan.py
+                        └─ writes experiments/gan/outputs/checkpoints/<name>.pt
+
+Step 2 — ADKGD run (per experiment, B0 or B1)
+  experiments/slurm/run_{baseline,gan}_fb15k.slurm
+        └─ experiments/run_experiment.py            ← orchestrator (ours)
+                ├─ subprocess: Our_TopK%_RankingList.py --mode train   (ADKGD upstream)
+                │       └─ dataset.py:Reader.get_data()
+                │               ├─ neg_source=random → generate_anomalous_triples()
+                │               └─ neg_source=gan    → Reader._gan_negatives()
+                │                       └─ experiments/gan/adkgd_bridge.py
+                │                               ├─ adds src/ to sys.path
+                │                               ├─ load_checkpoint() the .pt
+                │                               └─ batched generator forward pass
+                ├─ subprocess: Our_TopK%_RankingList.py --mode test    (ADKGD upstream)
+                └─ parses logs → prints RESULTS table
+```
+
+### Why this boundary
+
+- **kggan is invoked only via `experiments/gan/adkgd_bridge.py`**. ADKGD's `dataset.py` knows nothing about kggan's internals — it calls `generate_negatives(...)` and gets ADKGD-ID negatives back. The bridge handles `sys.path` setup, KG construction, vocab string round-trips.
+- **B0 and B1 share the orchestrator, RESULTS parser, and comparison table** — any metric delta is unambiguously attributable to the negative source.
+- **kggan and ADKGD evolve independently**. Retrain kggan without touching ADKGD; change ADKGD without touching kggan.
+
+---
+
+## Datasets
+
+| Dataset | Files | Triples | Purpose |
+|---|---|---|---|
+| `dummy_kg` | `data/dummy_kg/{train,valid,test}.txt` | **18 unique × 60 = 1,080** | Smoke-test fixture (6 people, 3 relations, 4 countries). Replication forces `K=0.1%` math to produce ≥ 1. |
+| `FB15K` | `data/FB15K/{train,valid,test}.txt` | 310,116 | Paper benchmark (FB15K-237). Real research runs. |
+
+---
+
+## Common operator commands
 
 ```bash
-# What account did your job use? (for slurm --account= troubleshooting)
-sacct -j <jobid> --format=JobID,JobName,Account,Partition,State
+# Tail a live HPC log (output and stderr merged — one file)
+tail -f kggan_train_fb15k-<jobid>.out.txt           # kggan training
+tail -f adkgd_fb15k-<jobid>.out.txt                 # ADKGD baseline (B0)
+tail -f adkgd_gan_fb15k-<jobid>.out.txt             # ADKGD with kggan (B1)
 
-# Tail the live training log (slurm output merges stderr → one file)
-tail -f adkgd_gan_fb15k-<jobid>.out.txt
-
-# Pull just the metric lines from ADKGD's detailed log
+# Pull Precision/Recall numbers from ADKGD's detailed log
 grep -E "Precision 0\.050000 -- 0\.0[12345]0000|Recall  0\.050000-- 0\.0[12345]0000" \
     checkpoints/FB15K/ADKGD_FB15K_0.05_Neighbors39__log.txt
 
 # Inspect epoch durations
 cat checkpoints/FB15K/ADKGD_FB15K_epoch_times.txt
 
-# Cancel a submitted job
+# Verify the slurm submitter's account (DeepThought needs --account=cse)
+sacct -j <jobid> --format=JobID,JobName,Account,Partition,State
+
+# Cancel a job
 scancel <jobid>
-
-# Quick file sanity — row count and column count
-wc -l data/FB15K/gan_negatives.tsv                            # should be ~# unique real triples
-awk -F'\t' '{print NF}' data/FB15K/gan_negatives.tsv | sort -u  # should print just "6"
-
-# Spot-check that the negative differs from the original by exactly one slot
-head -5 data/FB15K/gan_negatives.tsv | \
-    awk -F'\t' '{diffs=0; if($1!=$4)diffs++; if($2!=$5)diffs++; if($3!=$6)diffs++; print diffs, $0}'
 ```
 
-### Backward compatibility
+---
 
-Default `--neg_source` is `random`, so `experiments/slurm/run_baseline_fb15k.slurm` works exactly as before — no GAN file required. The GAN code path is only entered when `--neg_source gan` is explicitly passed.
+## Local smoke test
 
-## Why the separation matters
+A constructor-only test that confirms the `--neg_source=gan` wiring without
+running training:
 
-The research goal is to **swap ADKGD's random training negatives for
-GAN-generated ones** (Phase B, implemented). That swap is **one conditional
-branch inside `dataset.py`** (`Reader.get_data()` checks `args.neg_source`)
-and **two new private methods** (`Reader._gan_negatives` + `Reader._load_gan_table`) — it doesn't change
-anything in this folder beyond the new flag plumbing. Keeping the wrapper
-isolated means the orchestration + reporting pipeline is shared by both
-variants: same `run_experiment.py`, same RESULTS-table parser, same comparison
-table, so any difference in metrics is unambiguously attributable to the
-training-negatives source.
+```powershell
+& "$env:USERPROFILE\miniconda3\envs\pytorch\python.exe" temp/smoke_gan.py
+```
+
+Expected: `[GAN] loaded checkpoint ...` and `[GAN] processed=1,242` with
+slot distribution near 1/3 each.
+
+---
+
+## See also
+
+- [RUNNING_ON_DEEPTHOUGHT.md](RUNNING_ON_DEEPTHOUGHT.md) — HPC setup, env creation, troubleshooting.
+- ADKGD upstream — repo root: `Our_TopK%_RankingList.py` (entry), `dataset.py` (Reader + `_gan_negatives` dispatch), `model.py` (BiLSTM_Attention).
+- kggan upstream — `experiments/gan/src/training/train_triple_gan.py`, `experiments/gan/src/models/triple_gan.py`.
+- Bridge — [experiments/gan/adkgd_bridge.py](gan/adkgd_bridge.py) (the only file that knows about both worlds).

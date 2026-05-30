@@ -94,8 +94,8 @@ def main() -> int:
     # Phase B (GAN integration). Forwarded verbatim to both train and test subprocesses.
     ap.add_argument("--neg_source", default="random", choices=["random", "gan"],
                     help="source of training-time negatives; 'random' = baseline (default)")
-    ap.add_argument("--gan_path", default="data/FB15K/gan_negatives.tsv",
-                    help="path to kggan's six-column negatives TSV (used when --neg_source=gan; missing file is a hard error)")
+    ap.add_argument("--gan_path", default="experiments/gan/outputs/checkpoints/dummy.pt",
+                    help="path to kggan's .pt checkpoint (used when --neg_source=gan; missing file is a hard error)")
     args = ap.parse_args()
 
     # This file lives at experiments/run_experiment.py; the repo root (where
