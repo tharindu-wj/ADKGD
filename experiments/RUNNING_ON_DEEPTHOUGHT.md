@@ -85,9 +85,9 @@ There are three slurm launchers in `experiments/slurm/`. Submit them in this ord
 
 | # | Launcher | When |
 |---|---|---|
-| 1 | `train_gan_fb15k.slurm` | **One-time** per dataset — produces the kggan checkpoint used by B1. Skip if a checkpoint already exists. |
+| 1 | `train_gan_fb15k.slurm` | **One-time** per dataset — produces the GAN checkpoint used by B1. Skip if a checkpoint already exists. |
 | 2 | `run_baseline_fb15k.slurm` | **B0** — ADKGD with random negatives (the paper baseline). |
-| 3 | `run_gan_fb15k.slurm` | **B1** — ADKGD with kggan negatives, in-process. Requires step 1 to have produced `experiments/gan/outputs/checkpoints/fb15k.pt`. |
+| 3 | `run_gan_fb15k.slurm` | **B1** — ADKGD with GAN negatives, in-process. Requires step 1 to have produced `experiments/gan/outputs/checkpoints/fb15k.pt`. |
 
 Step 2 (B0) and step 3 (B1) are independent — submit them in either order.
 Step 1 must happen before step 3.
@@ -96,15 +96,14 @@ Step 1 must happen before step 3.
 cd $HOME/ADKGD
 git pull                                              # get latest run_experiment.py / slurm
 
-# (one-time, only if no checkpoint yet) Build pseudo-types on login node, then train kggan:
-python experiments/gan/scripts/build_pseudo_types.py --data data/FB15K
+# (one-time, only if no checkpoint yet) Train the GAN:
 sbatch experiments/slurm/train_gan_fb15k.slurm
 
 # B0 baseline
 sbatch --test-only experiments/slurm/run_baseline_fb15k.slurm     # dry-run: validate the script
 sbatch experiments/slurm/run_baseline_fb15k.slurm                 # real submit → prints a job id
 
-# B1 with kggan (after step 1 has finished)
+# B1 with the GAN (after step 1 has finished)
 sbatch experiments/slurm/run_gan_fb15k.slurm
 
 squeue -u $USER                                       # PD = pending, R = running
@@ -244,10 +243,10 @@ torch from segfaulting on multi-core nodes.
 ## What this baseline row feeds into
 
 This document covers the HPC operations for the full pipeline (ADKGD baseline
-B0, kggan training, and ADKGD-with-kggan B1). The step-by-step research
+B0, GAN training, and ADKGD-with-GAN B1). The step-by-step research
 walkthrough lives in [README.md](README.md); this doc focuses on the cluster
 specifics: env, submission, monitoring, troubleshooting.
 
-For the end-to-end research workflow (train kggan → run B0 → run B1 → compare
+For the end-to-end research workflow (train the GAN → run B0 → run B1 → compare
 RESULTS), follow the four steps in `README.md`. The slurm launchers in
 `experiments/slurm/` map 1:1 to those steps.

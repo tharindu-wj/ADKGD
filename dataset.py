@@ -297,23 +297,22 @@ class Reader:
         return self.toarray(all_triples), self.toarray(labels)
 
     def _gan_negatives(self, pos_triples):
-        """Generate one negative per positive by running kggan in-process.
+        """Generate one negative per positive by running the GAN in-process.
 
         Treats every entry in `pos_triples` uniformly -- real positives AND
         injected eval anomalies -- the GAN doesn't distinguish. For each
-        positive, kggan picks a slot uniformly at random and replaces it via
-        a masked decode; collisions with the real graph are retried, and a
-        uniform-random fallback kicks in only if retries are exhausted.
+        positive, the GAN picks a slot uniformly at random, decodes the
+        replacement from a noise-perturbed argmax, retries on real-graph
+        collisions, and falls back to uniform random only if retries exhaust.
         """
         if not hasattr(self, '_gan_payload') or self._gan_payload is None:
             self._load_gan_model()
 
-        from adkgd_bridge import generate_negatives, render_stats
+        from adkgd_bridge import generate, render_stats
 
-        negatives, stats = generate_negatives(
+        negatives, stats = generate(
             pos_triples,
             payload=self._gan_payload,
-            kg=self._gan_kg,
             adkgd_id2ent=self.id2ent,
             adkgd_id2rel=self.id2rel,
             adkgd_ent2id=self.ent2id,
@@ -324,7 +323,10 @@ class Reader:
         return negatives
 
     def _load_gan_model(self):
-        """Load the kggan checkpoint + KG once, cache on self.
+        """Load the GAN checkpoint once, cache on self.
+
+        The checkpoint bundles the generator weights + the GAN's vocab maps +
+        the set of real triples, so we don't need to rebuild the KG here.
 
         FileNotFoundError on a bad path is intentionally NOT caught -- when
         --neg_source=gan is requested, a missing checkpoint should fail loudly.
@@ -332,23 +334,17 @@ class Reader:
         import sys as _sys
         from pathlib import Path as _Path
 
-        # Put experiments/gan/ on sys.path so `from adkgd_bridge import ...`
-        # resolves. The bridge itself extends sys.path further to cover kggan's
-        # internal imports (kg_data/, models/, training/, sampling/).
+        # Put experiments/gan/ on sys.path so `from adkgd_bridge import ...` works.
         _gan_dir = _Path(__file__).resolve().parent / 'experiments' / 'gan'
         if str(_gan_dir) not in _sys.path:
             _sys.path.insert(0, str(_gan_dir))
 
-        from adkgd_bridge import load_kggan, build_kg
+        from adkgd_bridge import load_gan
         import numpy as _np
 
         ckpt_path = getattr(self.args, 'gan_path',
                             'experiments/gan/outputs/checkpoints/dummy.pt')
-        self._gan_payload = load_kggan(ckpt_path)
-        # Reader.__init__ stored self.path (data_dir + '/'). Strip trailing
-        # slash so load_kg_union's Path() construction is happy on Windows.
-        dataset_dir = self.path.rstrip('/').rstrip('\\')
-        self._gan_kg = build_kg(dataset_dir)
+        self._gan_payload = load_gan(ckpt_path)
         seed = getattr(self.args, 'seed', 0)
         self._gan_rng = _np.random.default_rng(seed)
         print('[GAN] loaded checkpoint from %s (device=%s)'

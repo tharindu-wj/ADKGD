@@ -95,7 +95,7 @@ def main() -> int:
     ap.add_argument("--neg_source", default="random", choices=["random", "gan"],
                     help="source of training-time negatives; 'random' = baseline (default)")
     ap.add_argument("--gan_path", default="experiments/gan/outputs/checkpoints/dummy.pt",
-                    help="path to kggan's .pt checkpoint (used when --neg_source=gan; missing file is a hard error)")
+                    help="path to the GAN's .pt checkpoint (used when --neg_source=gan; missing file is a hard error)")
     args = ap.parse_args()
 
     # This file lives at experiments/run_experiment.py; the repo root (where

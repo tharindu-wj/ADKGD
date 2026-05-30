@@ -1,5 +1,5 @@
 #!/bin/bash
-# Train the kggan generator on FB15K-237 — one V100 allocation.
+# Train the simple GAN on FB15K-237 — one V100 allocation.
 # Writes the checkpoint that ADKGD's --neg_source=gan path consumes via
 # experiments/gan/adkgd_bridge.py (in-process, no intermediate TSV).
 #
@@ -8,15 +8,13 @@
 # Prerequisites (run ONCE on the login node):
 #   1. Conda env with torch+CUDA wheel (see RUNNING_ON_DEEPTHOUGHT.md).
 #   2. FB15K-237 TSVs at data/FB15K/{train,valid,test}.txt.
-#   3. Entity pseudo-types (cheap; do not waste a GPU allocation):
-#        python experiments/gan/scripts/build_pseudo_types.py --data data/FB15K
 #
 # Override hyperparameters via env vars (no script edits required):
 #   EPOCHS=600 BATCH_SIZE=512 sbatch experiments/slurm/train_gan_fb15k.slurm
 #   DATASET_DIR=data/other_kg CKPT_PATH=experiments/gan/outputs/checkpoints/other.pt \
 #       sbatch experiments/slurm/train_gan_fb15k.slurm
 
-#SBATCH --job-name=kggan_train_fb15k
+#SBATCH --job-name=gan_train_fb15k
 #SBATCH --output=%x-%j.out.txt
 # (no --error directive: stderr merges into stdout — one file to tail.)
 #SBATCH --time=04:00:00
@@ -68,23 +66,14 @@ $PY -c "import torch; assert torch.cuda.is_available(), 'torch cannot see a GPU:
 
 cd "$PROJECT_DIR"
 
-# Belt-and-braces: pseudo-types are required for type-coherent corruption.
-ENTITY_META="$DATASET_DIR/entity_metadata.txt"
-if [[ ! -f "$ENTITY_META" ]]; then
-    echo "ERROR: $ENTITY_META not found." >&2
-    echo "Run on the login node first:" >&2
-    echo "    $PY experiments/gan/scripts/build_pseudo_types.py --data $DATASET_DIR" >&2
-    exit 1
-fi
-
 mkdir -p "$(dirname "$CKPT_PATH")"
 
-echo "[$(date)] Training kggan -> $CKPT_PATH"
-$PY experiments/gan/scripts/train_gan.py \
+echo "[$(date)] Training GAN -> $CKPT_PATH"
+$PY experiments/gan/train.py \
     --data       "$DATASET_DIR" \
     --out        "$CKPT_PATH" \
     --epochs     "$EPOCHS" \
-    --batch-size "$BATCH_SIZE" \
+    --batch_size "$BATCH_SIZE" \
     --device     cuda
 
 echo "----------------------------------------------------------------------"
