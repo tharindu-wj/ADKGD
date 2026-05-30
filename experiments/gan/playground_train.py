@@ -29,7 +29,7 @@ import torch.nn.functional as F
 # Make the sibling modules importable without packaging ceremony.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data import load_kg                                          # noqa: E402
-from model import Generator, Discriminator, gumbel_softmax, soft_embedding  # noqa: E402
+from gan_model import Generator, Discriminator, gumbel_softmax, soft_embedding  # noqa: E402
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DATASET_DIR = os.path.join(REPO_ROOT, "data", "dummy_kg")

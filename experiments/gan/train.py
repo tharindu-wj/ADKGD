@@ -59,7 +59,7 @@ import torch.nn.functional as F
 # Import sibling modules (data.py, model.py) without needing a package layout.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data import load_kg                                            # noqa: E402
-from model import Generator, Discriminator, gumbel_softmax, soft_embedding  # noqa: E402
+from gan_model import Generator, Discriminator, gumbel_softmax, soft_embedding  # noqa: E402
 
 
 def random_corrupt(h, r, t, n_ent, n_rel, rng):

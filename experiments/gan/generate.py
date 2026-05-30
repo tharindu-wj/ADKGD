@@ -24,7 +24,7 @@ import torch
 
 # Import sibling modules.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from model import Generator  # noqa: E402
+from gan_model import Generator  # noqa: E402
 
 
 def load_checkpoint(ckpt_path, device=None):

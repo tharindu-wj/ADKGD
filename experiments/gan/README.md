@@ -13,7 +13,7 @@ state-of-the-art performance.
 | File | Purpose | Length |
 |---|---|---|
 | [data.py](data.py) | Load `train/valid/test.txt` → integer triples + vocab | ~70 lines |
-| [model.py](model.py) | `Generator` + `Discriminator` + Gumbel-Softmax helper | ~110 lines |
+| [gan_model.py](gan_model.py) | `Generator` + `Discriminator` + Gumbel-Softmax helper. Name has the `gan_` prefix to avoid colliding with ADKGD's `model.py` at the repo root | ~140 lines |
 | [train.py](train.py) | Training loop + CLI (`python train.py --data ...`) | ~190 lines |
 | [generate.py](generate.py) | In-process negative generation (loaded by ADKGD at training time) | ~190 lines |
 | [adkgd_bridge.py](adkgd_bridge.py) | Thin re-export so ADKGD's `dataset.py` has a stable import | ~35 lines |
@@ -127,7 +127,7 @@ them so the file you read maps directly to the diagram above.
 If you want to **add** any of those back, the simplest place to start is
 the discriminator (drop `nn.utils.spectral_norm` around each `Linear`).
 After that, the conv encoder + attention upgrade is mostly self-contained
-in `model.py`'s `Generator.__init__`.
+in `gan_model.py`'s `Generator.__init__`.
 
 ## Reference papers
 
