@@ -220,13 +220,53 @@ Step 2 — ADKGD run (per experiment, B0 or B1)
 
 ---
 
-## Common operator commands
+## Where the HPC logs live
+
+Every slurm script in this repo merges stdout and stderr into a single file
+with the header `#SBATCH --output=%x-%j.out.txt`, where `%x` is the job name
+and `%j` is the slurm job id.
+
+**The file lands in whichever directory you ran `sbatch` from** (usually
+`~/ADKGD`). It is NOT in `checkpoints/` and NOT in `experiments/`.
+
+### Naming convention per slurm
+
+| Slurm script | `--job-name` | Log filename |
+|---|---|---|
+| `train_gan_fb15k.slurm` | `gan_train_fb15k` | `gan_train_fb15k-<jobid>.out.txt` |
+| `run_baseline_fb15k.slurm` | `adkgd_fb15k` | `adkgd_fb15k-<jobid>.out.txt` |
+| `run_gan_fb15k.slurm` | `adkgd_gan_fb15k` | `adkgd_gan_fb15k-<jobid>.out.txt` |
+
+### Three useful commands
 
 ```bash
-# Tail a live HPC log (output and stderr merged — one file)
-tail -f gan_train_fb15k-<jobid>.out.txt             # GAN training
-tail -f adkgd_fb15k-<jobid>.out.txt                 # ADKGD baseline (B0)
-tail -f adkgd_gan_fb15k-<jobid>.out.txt             # ADKGD with the GAN (B1)
+# 1. Tail the latest log for a given slurm WITHOUT typing the job id
+cd ~/ADKGD
+tail -f "$(ls -t gan_train_fb15k-*.out.txt | head -1)"
+
+# 2. Tail a specific job id (you get this from `sbatch` or `squeue`)
+tail -f gan_train_fb15k-2886370.out.txt
+
+# 3. List the latest few logs across all slurms
+ls -t *-*.out.txt | head -10
+```
+
+### What's in the log vs in checkpoints/
+
+| Where | What it contains |
+|---|---|
+| `~/ADKGD/<jobname>-<jobid>.out.txt` | **Slurm-level**: GPU pre-flight, env activation, all `print()`/`echo` output, Python tracebacks, the RESULTS table at the end |
+| `~/ADKGD/checkpoints/<dataset>/ADKGD_<dataset>_<ratio>_Neighbors39__log.txt` | **ADKGD-internal**: every Precision/Recall line per K cutoff, per-batch losses (this is what `run_experiment.py` greps to build the RESULTS table) |
+| `~/ADKGD/checkpoints/<dataset>/ADKGD_<dataset>_epoch_times.txt` | Per-epoch training duration in seconds |
+
+## Other common operator commands
+
+```bash
+# Job state (works even after the job finishes — squeue only shows running jobs)
+sacct -j <jobid> --format=JobID,JobName,State,ExitCode,Elapsed,Reason
+
+# All your recent job states today
+sacct -u $USER --starttime=today --format=JobID,JobName,State,ExitCode,Elapsed
 
 # Pull Precision/Recall numbers from ADKGD's detailed log
 grep -E "Precision 0\.050000 -- 0\.0[12345]0000|Recall  0\.050000-- 0\.0[12345]0000" \
@@ -235,10 +275,7 @@ grep -E "Precision 0\.050000 -- 0\.0[12345]0000|Recall  0\.050000-- 0\.0[12345]0
 # Inspect epoch durations
 cat checkpoints/FB15K/ADKGD_FB15K_epoch_times.txt
 
-# Verify the slurm submitter's account (DeepThought needs --account=cse)
-sacct -j <jobid> --format=JobID,JobName,Account,Partition,State
-
-# Cancel a job
+# Cancel a running or pending job
 scancel <jobid>
 ```
 
