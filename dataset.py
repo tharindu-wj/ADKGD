@@ -320,6 +320,26 @@ class Reader:
             rng=self._gan_rng,
         )
         print('[GAN] ' + render_stats(stats))
+
+        # Print every (positive, negative) pair so the user can verify what the
+        # GAN produced. WARNING: on FB15K (~325k pairs) this is a lot of output;
+        # cap or switch back to a sample if the slurm log gets too noisy.
+        print('[GAN] %d (positive -> negative) pairs:' % len(pos_triples))
+        for i in range(len(pos_triples)):
+            ph, pr, pt = pos_triples[i]
+            nh, nr, nt = negatives[i]
+            moved = []
+            if ph != nh:
+                moved.append('head')
+            if pr != nr:
+                moved.append('relation')
+            if pt != nt:
+                moved.append('tail')
+            moved_str = ','.join(moved) if moved else 'NONE'
+            print('  pos: (%s, %s, %s)'
+                  % (self.id2ent[ph], self.id2rel[pr], self.id2ent[pt]))
+            print('  neg: (%s, %s, %s)  [moved: %s]'
+                  % (self.id2ent[nh], self.id2rel[nr], self.id2ent[nt], moved_str))
         return negatives
 
     def _load_gan_model(self):
