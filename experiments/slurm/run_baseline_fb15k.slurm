@@ -46,6 +46,8 @@ echo "Using python: $PY"
 
 export OMP_NUM_THREADS="$SLURM_CPUS_PER_TASK"
 export MKL_NUM_THREADS="$SLURM_CPUS_PER_TASK"
+# Force unbuffered Python output so progress streams live to the log file.
+export PYTHONUNBUFFERED=1
 
 # Fail fast if torch can't see the GPU (CPU-only wheel installed by mistake, etc.)
 $PY -c "import torch; assert torch.cuda.is_available(), 'torch cannot see a GPU: install the CUDA wheel'; print('GPU:', torch.cuda.get_device_name(0), '| torch', torch.__version__, '| cuda', torch.version.cuda)"

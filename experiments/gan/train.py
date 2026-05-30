@@ -208,33 +208,35 @@ def main():
 
     device_str = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device(device_str)
-    print(f"Device: {device}")
+    print(f"Device: {device}", flush=True)
 
-    print(f"Loading KG from {args.data} ...")
+    print(f"Loading KG from {args.data} ...", flush=True)
     kg = load_kg(args.data)
-    print(f"  entities = {kg['n_ent']:,}  relations = {kg['n_rel']:,}  triples = {len(kg['triples']):,}")
+    print(f"  entities = {kg['n_ent']:,}  relations = {kg['n_rel']:,}  triples = {len(kg['triples']):,}", flush=True)
 
-    print("Building (real, target) training pairs ...")
+    print("Building (real, target) training pairs ...", flush=True)
     pairs = build_training_pairs(kg["triples"], kg["n_ent"], kg["n_rel"], rng)
-    print(f"  pairs = {len(pairs):,}")
+    print(f"  pairs = {len(pairs):,}", flush=True)
 
     G = Generator(kg["n_ent"], kg["n_rel"], dim=args.dim, z_dim=args.z_dim).to(device)
     D = Discriminator(dim=args.dim).to(device)
     opt_G = torch.optim.Adam(G.parameters(), lr=args.lr, betas=(0.5, 0.999))
     opt_D = torch.optim.Adam(D.parameters(), lr=args.lr * 0.25, betas=(0.5, 0.999))
 
-    print(f"Training: {args.epochs} epochs, batch_size = {args.batch_size}, recon_weight = {args.recon_weight}")
-    print("-" * 60)
+    print(f"Training: {args.epochs} epochs, batch_size = {args.batch_size}, recon_weight = {args.recon_weight}", flush=True)
+    print("-" * 60, flush=True)
     for epoch in range(1, args.epochs + 1):
         d_loss, g_loss = train_one_epoch(
             G, D, opt_G, opt_D, pairs, args.batch_size, device, args.recon_weight,
         )
-        if epoch == 1 or epoch % max(1, args.epochs // 10) == 0 or epoch == args.epochs:
-            print(f"  epoch {epoch:4d}/{args.epochs}  D_loss = {d_loss:.4f}  G_loss = {g_loss:.4f}")
-    print("-" * 60)
+        # Print every epoch for the first 5, then every 5% of total.
+        log_every = max(1, args.epochs // 20)
+        if epoch <= 5 or epoch % log_every == 0 or epoch == args.epochs:
+            print(f"  epoch {epoch:4d}/{args.epochs}  D_loss = {d_loss:.4f}  G_loss = {g_loss:.4f}", flush=True)
+    print("-" * 60, flush=True)
 
     save_checkpoint(G, kg, args.dim, args.z_dim, args.out)
-    print(f"Saved checkpoint to {args.out}")
+    print(f"Saved checkpoint to {args.out}", flush=True)
 
 
 if __name__ == "__main__":
