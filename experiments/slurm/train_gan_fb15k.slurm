@@ -10,7 +10,7 @@
 #   2. FB15K-237 TSVs at data/FB15K/{train,valid,test}.txt.
 #
 # Override hyperparameters via env vars (no script edits required):
-#   EPOCHS=600 BATCH_SIZE=512 sbatch experiments/slurm/train_gan_fb15k.slurm
+#   EPOCHS=600 BATCH_SIZE=1024 sbatch experiments/slurm/train_gan_fb15k.slurm
 #   DATASET_DIR=data/other_kg CKPT_PATH=experiments/gan/outputs/checkpoints/other.pt \
 #       sbatch experiments/slurm/train_gan_fb15k.slurm
 
@@ -35,7 +35,11 @@ CONDA_ENV="$HOME/envs/adkgd"
 DATASET_DIR="${DATASET_DIR:-data/FB15K}"
 CKPT_PATH="${CKPT_PATH:-experiments/gan/outputs/checkpoints/fb15k.pt}"
 EPOCHS="${EPOCHS:-400}"
-BATCH_SIZE="${BATCH_SIZE:-256}"
+# 512 is a safe V100 default — fits comfortably in 32GB HBM2 and gives much
+# better GPU utilisation than train.py's CPU-friendly default of 256. Bump
+# to 1024 if you want to squeeze more throughput; back off to 256 if the
+# model size grows and OOMs.
+BATCH_SIZE="${BATCH_SIZE:-512}"
 
 echo "Job $SLURM_JOB_ID on $(hostname) starting $(date)"
 echo "Dataset    : $DATASET_DIR"

@@ -84,24 +84,44 @@ def build_training_pairs(triples, n_ent, n_rel, rng):
     return pairs
 
 
-def train_one_epoch(G, D, opt_G, opt_D, pairs, batch_size, device, recon_weight=10.0):
-    """One pass over the training pairs. Returns (avg_D_loss, avg_G_loss)."""
-    random.shuffle(pairs)
+def prepare_tensors(pairs, device):
+    """Pack the list of pairs into two big tensors, ONCE before the epoch loop.
+
+    Doing this here (instead of `torch.tensor(...)` per batch) is the single
+    biggest speed-up for small models: the per-batch Python list comprehension
+    used to dominate wall time. Now each epoch only does tensor indexing.
+    """
+    real_all = torch.tensor([p[0] for p in pairs], dtype=torch.long, device=device)
+    target_all = torch.tensor([p[1] for p in pairs], dtype=torch.long, device=device)
+    return real_all, target_all
+
+
+def train_one_epoch(G, D, opt_G, opt_D, real_all, target_all, batch_size, device, recon_weight=10.0):
+    """One pass over the training pairs. Returns (avg_D_loss, avg_G_loss).
+
+    `real_all` and `target_all` are pre-packed tensors of shape (N, 3). Each
+    epoch we just generate a fresh permutation and slice — no Python lists,
+    no per-batch tensor construction.
+    """
+    n_total = real_all.size(0)
+    perm = torch.randperm(n_total, device=device)
+    real_shuffled = real_all[perm]
+    target_shuffled = target_all[perm]
+
     total_d_loss = 0.0
     total_g_loss = 0.0
     n_batches = 0
 
-    for start in range(0, len(pairs), batch_size):
-        batch = pairs[start:start + batch_size]
-        if len(batch) < 2:
+    for start in range(0, n_total, batch_size):
+        end = min(start + batch_size, n_total)
+        if end - start < 2:
             continue
 
-        # Pack the (real, target) pairs into tensors.
-        real_triples = torch.tensor([p[0] for p in batch], dtype=torch.long, device=device)
-        target_triples = torch.tensor([p[1] for p in batch], dtype=torch.long, device=device)
+        real_triples = real_shuffled[start:end]
+        target_triples = target_shuffled[start:end]
         real_h, real_r, real_t = real_triples[:, 0], real_triples[:, 1], real_triples[:, 2]
         target_h, target_r, target_t = target_triples[:, 0], target_triples[:, 1], target_triples[:, 2]
-        n = len(batch)
+        n = end - start
 
         # ------------- Discriminator step -------------
         # Generate a "fake" candidate (no grad — D only updates D's weights).
@@ -193,7 +213,10 @@ def main():
     ap.add_argument("--data", required=True, help="Dataset directory")
     ap.add_argument("--out", required=True, help="Output checkpoint path (.pt)")
     ap.add_argument("--epochs", type=int, default=50)
-    ap.add_argument("--batch_size", type=int, default=64)
+    # 256 is a good default on both CPU and a single V100. Bigger batches
+    # (512/1024) are faster on GPU; smaller (32/64) on a laptop CPU may help
+    # the model learn finer distinctions but cost wall time.
+    ap.add_argument("--batch_size", type=int, default=256)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--dim", type=int, default=64)
     ap.add_argument("--z_dim", type=int, default=16)
@@ -218,6 +241,10 @@ def main():
     pairs = build_training_pairs(kg["triples"], kg["n_ent"], kg["n_rel"], rng)
     print(f"  pairs = {len(pairs):,}", flush=True)
 
+    # Pack pairs into two tensors once. From here on, no Python lists in the
+    # epoch loop — only tensor indexing. This is where most of the speed comes from.
+    real_all, target_all = prepare_tensors(pairs, device)
+
     G = Generator(kg["n_ent"], kg["n_rel"], dim=args.dim, z_dim=args.z_dim).to(device)
     D = Discriminator(dim=args.dim).to(device)
     opt_G = torch.optim.Adam(G.parameters(), lr=args.lr, betas=(0.5, 0.999))
@@ -227,7 +254,7 @@ def main():
     print("-" * 60, flush=True)
     for epoch in range(1, args.epochs + 1):
         d_loss, g_loss = train_one_epoch(
-            G, D, opt_G, opt_D, pairs, args.batch_size, device, args.recon_weight,
+            G, D, opt_G, opt_D, real_all, target_all, args.batch_size, device, args.recon_weight,
         )
         # Print every epoch for the first 5, then every 5% of total.
         log_every = max(1, args.epochs // 20)
