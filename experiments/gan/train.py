@@ -44,7 +44,7 @@ The checkpoint at the end bundles:
   - the vocab maps (ent2id, rel2id, ...)
   - the set of real triples (for collision filtering at inference)
 
-So `generate.py` only needs the checkpoint, no separate data files.
+So `corrupt_triples.py` only needs the checkpoint, no separate data files.
 """
 import argparse
 import os
@@ -192,7 +192,7 @@ def train_one_epoch(G, D, opt_G, opt_D, real_all, target_all, batch_size, device
 
 
 def save_checkpoint(G, kg, dim, z_dim, save_path):
-    """Bundle everything `generate.py` needs into one .pt file."""
+    """Bundle everything `corrupt_triples.py` needs into one .pt file."""
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     torch.save({
         "generator_state": G.state_dict(),

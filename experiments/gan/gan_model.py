@@ -42,7 +42,7 @@ class Generator(nn.Module):
         #   head_out -> which entity should the corrupted head be?
         #   rel_out  -> which relation?
         #   tail_out -> which entity for the tail?
-        # The corrupter (in generate.py) picks ONE of these to actually use
+        # The corrupter (in corrupt_triples.py) picks ONE of these to actually use
         # per call (the others are wasted compute but easier to reason about).
         self.head_out = nn.Linear(hidden, n_ent)
         self.rel_out = nn.Linear(hidden, n_rel)

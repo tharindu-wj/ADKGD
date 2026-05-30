@@ -13,14 +13,14 @@ import sys
 
 import numpy as np
 
-# Put this folder on sys.path so the sibling files (model.py, generate.py)
+# Put this folder on sys.path so the sibling files (gan_model.py, corrupt_triples.py)
 # resolve when ADKGD imports us.
 _GAN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _GAN_DIR not in sys.path:
     sys.path.insert(0, _GAN_DIR)
 
 # Re-exported for dataset.py — `render_stats` formats the per-batch stats line.
-from generate import load_checkpoint, generate_negatives, render_stats  # noqa: E402,F401
+from corrupt_triples import load_checkpoint, generate_negatives, render_stats  # noqa: E402,F401
 
 __all__ = ["load_gan", "generate", "render_stats"]
 

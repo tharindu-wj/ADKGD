@@ -42,7 +42,7 @@ experiments/
     ├── data.py                            ← KG loader (~70 lines)
     ├── gan_model.py                       ← Generator + Discriminator (plain MLPs, ~140 lines) — `gan_` prefix avoids colliding with ADKGD's root-level `model.py`
     ├── train.py                           ← training CLI used by train_gan_fb15k.slurm
-    ├── generate.py                        ← in-process negative generation
+    ├── corrupt_triples.py                 ← in-process negative generation (8-step pipeline)
     ├── adkgd_bridge.py                    ← OUR boundary file (GAN ↔ ADKGD adapter)
     └── outputs/checkpoints/               ← .pt drop zone
         └── dummy.pt                       ← bundled fixture (dummy_kg, 30 epochs)
@@ -197,8 +197,8 @@ Step 2 — ADKGD run (per experiment, B0 or B1)
                 │               ├─ neg_source=random → generate_anomalous_triples()
                 │               └─ neg_source=gan    → Reader._gan_negatives()
                 │                       └─ experiments/gan/adkgd_bridge.py
-                │                               ├─ generate.py:load_checkpoint() the .pt
-                │                               └─ generate.py:generate_negatives() — batched forward pass
+                │                               ├─ corrupt_triples.py:load_checkpoint() the .pt
+                │                               └─ corrupt_triples.py:generate_negatives() — batched forward pass
                 ├─ subprocess: Our_TopK%_RankingList.py --mode test    (ADKGD upstream)
                 └─ parses logs → prints RESULTS table
 ```
@@ -299,5 +299,5 @@ slot distribution near 1/3 each.
 
 - [RUNNING_ON_DEEPTHOUGHT.md](RUNNING_ON_DEEPTHOUGHT.md) — HPC setup, env creation, troubleshooting.
 - ADKGD upstream — repo root: `Our_TopK%_RankingList.py` (entry), `dataset.py` (Reader + `_gan_negatives` dispatch), `model.py` (BiLSTM_Attention).
-- Simple GAN — [experiments/gan/](gan/) (data.py, gan_model.py, train.py, generate.py).
+- Simple GAN — [experiments/gan/](gan/) (data.py, gan_model.py, train.py, corrupt_triples.py).
 - Bridge — [experiments/gan/adkgd_bridge.py](gan/adkgd_bridge.py) (the only file that knows about both worlds).

@@ -1,20 +1,31 @@
 """Use a trained GAN checkpoint to produce one negative per input triple.
 
 This is what ADKGD calls every time it builds a training batch with
-`--neg_source gan`. Everything stays in-process — no intermediate file.
+`--neg_source gan`. Everything stays in-process - no intermediate file.
 
-How it works:
-  1. Load the trained generator + its baked-in vocab + the set of real triples.
-  2. For each input triple (h, r, t):
-       a. Pick a slot uniformly at random ({head, relation, tail}).
-       b. Run the generator with random noise.
-       c. Mask the original index in that slot to -inf so the slot must move.
-       d. Pick the new index via argmax + Gumbel noise (for stochasticity).
-       e. If the resulting triple already exists in the graph, retry up to
-          `max_retries` times.
-       f. If retries exhaust, fall back to uniform random for that one slot.
-  3. Translate back from the GAN's integer IDs to ADKGD's integer IDs
-     via strings (the two repos may number the same entity differently).
+The 8-step pipeline (one negative per real triple):
+
+  STEP 1: Translate ADKGD integer IDs -> strings -> GAN integer IDs.
+          (ADKGD and the GAN may number the same entity differently; strings
+           are the lingua franca that keeps both worlds aligned.)
+  STEP 2: Run the generator forward to get 3 logit vectors.
+          (one over entities for the new head, one over relations for the new
+           rel, one over entities for the new tail. These are PROBABILITIES,
+           not picks yet.)
+  STEP 3: Pick which slot to corrupt uniformly at random {head, rel, tail}.
+          (Matches the baseline's `random.randint(0, 2)` distribution exactly.)
+  STEP 4: Mask the original index in the chosen slot to -inf, then sample
+          the new value via argmax + Gumbel noise.
+          (Mask = "force the slot to move". Gumbel noise = "vary across calls"
+           so we don't return the same negative every time.)
+  STEP 5: Build the candidate triple by gluing the new value into the slot
+          we picked, keeping the other 2 slots from the original.
+  STEP 6: Validate the candidate. If it's a self-loop (h == t) or already in
+          the real graph, RETRY up to `max_retries` times with fresh Gumbel
+          noise on the same logits.
+  STEP 7: If all retries exhaust, fall back to uniform-random replacement
+          for that one slot (last-resort safety net).
+  STEP 8: Translate GAN integer IDs back to ADKGD integer IDs via strings.
 """
 import os
 import sys
@@ -65,23 +76,35 @@ def load_checkpoint(ckpt_path, device=None):
 
 
 def _pick_new_index_with_noise(logits, clean_index, rng):
-    """Sample a new index from `logits`, forbidding `clean_index` itself.
+    """Implements STEP 4: mask the original + Gumbel-sample a new index.
 
-    We mask the clean position to -inf (so argmax can't pick it) and add
-    Gumbel noise so the same triple produces different negatives across
-    calls. Pure argmax would be deterministic — not what we want for
-    contrastive training.
+    Two things happen here:
+      (a) MASK: set logits[clean_index] = -inf so argmax can never pick the
+          original value. This is what forces the slot to actually move.
+      (b) NOISE: add Gumbel noise before argmax. Same input -> different
+          output across calls. Without this, every call would return the
+          same negative, which gives ADKGD's contrastive loss zero variety.
     """
+    # (a) MASK
     masked = logits.clone()
     masked[clean_index] = float("-inf")
-    # Gumbel noise (small temperature, mostly argmax but with some variety).
+
+    # (b) NOISE: add Gumbel-distributed noise (proven equivalent to sampling
+    # from softmax(logits) when followed by argmax — the "Gumbel-Softmax"
+    # trick). Temperature 0.5 = mostly argmax but with some randomness.
     u = torch.rand_like(masked).clamp_(1e-10, 1.0 - 1e-10)
     gumbel = -torch.log(-torch.log(u))
     return int((masked + gumbel * 0.5).argmax().item())
 
 
 def _uniform_fallback(h, r, t, slot, n_ent, n_rel, real_triple_set, rng, max_tries=200):
-    """Last-resort: pick a uniform random replacement in the chosen slot."""
+    """Implements STEP 7: last-resort uniform-random replacement.
+
+    Only called when the GAN's retry loop in STEP 6 exhausts its budget
+    (every Gumbel-sampled candidate kept colliding with the real graph).
+    We give up on the GAN's distribution and just pick uniformly at random.
+    This guarantees ADKGD always gets a valid negative back.
+    """
     for _ in range(max_tries):
         if slot == 0:
             candidate = (int(rng.integers(n_ent)), r, t)
@@ -122,13 +145,19 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
     n_rel = payload["n_rel"]
     z_dim = payload["z_dim"]
 
-    # Step 1: ADKGD integer IDs -> strings -> GAN integer IDs.
-    # We do this once up front so the inner loop only deals with integers.
+    # ------------------------------------------------------------------
+    # STEP 1: Translate ADKGD IDs -> strings -> GAN IDs (once, up front).
+    # ------------------------------------------------------------------
+    # ADKGD and the GAN both built `ent2id`/`rel2id` from the SAME files,
+    # but in "first-seen" order, so the same string can get a different int
+    # in each repo. We use the string as the bridge between the two worlds.
     gan_triples = []
     for h_adk, r_adk, t_adk in adkgd_triples:
+        # ADKGD int  ->  string
         h_s = adkgd_maps["id2ent"][h_adk]
         r_s = adkgd_maps["id2rel"][r_adk]
         t_s = adkgd_maps["id2ent"][t_adk]
+        # string  ->  GAN int
         gan_triples.append((ent2id_gan[h_s], rel2id_gan[r_s], ent2id_gan[t_s]))
 
     out = []
@@ -141,11 +170,18 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
         "slot_t": 0,
     }
 
-    # Step 2: process in batches so the generator's forward pass is efficient.
+    # Outer loop: process in batches so STEP 2 (generator forward) is one
+    # efficient matmul per batch instead of one tiny matmul per triple.
     for batch_start in range(0, len(gan_triples), batch_size):
         batch = gan_triples[batch_start:batch_start + batch_size]
         n = len(batch)
 
+        # --------------------------------------------------------------
+        # STEP 2: Generator forward pass on the whole batch.
+        # --------------------------------------------------------------
+        # Output: three logit tensors, each (n, vocab_size). Think of these
+        # as "the GAN's score for every possible entity/relation in each slot".
+        # They are PROBABILITIES, not picks. Picking happens in STEP 4.
         h_in = torch.tensor([row[0] for row in batch], dtype=torch.long, device=device)
         r_in = torch.tensor([row[1] for row in batch], dtype=torch.long, device=device)
         t_in = torch.tensor([row[2] for row in batch], dtype=torch.long, device=device)
@@ -154,14 +190,22 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
             z = torch.randn(n, z_dim, device=device)
             head_logits, rel_logits, tail_logits = G(h_in, r_in, t_in, z)
 
-        # One uniform random slot pick per positive.
+        # --------------------------------------------------------------
+        # STEP 3: Pick which slot to corrupt - uniform random per triple.
+        # --------------------------------------------------------------
+        # 0 = head, 1 = relation, 2 = tail. Matches ADKGD baseline exactly.
         slots = rng.integers(3, size=n)
 
+        # Inner loop: one triple at a time. Steps 4-8 happen per item.
         for i in range(n):
             h_gan, r_gan, t_gan = batch[i]
             slot = int(slots[i])
 
-            # Pick which logits to sample from based on the slot.
+            # ----------------------------------------------------------
+            # STEP 4: Select the right logits + clean value for that slot.
+            # (The actual mask + Gumbel sample happens inside the retry
+            # loop below, calling _pick_new_index_with_noise().)
+            # ----------------------------------------------------------
             if slot == 0:
                 logits_for_slot = head_logits[i]
                 clean_value = h_gan
@@ -172,11 +216,19 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
                 logits_for_slot = tail_logits[i]
                 clean_value = t_gan
 
-            # Retry loop: re-sample if we hit a self-loop or a real triple.
+            # ----------------------------------------------------------
+            # STEPS 5 + 6: Build candidate, validate, retry on collision.
+            # ----------------------------------------------------------
+            # STEP 5 = assemble (new_value + 2 original slots).
+            # STEP 6 = check (self-loop? real triple?). Retry with fresh
+            #          Gumbel noise if the candidate is invalid.
             neg_h, neg_r, neg_t = h_gan, r_gan, t_gan
             num_tries = 0
             for _ in range(max_retries):
+                # Pick a new value (STEP 4: mask + Gumbel + argmax).
                 new_idx = _pick_new_index_with_noise(logits_for_slot, clean_value, rng)
+
+                # STEP 5: glue new_idx into the chosen slot, keep the other two.
                 if slot == 0:
                     candidate = (new_idx, r_gan, t_gan)
                 elif slot == 1:
@@ -184,17 +236,26 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
                 else:
                     candidate = (h_gan, r_gan, new_idx)
                 num_tries += 1
+
+                # STEP 6: validate. `not self-loop` AND `not in real graph`.
                 if candidate[0] != candidate[2] and candidate not in real_triple_set:
                     neg_h, neg_r, neg_t = candidate
-                    break
+                    break  # accepted - move on to the next triple
             else:
-                # All retries exhausted — uniform random for this one slot.
+                # ------------------------------------------------------
+                # STEP 7: Uniform fallback (retries exhausted).
+                # ------------------------------------------------------
+                # The GAN's distribution kept proposing real triples or self-
+                # loops. Give up on the model and pick uniformly at random.
+                # Rare on a sane KG; if you see this number rise, the GAN's
+                # output distribution has collapsed (mode collapse).
                 neg_h, neg_r, neg_t = _uniform_fallback(
                     h_gan, r_gan, t_gan, slot, n_ent, n_rel, real_triple_set, rng,
                 )
                 stats["uniform_fallbacks"] += 1
             stats["retries"] += num_tries - 1  # extra rolls beyond the first
 
+            # Bookkeeping for the stats line.
             if slot == 0:
                 stats["slot_h"] += 1
             elif slot == 1:
@@ -202,9 +263,13 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
             else:
                 stats["slot_t"] += 1
 
-            # Step 3: GAN integer IDs -> strings -> ADKGD integer IDs.
+            # ----------------------------------------------------------
+            # STEP 8: Translate GAN IDs -> strings -> ADKGD IDs.
+            # ----------------------------------------------------------
+            # Same string-bridge trick as STEP 1, in reverse, so the value
+            # we return matches the vocab ADKGD's Reader expects.
             out.append((
-                adkgd_maps["ent2id"][id2ent_gan[neg_h]],
+                adkgd_maps["ent2id"][id2ent_gan[neg_h]],   # GAN int -> string -> ADKGD int
                 adkgd_maps["rel2id"][id2rel_gan[neg_r]],
                 adkgd_maps["ent2id"][id2ent_gan[neg_t]],
             ))

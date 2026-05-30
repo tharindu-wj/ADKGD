@@ -15,7 +15,7 @@ state-of-the-art performance.
 | [data.py](data.py) | Load `train/valid/test.txt` → integer triples + vocab | ~70 lines |
 | [gan_model.py](gan_model.py) | `Generator` + `Discriminator` + Gumbel-Softmax helper. Name has the `gan_` prefix to avoid colliding with ADKGD's `model.py` at the repo root | ~140 lines |
 | [train.py](train.py) | Training loop + CLI (`python train.py --data ...`) | ~190 lines |
-| [generate.py](generate.py) | In-process negative generation (loaded by ADKGD at training time) | ~190 lines |
+| [corrupt_triples.py](corrupt_triples.py) | In-process negative generation (loaded by ADKGD at training time). Contains the 8-step pipeline that turns generator logits into valid contrastive negatives. | ~230 lines |
 | [adkgd_bridge.py](adkgd_bridge.py) | Thin re-export so ADKGD's `dataset.py` has a stable import | ~35 lines |
 | `outputs/checkpoints/` | Trained `.pt` files (gitignored) | — |
 

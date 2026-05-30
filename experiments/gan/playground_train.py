@@ -460,3 +460,5 @@ torch.save({
 }, CKPT_OUT)
 print(f"\n  Saved to: {CKPT_OUT}")
 print(f"  Now run:   python experiments/gan/playground_test.py")
+
+# %%
