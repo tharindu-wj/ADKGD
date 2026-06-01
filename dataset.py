@@ -322,7 +322,7 @@ class Reader:
         print('[GAN] ' + render_stats(stats))
 
         # Print every (positive, negative) pair so the user can verify what the
-        # GAN produced. WARNING: on FB15K (~325k pairs) this is a lot of output;
+        # GAN produced. WARNING: on FB15K-237 (~325k pairs) this is a lot of output;
         # cap or switch back to a sample if the slurm log gets too noisy.
         print('[GAN] %d (positive -> negative) pairs:' % len(pos_triples))
         for i in range(len(pos_triples)):

@@ -28,8 +28,8 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 
 # Log lines look like:
-#   INFO:root:[Test][FB15K][ADKGD] Precision 0.050000 -- 0.010000 : 0.951...
-#   INFO:root:[Test][FB15K][ADKGD] Recall   0.050000-- 0.010000 : 0.190...
+#   INFO:root:[Test][FB15K-237][ADKGD] Precision 0.050000 -- 0.010000 : 0.951...
+#   INFO:root:[Test][FB15K-237][ADKGD] Recall   0.050000-- 0.010000 : 0.190...
 #   Epoch: 0, Duration: 700.32 seconds
 PRECISION_RE = re.compile(r"Precision\s+(\d+\.\d+)\s*--\s*(\d+\.\d+)\s*:\s*(\d+\.\d+)")
 RECALL_RE = re.compile(r"Recall\s+(\d+\.\d+)\s*--\s*(\d+\.\d+)\s*:\s*(\d+\.\d+)")
@@ -85,7 +85,7 @@ def parse_total_train_min(epoch_times_path: Path) -> tuple[float, int] | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dataset", default="FB15K", help="dataset folder name under data/")
+    ap.add_argument("--dataset", default="FB15K-237", help="dataset folder name under data/")
     ap.add_argument("--anomaly_ratio", type=float, default=0.05, help="fraction of fakes injected (e.g. 0.05)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--max_epoch", type=int, default=1)

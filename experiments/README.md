@@ -32,16 +32,19 @@ experiments/
 ├── RUNNING_ON_DEEPTHOUGHT.md              ← HPC operator guide
 ├── run_experiment.py                      ← ADKGD orchestrator (train+test+RESULTS)
 │
-├── slurm/                                 ← ALL HPC launchers
-│   ├── train_gan_fb15k.slurm              ← step 1: train the GAN
-│   ├── run_baseline_fb15k.slurm           ← step 2a: B0 baseline
-│   └── run_gan_fb15k.slurm                ← step 2b: B1 with the GAN
+├── slurm/                                 ← ALL HPC launchers (one trio per dataset)
+│   ├── train_gan_fb15k237.slurm              ← FB15K-237 — train the GAN
+│   ├── run_baseline_fb15k237.slurm           ← FB15K-237 — ADKGD baseline (random negatives, B0)
+│   ├── run_baseline_with_gan_fb15k237.slurm  ← FB15K-237 — ADKGD baseline + trained GAN negatives (B1)
+│   ├── train_gan_wn18rr.slurm             ← WN18RR    — train the GAN
+│   ├── run_baseline_wn18rr.slurm          ← WN18RR    — ADKGD baseline (random negatives, B0)
+│   └── run_baseline_with_gan_wn18rr.slurm ← WN18RR    — ADKGD baseline + trained GAN negatives (B1)
 │
 └── gan/                                   ← simple GAN (teaching version)
     ├── README.md                          ← per-codebase quickstart + diagram
     ├── data.py                            ← KG loader (~70 lines)
     ├── gan_model.py                       ← Generator + Discriminator (plain MLPs, ~140 lines) — `gan_` prefix avoids colliding with ADKGD's root-level `model.py`
-    ├── train.py                           ← training CLI used by train_gan_fb15k.slurm
+    ├── train.py                           ← training CLI used by train_gan_fb15k237.slurm
     ├── corrupt_triples.py                 ← in-process negative generation (8-step pipeline)
     ├── adkgd_bridge.py                    ← OUR boundary file (GAN ↔ ADKGD adapter)
     └── outputs/checkpoints/               ← .pt drop zone
@@ -89,17 +92,24 @@ python experiments/gan/train.py `
 HPC (FB15K-237, V100):
 
 ```bash
-sbatch experiments/slurm/train_gan_fb15k.slurm
-# → experiments/gan/outputs/checkpoints/fb15k.pt
+sbatch experiments/slurm/train_gan_fb15k237.slurm
+# → experiments/gan/outputs/checkpoints/fb15k237.pt
 ```
 
-Override hyperparameters via env vars:
+HPC (WN18RR, V100):
 
 ```bash
-EPOCHS=200 BATCH_SIZE=256 sbatch experiments/slurm/train_gan_fb15k.slurm
+sbatch experiments/slurm/train_gan_wn18rr.slurm
+# → experiments/gan/outputs/checkpoints/wn18rr.pt
+```
+
+Override hyperparameters via env vars (works on any of the train slurms):
+
+```bash
+EPOCHS=200 BATCH_SIZE=256 sbatch experiments/slurm/train_gan_fb15k237.slurm
 DATASET_DIR=data/other_kg \
     CKPT_PATH=experiments/gan/outputs/checkpoints/other.pt \
-    sbatch experiments/slurm/train_gan_fb15k.slurm
+    sbatch experiments/slurm/train_gan_fb15k237.slurm
 ```
 
 See [gan/README.md](gan/README.md) for the GAN architecture diagram, loss
@@ -120,10 +130,16 @@ Local:
 python experiments/run_experiment.py --dataset dummy_kg --anomaly_ratio 0.15 --max_epoch 1
 ```
 
-HPC:
+HPC (FB15K-237):
 
 ```bash
-sbatch experiments/slurm/run_baseline_fb15k.slurm
+sbatch experiments/slurm/run_baseline_fb15k237.slurm
+```
+
+HPC (WN18RR):
+
+```bash
+sbatch experiments/slurm/run_baseline_wn18rr.slurm
 ```
 
 ### 3b. Variant (B1) — the GAN negatives (in-process)
@@ -136,10 +152,16 @@ python experiments/run_experiment.py --dataset dummy_kg --anomaly_ratio 0.15 --m
     --gan_path experiments/gan/outputs/checkpoints/dummy.pt
 ```
 
-HPC (after step 2b produced `fb15k.pt`):
+HPC FB15K-237 (after step 2 produced `fb15k237.pt`):
 
 ```bash
-sbatch experiments/slurm/run_gan_fb15k.slurm
+sbatch experiments/slurm/run_baseline_with_gan_fb15k237.slurm
+```
+
+HPC WN18RR (after step 2 produced `wn18rr.pt`):
+
+```bash
+sbatch experiments/slurm/run_baseline_with_gan_wn18rr.slurm
 ```
 
 ### What B1 prints (diagnostic)
@@ -183,14 +205,14 @@ populates the final research-paper table.
 
 ```
 Step 1 — GAN training (one-time)
-  experiments/slurm/train_gan_fb15k.slurm
+  experiments/slurm/train_gan_fb15k237.slurm
         └─ experiments/gan/train.py
                 ├─ data.py     (load KG)
                 ├─ gan_model.py (Generator + Discriminator)
                 └─ writes experiments/gan/outputs/checkpoints/<name>.pt
 
 Step 2 — ADKGD run (per experiment, B0 or B1)
-  experiments/slurm/run_{baseline,gan}_fb15k.slurm
+  experiments/slurm/run_baseline{,_with_gan}_fb15k237.slurm
         └─ experiments/run_experiment.py            ← orchestrator (ours)
                 ├─ subprocess: Our_TopK%_RankingList.py --mode train   (ADKGD upstream)
                 │       └─ dataset.py:Reader.get_data()
@@ -216,7 +238,8 @@ Step 2 — ADKGD run (per experiment, B0 or B1)
 | Dataset | Files | Triples | Purpose |
 |---|---|---|---|
 | `dummy_kg` | `data/dummy_kg/{train,valid,test}.txt` | **18 unique × 60 = 1,080** | Smoke-test fixture (6 people, 3 relations, 4 countries). Replication forces `K=0.1%` math to produce ≥ 1. |
-| `FB15K` | `data/FB15K/{train,valid,test}.txt` | 310,116 | Paper benchmark (FB15K-237). Real research runs. |
+| `FB15K-237` | `data/FB15K-237/{train,valid,test}.txt` | 310,116 | Paper benchmark — Freebase 15K with 237 relations (inverse relations removed to prevent test leakage). Real research runs. |
+| `WN18RR` | `data/WN18RR/{train,valid,test}.txt` | 93,003 | Paper benchmark (WordNet 18 with restricted relations: 40,943 entities, 11 relations). Real research runs. |
 
 ---
 
@@ -233,19 +256,22 @@ and `%j` is the slurm job id.
 
 | Slurm script | `--job-name` | Log filename |
 |---|---|---|
-| `train_gan_fb15k.slurm` | `gan_train_fb15k` | `gan_train_fb15k-<jobid>.out.txt` |
-| `run_baseline_fb15k.slurm` | `adkgd_fb15k` | `adkgd_fb15k-<jobid>.out.txt` |
-| `run_gan_fb15k.slurm` | `adkgd_gan_fb15k` | `adkgd_gan_fb15k-<jobid>.out.txt` |
+| `train_gan_fb15k237.slurm` | `gan_train_fb15k237` | `gan_train_fb15k237-<jobid>.out.txt` |
+| `run_baseline_fb15k237.slurm` | `adkgd_fb15k237` | `adkgd_fb15k237-<jobid>.out.txt` |
+| `run_baseline_with_gan_fb15k237.slurm` | `adkgd_baseline_with_gan_fb15k237` | `adkgd_baseline_with_gan_fb15k237-<jobid>.out.txt` |
+| `train_gan_wn18rr.slurm` | `gan_train_wn18rr` | `gan_train_wn18rr-<jobid>.out.txt` |
+| `run_baseline_wn18rr.slurm` | `adkgd_wn18rr` | `adkgd_wn18rr-<jobid>.out.txt` |
+| `run_baseline_with_gan_wn18rr.slurm` | `adkgd_baseline_with_gan_wn18rr` | `adkgd_baseline_with_gan_wn18rr-<jobid>.out.txt` |
 
 ### Three useful commands
 
 ```bash
 # 1. Tail the latest log for a given slurm WITHOUT typing the job id
 cd ~/ADKGD
-tail -f "$(ls -t gan_train_fb15k-*.out.txt | head -1)"
+tail -f "$(ls -t gan_train_fb15k237-*.out.txt | head -1)"
 
 # 2. Tail a specific job id (you get this from `sbatch` or `squeue`)
-tail -f gan_train_fb15k-2886370.out.txt
+tail -f gan_train_fb15k237-2886370.out.txt
 
 # 3. List the latest few logs across all slurms
 ls -t *-*.out.txt | head -10
@@ -270,10 +296,10 @@ sacct -u $USER --starttime=today --format=JobID,JobName,State,ExitCode,Elapsed
 
 # Pull Precision/Recall numbers from ADKGD's detailed log
 grep -E "Precision 0\.050000 -- 0\.0[12345]0000|Recall  0\.050000-- 0\.0[12345]0000" \
-    checkpoints/FB15K/ADKGD_FB15K_0.05_Neighbors39__log.txt
+    checkpoints/FB15K-237/ADKGD_FB15K-237_0.05_Neighbors39__log.txt
 
 # Inspect epoch durations
-cat checkpoints/FB15K/ADKGD_FB15K_epoch_times.txt
+cat checkpoints/FB15K-237/ADKGD_FB15K-237_epoch_times.txt
 
 # Cancel a running or pending job
 scancel <jobid>

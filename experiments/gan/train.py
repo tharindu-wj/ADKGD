@@ -9,12 +9,12 @@ Run from the repo root:
       --device cpu \
       --out experiments/gan/outputs/checkpoints/dummy.pt
 
-  # HPC on FB15K (V100)
+  # HPC on FB15K-237 (V100)
   python experiments/gan/train.py \
-      --data data/FB15K \
+      --data data/FB15K-237 \
       --epochs 200 \
       --device cuda \
-      --out experiments/gan/outputs/checkpoints/fb15k.pt
+      --out experiments/gan/outputs/checkpoints/fb15k237.pt
 
 How training works (each epoch):
   1. For every real triple, build a "training pair" (real, target):

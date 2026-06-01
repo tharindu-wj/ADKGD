@@ -3,7 +3,7 @@
 How to reproduce the FB15K-237 column of the ADKGD paper's Table 2 on the
 DeepThought HPC as a SLURM batch job on the **GPU partition (Tesla V100)**,
 using [`run_experiment.py`](run_experiment.py) as the orchestrator and
-[`experiments/slurm/run_baseline_fb15k.slurm`](slurm/run_baseline_fb15k.slurm) as the
+[`experiments/slurm/run_baseline_fb15k237.slurm`](slurm/run_baseline_fb15k237.slurm) as the
 launcher.
 
 ## Why batch (not the login node)
@@ -19,13 +19,13 @@ packages — it never reaches out to PyPI mid-run.
 
 ## What one job produces
 
-One submission of `experiments/slurm/run_baseline_fb15k.slurm` trains ADKGD on FB15K-237 at
+One submission of `experiments/slurm/run_baseline_fb15k237.slurm` trains ADKGD on FB15K-237 at
 `anomaly_ratio=0.05`, seed 0, for 1 epoch, then evaluates. The job's
 `.out.txt` ends with:
 
 ```
 ============================================================
-  RESULTS  (FB15K @ anomaly_ratio=0.05, seed=0)
+  RESULTS  (FB15K-237 @ anomaly_ratio=0.05, seed=0)
 ============================================================
      K   Precision@K    Recall@K
 ------  ------------  ----------
@@ -67,7 +67,7 @@ to worry about.
 ## 2. Point the job script at your paths
 
 Edit the two variables at the top of
-[`experiments/slurm/run_baseline_fb15k.slurm`](slurm/run_baseline_fb15k.slurm) if your
+[`experiments/slurm/run_baseline_fb15k237.slurm`](slurm/run_baseline_fb15k237.slurm) if your
 layout differs:
 
 ```bash
@@ -85,9 +85,9 @@ There are three slurm launchers in `experiments/slurm/`. Submit them in this ord
 
 | # | Launcher | When |
 |---|---|---|
-| 1 | `train_gan_fb15k.slurm` | **One-time** per dataset — produces the GAN checkpoint used by B1. Skip if a checkpoint already exists. |
-| 2 | `run_baseline_fb15k.slurm` | **B0** — ADKGD with random negatives (the paper baseline). |
-| 3 | `run_gan_fb15k.slurm` | **B1** — ADKGD with GAN negatives, in-process. Requires step 1 to have produced `experiments/gan/outputs/checkpoints/fb15k.pt`. |
+| 1 | `train_gan_fb15k237.slurm` | **One-time** per dataset — produces the GAN checkpoint used by B1. Skip if a checkpoint already exists. |
+| 2 | `run_baseline_fb15k237.slurm` | **B0** — ADKGD baseline with random negatives (reproduces Wu et al. 2024 Table 2). |
+| 3 | `run_baseline_with_gan_fb15k237.slurm` | **B1** — ADKGD baseline, but with the trained GAN supplying training negatives in-process. Requires step 1 to have produced `experiments/gan/outputs/checkpoints/fb15k237.pt`. |
 
 Step 2 (B0) and step 3 (B1) are independent — submit them in either order.
 Step 1 must happen before step 3.
@@ -97,24 +97,24 @@ cd $HOME/ADKGD
 git pull                                              # get latest run_experiment.py / slurm
 
 # (one-time, only if no checkpoint yet) Train the GAN:
-sbatch experiments/slurm/train_gan_fb15k.slurm
+sbatch experiments/slurm/train_gan_fb15k237.slurm
 
 # B0 baseline
-sbatch --test-only experiments/slurm/run_baseline_fb15k.slurm     # dry-run: validate the script
-sbatch experiments/slurm/run_baseline_fb15k.slurm                 # real submit → prints a job id
+sbatch --test-only experiments/slurm/run_baseline_fb15k237.slurm     # dry-run: validate the script
+sbatch experiments/slurm/run_baseline_fb15k237.slurm                 # real submit → prints a job id
 
-# B1 with the GAN (after step 1 has finished)
-sbatch experiments/slurm/run_gan_fb15k.slurm
+# B1 baseline + the GAN negatives (after step 1 has finished)
+sbatch experiments/slurm/run_baseline_with_gan_fb15k237.slurm
 
 squeue -u $USER                                       # PD = pending, R = running
-tail -f adkgd_fb15k-<jobid>.out.txt                   # live log (training progress)
+tail -f adkgd_fb15k237-<jobid>.out.txt                   # live log (training progress)
 ```
 
 **Success** = job ends `COMPLETED`, the GPU pre-flight printed
-`GPU: Tesla V100-...`, and the bottom of `adkgd_fb15k-<jobid>.out.txt` (or
-`adkgd_gan_fb15k-<jobid>.out.txt` for B1) shows the RESULTS block (5 P@K +
-5 R@K values + Total train time). The trained model plus raw logs sit under
-`checkpoints/FB15K/` in the project directory (gitignored).
+`GPU: Tesla V100-...`, and the bottom of `adkgd_fb15k237-<jobid>.out.txt` (or
+`adkgd_baseline_with_gan_fb15k237-<jobid>.out.txt` for B1) shows the RESULTS
+block (5 P@K + 5 R@K values + Total train time). The trained model plus raw
+logs sit under `checkpoints/FB15K-237/` in the project directory (gitignored).
 
 > HPC storage is not backed up. Once you have the RESULTS block, save your
 > `*.out.txt` somewhere durable — `/RDrive`, locally via `scp`, or pasted into
@@ -126,31 +126,31 @@ Two files hold the action. Pick whichever's more convenient:
 
 | File | What's in it | Who wrote it |
 |---|---|---|
-| `adkgd_fb15k-<jobid>.out.txt` (in the repo root) | The slurm job's combined stdout+stderr: GPU pre-flight, every per-batch loss, every Precision/Recall log line, and the **RESULTS block at the very end**. | SLURM (everything from the job) |
-| `checkpoints/FB15K/ADKGD_FB15K_0.05_Neighbors39__log.txt` | ADKGD's own application log: per-batch losses + every `Precision/Recall <ratio> -- <K> : <val>` line (the 39 = `--num_neighbor=39`, ADKGD's subgraph size). | ADKGD's `logging.info(...)` via FileHandler |
+| `adkgd_fb15k237-<jobid>.out.txt` (in the repo root) | The slurm job's combined stdout+stderr: GPU pre-flight, every per-batch loss, every Precision/Recall log line, and the **RESULTS block at the very end**. | SLURM (everything from the job) |
+| `checkpoints/FB15K-237/ADKGD_FB15K-237_0.05_Neighbors39__log.txt` | ADKGD's own application log: per-batch losses + every `Precision/Recall <ratio> -- <K> : <val>` line (the 39 = `--num_neighbor=39`, ADKGD's subgraph size). | ADKGD's `logging.info(...)` via FileHandler |
 
 **While the job is running** — pick one to tail:
 
 ```bash
 # Slurm output: everything the job is producing, RESULTS will land at the end
-tail -f adkgd_fb15k-<jobid>.out.txt
+tail -f adkgd_fb15k237-<jobid>.out.txt
 
 # ADKGD's own log: same training info, but isolated to just this run's data
-tail -f checkpoints/FB15K/ADKGD_FB15K_0.05_Neighbors39__log.txt
+tail -f checkpoints/FB15K-237/ADKGD_FB15K-237_0.05_Neighbors39__log.txt
 ```
 
 **After the job finishes** — pull the headline numbers:
 
 ```bash
 # The 5-row RESULTS table + total train time
-tail -n 15 adkgd_fb15k-<jobid>.out.txt
+tail -n 15 adkgd_fb15k237-<jobid>.out.txt
 
 # Just the Precision/Recall lines for K = 1..5% (skips the noisy array(…) dump)
 grep -E "Precision 0\.050000 -- 0\.0[12345]0000|Recall  0\.050000-- 0\.0[12345]0000" \
-    checkpoints/FB15K/ADKGD_FB15K_0.05_Neighbors39__log.txt
+    checkpoints/FB15K-237/ADKGD_FB15K-237_0.05_Neighbors39__log.txt
 
 # Train time in seconds, one line per epoch
-cat checkpoints/FB15K/ADKGD_FB15K_epoch_times.txt
+cat checkpoints/FB15K-237/ADKGD_FB15K-237_epoch_times.txt
 
 # Final job state (definitive — was it COMPLETED, FAILED, TIMEOUT, OOM?)
 sacct -j <jobid> --format=JobID,State,ExitCode,Elapsed,MaxRSS
@@ -159,7 +159,7 @@ sacct -j <jobid> --format=JobID,State,ExitCode,Elapsed,MaxRSS
 **Did the GPU actually get used?** (catches a silent CPU fallback):
 
 ```bash
-head -n 30 adkgd_fb15k-<jobid>.out.txt | grep -E "GPU:|cuda"
+head -n 30 adkgd_fb15k237-<jobid>.out.txt | grep -E "GPU:|cuda"
 # Want a line like:  GPU: Tesla V100-PCIE-32GB | torch 2.4.1+cu121 | cuda 12.1
 ```
 
@@ -167,13 +167,13 @@ head -n 30 adkgd_fb15k-<jobid>.out.txt | grep -E "GPU:|cuda"
 
 ```bash
 # The job's stdout (the RESULTS block lives at the bottom)
-scp wick0167@deepthought.flinders.edu.au:/home/wick0167/ADKGD/adkgd_fb15k-<jobid>.out.txt ./
+scp wick0167@deepthought.flinders.edu.au:/home/wick0167/ADKGD/adkgd_fb15k237-<jobid>.out.txt ./
 
-# The whole checkpoints/FB15K dir (raw log + epoch_times + .ckpt)
-scp -r wick0167@deepthought.flinders.edu.au:/home/wick0167/ADKGD/checkpoints/FB15K ./checkpoints/
+# The whole checkpoints/FB15K-237 dir (raw log + epoch_times + .ckpt)
+scp -r wick0167@deepthought.flinders.edu.au:/home/wick0167/ADKGD/checkpoints/FB15K-237 ./checkpoints/
 
 # Incremental sync (best if doing this repeatedly):
-rsync -avz wick0167@deepthought.flinders.edu.au:/home/wick0167/ADKGD/checkpoints/FB15K/ ./checkpoints/FB15K/
+rsync -avz wick0167@deepthought.flinders.edu.au:/home/wick0167/ADKGD/checkpoints/FB15K-237/ ./checkpoints/FB15K-237/
 ```
 
 > The `Neighbors39` infix in the log filename is ADKGD's encoding of
@@ -199,7 +199,7 @@ python -m pip install torch --index-url https://download.pytorch.org/whl/cu121
 python -c "import torch; print('torch', torch.__version__, '| cuda build', torch.version.cuda)"
 
 # 3. Resubmit:
-sbatch experiments/slurm/run_baseline_fb15k.slurm
+sbatch experiments/slurm/run_baseline_fb15k237.slurm
 ```
 
 ## Troubleshooting
@@ -208,15 +208,15 @@ sbatch experiments/slurm/run_baseline_fb15k.slurm
 |---|---|
 | `module: command not found` or `Miniconda3` missing | `module avail miniconda` and use the exact name (maybe `miniconda/3.0`). |
 | `CommandNotFoundError: conda activate` | The `source "$(conda info --base)/etc/profile.d/conda.sh"` line must run before `conda activate`. |
-| `/bin/bash^M: bad interpreter` | CRLF line endings from a Windows checkout. `dos2unix experiments/slurm/run_baseline_fb15k.slurm` on the HPC. |
+| `/bin/bash^M: bad interpreter` | CRLF line endings from a Windows checkout. `dos2unix experiments/slurm/run_baseline_fb15k237.slurm` on the HPC. |
 | Pre-flight assert: `torch cannot see a GPU` | CPU-only torch wheel got installed. Reinstall per step 4 above. |
 | `ModuleNotFoundError` for torch / numpy / sklearn / matplotlib | The env wasn't built or wasn't activated — redo step 1; confirm `CONDA_ENV` path in the slurm script. |
 | Job killed, `oom-kill` in log | Raise `--mem` in the script (e.g. 16G → 32G). FB15K-237 at batch 256 should fit in 16G; only an issue if you bump batch size. |
 | Job pending forever | GPU partition is busy (only 5 V100s cluster-wide, heavy Fairshare weight). `squeue -u $USER --start` shows the predicted start time; lowering `--time` helps backfill. |
-| RESULTS block missing from `.out.txt` | The Python script crashed before printing. Check `adkgd_fb15k-<jobid>.err.txt` for the traceback; also scroll up in the `.out.txt`. Usually a missing dep or `PROJECT_DIR` mismatch. |
+| RESULTS block missing from `.out.txt` | The Python script crashed before printing. Check `adkgd_fb15k237-<jobid>.err.txt` for the traceback; also scroll up in the `.out.txt`. Usually a missing dep or `PROJECT_DIR` mismatch. |
 | K columns are 2/4/6/8/10% instead of 1/2/3/4/5% | You set `--anomaly_ratio 0.10`. The K cutoffs scale to `anomaly_ratio · i/5` for `i ∈ 1..5`: at 10% they're 2..10%, at 15% they're 3..15%. (Paper convention; reflected in `run_experiment.py`.) |
 | Segfault very early in training (rare on GPU) | If torch fell back to CPU silently, an OMP/MKL conflict can crash it. `run_experiment.py` already sets defensive defaults via `os.environ.setdefault`; if it still bites, explicitly `export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` before the python line. |
-| `dataset FB15K not found` / FileNotFoundError on `data/FB15K/...` | `PROJECT_DIR` is wrong, or `data/FB15K/` wasn't pulled. Check `ls $PROJECT_DIR/data/FB15K/` shows `train.txt valid.txt test.txt`. |
+| `dataset FB15K-237 not found` / FileNotFoundError on `data/FB15K-237/...` | `PROJECT_DIR` is wrong, or `data/FB15K-237/` wasn't pulled. Check `ls $PROJECT_DIR/data/FB15K-237/` shows `train.txt valid.txt test.txt`. |
 
 ## Running on CPU (general partition) — optional
 
@@ -229,13 +229,13 @@ on V100; expect 5–10× slower on CPU). It's useful for:
   in well under a minute.
 - Sanity-checking your env without burning a scarce V100 slot.
 
-To make a CPU variant, copy `run_baseline_fb15k.slurm` and:
+To make a CPU variant, copy `run_baseline_fb15k237.slurm` and:
 
 - Set `#SBATCH --partition=general` (drop the `gpu` partition line)
 - Delete `#SBATCH --gres=gpu:tesla_v100:1`
 - Remove the `python -c "import torch; assert torch.cuda.is_available() ..."` pre-flight (it would fail)
 - Install the CPU wheel into the env: `pip install torch --index-url https://download.pytorch.org/whl/cpu`
-- Optionally swap `--dataset FB15K` for `--dataset dummy_kg` for a fast sanity test (the older `FB15K-mini` subset still works too if you prefer ~2,600 triples)
+- Optionally swap `--dataset FB15K-237` for `--dataset dummy_kg` for a fast sanity test (the older `FB15K-mini` subset still works too if you prefer ~2,600 triples)
 
 `run_experiment.py` already sets OMP/MKL thread defaults that prevent the CPU
 torch from segfaulting on multi-core nodes.

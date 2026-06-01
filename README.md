@@ -5,7 +5,7 @@
 
 **ADKGD** is a novel anomaly detection algorithm for Knowledge Graphs (KGs) using a dual-channel learning framework. It leverages both entity-view and triplet-view representation learning, combined with cross-layer information aggregation and a KL-divergence-based consistency loss, to robustly identify anomalous triplets (i.e., errors or noise) in KGs.
 
-ADKGD **outperforms state-of-the-art methods** on several benchmark datasets including WN18RR, FB15K, and NELL-995, and is suitable for ensuring the reliability of KGs for downstream applications such as question answering and recommendation systems.
+ADKGD **outperforms state-of-the-art methods** on several benchmark datasets including WN18RR, FB15K-237, and NELL-995, and is suitable for ensuring the reliability of KGs for downstream applications such as question answering and recommendation systems.
 
 
 ### Installation
