@@ -123,8 +123,12 @@ def main() -> int:
 
     # Phase B flags get appended to BOTH the train and test invocations so the
     # Reader sees the same neg_source in either mode (Reader is rebuilt fresh
-    # in each subprocess).
-    gan_args = ["--neg_source", args.neg_source, "--gan_path", args.gan_path]
+    # in each subprocess). --gan_path is only forwarded when we actually need
+    # it -- otherwise it's misleading noise in the B0 log (and could mask a
+    # real misconfiguration if the path is stale).
+    gan_args = ["--neg_source", args.neg_source]
+    if args.neg_source == "gan":
+        gan_args += ["--gan_path", args.gan_path]
 
     # Train -- cwd=project_root so ADKGD's "./data/..." / "./checkpoints/..." resolve correctly.
     _run([
