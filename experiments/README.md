@@ -41,7 +41,10 @@ experiments/
 │   ├── run_baseline_with_gan_wn18rr.slurm ← WN18RR    — ADKGD baseline + trained GAN negatives (B1)
 │   ├── train_gan_kinship.slurm            ← Kinship   — train the GAN
 │   ├── run_baseline_kinship.slurm         ← Kinship   — ADKGD baseline (random negatives, B0)
-│   └── run_baseline_with_gan_kinship.slurm ← Kinship  — ADKGD baseline + trained GAN negatives (B1)
+│   ├── run_baseline_with_gan_kinship.slurm ← Kinship  — ADKGD baseline + trained GAN negatives (B1)
+│   ├── train_gan_kg20c.slurm              ← KG20C     — train the GAN
+│   ├── run_baseline_kg20c.slurm           ← KG20C     — ADKGD baseline (random negatives, B0)
+│   └── run_baseline_with_gan_kg20c.slurm  ← KG20C     — ADKGD baseline + trained GAN negatives (B1)
 │
 └── gan/                                   ← simple GAN (teaching version)
     ├── README.md                          ← per-codebase quickstart + diagram
@@ -113,6 +116,13 @@ sbatch experiments/slurm/train_gan_kinship.slurm
 # → experiments/gan/outputs/checkpoints/kinship.pt
 ```
 
+HPC (KG20C, V100):
+
+```bash
+sbatch experiments/slurm/train_gan_kg20c.slurm
+# → experiments/gan/outputs/checkpoints/kg20c.pt
+```
+
 Override hyperparameters via env vars (works on any of the train slurms):
 
 ```bash
@@ -158,6 +168,12 @@ HPC (Kinship):
 sbatch experiments/slurm/run_baseline_kinship.slurm
 ```
 
+HPC (KG20C):
+
+```bash
+sbatch experiments/slurm/run_baseline_kg20c.slurm
+```
+
 ### 3b. Variant (B1) — the GAN negatives (in-process)
 
 Local (uses the bundled dummy checkpoint):
@@ -184,6 +200,12 @@ HPC Kinship (after step 2 produced `kinship.pt`):
 
 ```bash
 sbatch experiments/slurm/run_baseline_with_gan_kinship.slurm
+```
+
+HPC KG20C (after step 2 produced `kg20c.pt`):
+
+```bash
+sbatch experiments/slurm/run_baseline_with_gan_kg20c.slurm
 ```
 
 ### What B1 prints (diagnostic)
@@ -263,6 +285,7 @@ Step 2 — ADKGD run (per experiment, B0 or B1)
 | `FB15K-237` | `data/FB15K-237/{train,valid,test}.txt` | 310,116 | Paper benchmark — Freebase 15K with 237 relations (inverse relations removed to prevent test leakage). Real research runs. |
 | `WN18RR` | `data/WN18RR/{train,valid,test}.txt` | 93,003 | Paper benchmark (WordNet 18 with restricted relations: 40,943 entities, 11 relations). Real research runs. |
 | `Kinship` | `data/Kinship/{train,valid,test}.txt` | 10,686 | Family-relations benchmark: 104 entities, 25 relations. **NOTE:** this variant differs from Wu et al. (2024) Table 1 (which reports 46 relations, 6,529 triples); B0 numbers will not directly reproduce their Kinship row but B1 vs B0 comparison remains valid on this variant. |
+| `KG20C` | `data/KG20C/{train,valid,test}.txt` | 55,607 | Scholarly knowledge graph: 16,362 entities, 5 relations (papers, authors, affiliations and their citation relationships). Matches Wu et al. (2024) Table 1 exactly. |
 
 ---
 
@@ -288,6 +311,9 @@ and `%j` is the slurm job id.
 | `train_gan_kinship.slurm` | `gan_train_kinship` | `gan_train_kinship-<jobid>.out.txt` |
 | `run_baseline_kinship.slurm` | `adkgd_kinship` | `adkgd_kinship-<jobid>.out.txt` |
 | `run_baseline_with_gan_kinship.slurm` | `adkgd_baseline_with_gan_kinship` | `adkgd_baseline_with_gan_kinship-<jobid>.out.txt` |
+| `train_gan_kg20c.slurm` | `gan_train_kg20c` | `gan_train_kg20c-<jobid>.out.txt` |
+| `run_baseline_kg20c.slurm` | `adkgd_kg20c` | `adkgd_kg20c-<jobid>.out.txt` |
+| `run_baseline_with_gan_kg20c.slurm` | `adkgd_baseline_with_gan_kg20c` | `adkgd_baseline_with_gan_kg20c-<jobid>.out.txt` |
 
 ### Three useful commands
 
