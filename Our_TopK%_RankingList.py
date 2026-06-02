@@ -306,6 +306,7 @@ def train(args, dataset, device):
 def test(args, dataset, device):
     # Dataset parameters
     # data_name = args.dataset
+    test_start_time = time.time()  # wall-clock for end-to-end testing time
     device = torch.device('cpu')
     data_path = args.data_path
     model_name = args.model
@@ -467,6 +468,19 @@ def test(args, dataset, device):
             logging.info('[Test][%s][%s] Recall  %f-- %f : %f' % (args.dataset, model_name, args.anomaly_ratio, ratios[i], recall))
             logging.info('[Test][%s][%s] anomalies in total: %d -- discovered:%d -- K : %d' % (
                 args.dataset, model_name, total_num_anomalies, anomaly_discovered[num_k - 1], num_k))
+
+    # End-to-end testing time. Written in the same "Duration: X seconds" format
+    # as the per-epoch training file so the run_experiment.py regex picks it up
+    # without changes. Mode 'w' (not 'a') -- one test pass per --mode test run.
+    test_end_time = time.time()
+    test_duration = test_end_time - test_start_time
+    logging.info('Test, Duration: %f seconds' % test_duration)
+    test_time_file = os.path.join(
+        args.log_folder, model_name + "_" + args.dataset + "_test_time.txt"
+    )
+    with open(test_time_file, 'w') as f:
+        f.write('Test, Duration: %f seconds\n' % test_duration)
+
 
 if __name__ == '__main__':
     main()

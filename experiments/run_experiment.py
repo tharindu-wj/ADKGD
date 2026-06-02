@@ -72,6 +72,22 @@ def parse_metrics(log_path: Path, anomaly_ratio: float, ks: list[float]) -> dict
     return {k: (precisions.get(round(k, 6)), recalls.get(round(k, 6))) for k in ks}
 
 
+def parse_total_test_min(test_time_path: Path) -> float | None:
+    """Return total test minutes parsed from the test_time.txt file.
+
+    Same format as the train file (`Duration: X seconds`), so we reuse
+    DURATION_RE. Test writes exactly one entry per run, but we sum defensively
+    in case that ever changes.
+    """
+    if not test_time_path.exists():
+        print(f"!! test_time not found: {test_time_path}", file=sys.stderr)
+        return None
+    durations = [float(m) for m in DURATION_RE.findall(test_time_path.read_text(encoding="utf-8", errors="replace"))]
+    if not durations:
+        return None
+    return sum(durations) / 60.0
+
+
 def parse_total_train_min(epoch_times_path: Path) -> tuple[float, int] | None:
     """Return (total_minutes, n_epochs) parsed from the epoch_times.txt file."""
     if not epoch_times_path.exists():
@@ -113,10 +129,12 @@ def main() -> int:
     #     Our_TopK%_RankingList.py:112 (where the filename is built).
     log = ckpt_dir / f"{args.model}_{args.dataset}_{args.anomaly_ratio}_Neighbors39__log.txt"
     ept = ckpt_dir / f"{args.model}_{args.dataset}_epoch_times.txt"
+    ttf = ckpt_dir / f"{args.model}_{args.dataset}_test_time.txt"
 
     # ADKGD only ever appends to these. Start fresh so this run's report is clean.
     log.unlink(missing_ok=True)
     ept.unlink(missing_ok=True)
+    ttf.unlink(missing_ok=True)
 
     py = sys.executable                            # use the same interpreter we were launched with
     adkgd_script = project_root / args.script      # absolute path to ADKGD's entry script
@@ -159,9 +177,11 @@ def main() -> int:
     # get the metrics and timing info from the log files, print them in a nice format
     metrics = parse_metrics(log, ratio, ks)
 
-    # The epoch_times file is only written during training,
-    # so if it's missing, we can still report the metrics but just say "no timing info" instead of erroring out.  
+    # The epoch_times file is only written during training, and the test_time
+    # file is only written during testing. Either may be missing if its phase
+    # crashed; report what we have instead of erroring out.
     timing = parse_total_train_min(ept)
+    test_timing = parse_total_test_min(ttf)
 
     print()
     print("=" * 60)
@@ -182,6 +202,11 @@ def main() -> int:
     else:
         total_min, n_epochs = timing
         print(f"Total train time: {total_min:.2f} minutes ({n_epochs} epoch(s))")
+
+    if test_timing is None:
+        print("Total test time:  -- (no test_time file found)")
+    else:
+        print(f"Total test time:  {test_timing:.2f} minutes")
 
     return 0
 
