@@ -75,12 +75,16 @@ def load_gan(ckpt_path, concept_pools_path=None, device=None):
         concept_pools_path=concept_pools_path,
         device=device,
     )
+    # Surface the device so ADKGD's dataset.py can include it in its
+    # "[GAN] loaded checkpoint from X (device=Y)" log line.
+    actual_device = next(corrupter.G.parameters()).device
     print(f"[KGSAGE] loaded checkpoint from {ckpt_path}", flush=True)
     print(f"[KGSAGE] loaded concept pools from {concept_pools_path}", flush=True)
     return {
         "corrupter": corrupter,
         "ckpt_path": ckpt_path,
         "concept_pools_path": concept_pools_path,
+        "device": actual_device,
     }
 
 
