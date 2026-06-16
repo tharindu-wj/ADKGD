@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "dataset_name": "FB15K-237",
+  "dataset_family": "Freebase",
+  "source_kg": "FB15K-237",
+  "source_kg_files": {
+    "train.txt": {
+      "lines": 272115,
+      "sha256": "6e4c2782169af21e9743f3b1d200886f5d595bf6bc504ec1351720949c5cdfae"
+    },
+    "valid.txt": {
+      "lines": 17535,
+      "sha256": "cf6309010852f6a8d47a45df830a426415d1ee6f7a3970a8376ff1fb81db4a5c"
+    },
+    "test.txt": {
+      "lines": 20466,
+      "sha256": "5711cf41623ceb4eacc50eb6108a3ca6565c7492e3caaf82a3e355cc660d1574"
+    }
+  },
+  "adapter": {
+    "name": "FreebaseAdapter",
+    "version": "1.0",
+    "extraction_method": "Parse Freebase relation prefixes. head_type = first segment (domain); tail_type = last segment (role marker). Multi-typing via union over co-occurring relations.",
+    "extraction_params": {
+      "compound_relation_handling": "split-on-dot-take-first-subpath",
+      "head_type_source": "first segment of relation path",
+      "tail_type_source": "last segment of relation path"
+    }
+  },
+  "type_vocabulary": {
+    "size": 206,
+    "namespace": "Freebase top-level domains + role markers",
+    "examples": [
+      "adjoin_s",
+      "administrative_area_type",
+      "administrative_parent",
+      "american_football",
+      "appears_in_ranked_lists",
+      "artist",
+      "artists",
+      "assets",
+      "athletes",
+      "award"
+    ]
+  },
+  "statistics": {
+    "n_entities": 14505,
+    "n_typed_entities": 14505,
+    "coverage_fraction": 1.0,
+    "avg_types_per_entity": 5.68245432609445,
+    "multi_typed_count": 13236
+  },
+  "produced_by": "kg_corrupter v0.1",
+  "produced_at": "2026-06-16T14:31:13.224928+00:00"
+}
