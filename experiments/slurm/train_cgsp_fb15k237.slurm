@@ -50,6 +50,7 @@ HIDDEN_DIM="${HIDDEN_DIM:-256}"
 N_S="${N_S:-64}"
 G_LR="${G_LR:-1e-4}"
 D_LR="${D_LR:-1e-3}"
+CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-10}"
 SEED="${SEED:-0}"
 
 echo "Job $SLURM_JOB_ID on $(hostname) starting $(date)"
@@ -105,16 +106,17 @@ CKPT_PATH="experiments/gan/outputs/checkpoints/${DATASET}_cgsp.pt"
 echo "[$(date)] PHASE 2: training CGSP -> $CKPT_PATH"
 
 $PY -m experiments.gan.adversarial.train \
-    --dataset       "$DATASET" \
-    --warmup_epochs "$WARMUP_EPOCHS" \
-    --total_epochs  "$TOTAL_EPOCHS" \
-    --batch_size    "$BATCH_SIZE" \
-    --embedding_dim "$EMBEDDING_DIM" \
-    --hidden_dim    "$HIDDEN_DIM" \
-    --n_s           "$N_S" \
-    --g_lr          "$G_LR" \
-    --d_lr          "$D_LR" \
-    --seed          "$SEED"
+    --dataset             "$DATASET" \
+    --warmup_epochs       "$WARMUP_EPOCHS" \
+    --total_epochs        "$TOTAL_EPOCHS" \
+    --batch_size          "$BATCH_SIZE" \
+    --embedding_dim       "$EMBEDDING_DIM" \
+    --hidden_dim          "$HIDDEN_DIM" \
+    --n_s                 "$N_S" \
+    --g_lr                "$G_LR" \
+    --d_lr                "$D_LR" \
+    --checkpoint_interval "$CHECKPOINT_INTERVAL" \
+    --seed                "$SEED"
 
 echo "----------------------------------------------------------------------"
 echo "Done $(date). Checkpoint: $CKPT_PATH"

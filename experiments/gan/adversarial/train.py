@@ -78,6 +78,7 @@ DEFAULT_BASELINE_DECAY = 0.99
 DEFAULT_WARMUP_EPOCHS = 5
 DEFAULT_TOTAL_EPOCHS = 100
 DEFAULT_GRADIENT_CLIP = 1.0
+DEFAULT_CHECKPOINT_INTERVAL = 10
 
 
 def warmup_one_epoch(D, real_triples, opt_d, n_entities,
@@ -197,8 +198,15 @@ def reinforce_one_epoch(G, D, opt_g, opt_d, state, baseline_ema,
 
 
 def train_cgsp(state, n_warmup_epochs, n_total_epochs, hp, log_path,
-               checkpoint_path, seed=0, verbose=True):
-    """End-to-end training loop. Returns the final state of (G, D, baseline)."""
+               checkpoint_path, seed=0, verbose=True,
+               checkpoint_interval=DEFAULT_CHECKPOINT_INTERVAL):
+    """End-to-end training loop. Returns the final state of (G, D, baseline).
+
+    Saves checkpoint + log every `checkpoint_interval` epochs as a rolling
+    overwrite. If the job is canceled mid-training, the most recent save
+    is preserved (worst case: lose the last `checkpoint_interval` epochs).
+    A final save always happens after the last epoch.
+    """
     rng = random.Random(seed)
     torch.manual_seed(seed)
 
@@ -270,11 +278,24 @@ def train_cgsp(state, n_warmup_epochs, n_total_epochs, hp, log_path,
                 flush=True,
             )
 
+        # Periodic checkpoint: rolling overwrite every checkpoint_interval epochs.
+        # Protects against job cancellation / time limit / NaN crash later on.
+        # The final epoch always saves (handled below the loop).
+        epochs_done = ep + 1
+        if epochs_done < n_total_epochs and epochs_done % checkpoint_interval == 0:
+            _save_log(log_path, state, hp, epoch_records, time.time() - start_time)
+            _save_checkpoint(checkpoint_path, state, hp, G, D, baseline_ema, epochs_done)
+            if verbose:
+                print(
+                    f"  [checkpoint @ epoch {epochs_done}] -> {checkpoint_path}",
+                    flush=True,
+                )
+
     total_elapsed = time.time() - start_time
     if verbose:
         print(f"\n  Total training time: {total_elapsed/60:.2f} minutes", flush=True)
 
-    # ─── Save log + checkpoint ─────────────────────────────────
+    # ─── Final save (always runs) ─────────────────────────────
     _save_log(log_path, state, hp, epoch_records, total_elapsed)
     _save_checkpoint(checkpoint_path, state, hp, G, D, baseline_ema, n_total_epochs)
 
@@ -374,6 +395,7 @@ def main():
         state, args.warmup_epochs, args.total_epochs, hp,
         log_path=str(log_path), checkpoint_path=str(checkpoint_path),
         seed=args.seed,
+        checkpoint_interval=args.checkpoint_interval,
     )
 
     print(f"\nDone.")
@@ -403,6 +425,9 @@ def _parse_args():
     ap.add_argument("--warmup_epochs", type=int, default=DEFAULT_WARMUP_EPOCHS)
     ap.add_argument("--total_epochs", type=int, default=DEFAULT_TOTAL_EPOCHS,
                     help="total epochs (includes warmup)")
+    ap.add_argument("--checkpoint_interval", type=int, default=DEFAULT_CHECKPOINT_INTERVAL,
+                    help="save checkpoint + log every N REINFORCE epochs (rolling overwrite). "
+                         "Protects against cancellation / time-limit / NaN crash.")
     ap.add_argument("--seed", type=int, default=0)
     return ap.parse_args()
 
