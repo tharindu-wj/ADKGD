@@ -1,4 +1,6 @@
-"""CGSP-style Generator: candidate scorer for adversarial negative sampling.
+"""KGSAGE Generator: candidate scorer for adversarial negative sampling.
+
+(Architecture follows the CGSP framework of Tong et al. 2026.)
 
 The Generator G learns to RANK candidate triples by how "good" they are
 as negatives - good meaning "hard for the Discriminator to dismiss".

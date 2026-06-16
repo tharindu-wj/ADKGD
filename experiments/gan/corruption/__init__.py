@@ -1,13 +1,13 @@
 """Phase 3 - Corruption Module.
 
-Uses the trained CGSP Generator + Discriminator to produce hard,
+Uses the trained KGSAGE Generator + Discriminator to produce hard,
 type-coherent negatives at inference time.
 
 Public API:
   from experiments.gan.corruption.api import KGCorrupter
 
   corrupter = KGCorrupter(
-      checkpoint_path="experiments/gan/outputs/checkpoints/FB15K-237_cgsp.pt",
+      checkpoint_path="experiments/gan/outputs/checkpoints/FB15K-237_kgsage.pt",
       concept_pools_path="experiments/gan/outputs/concept_pools/FB15K-237.pkl",
   )
   negative = corrupter.corrupt(positive_string_triple, seed=42)

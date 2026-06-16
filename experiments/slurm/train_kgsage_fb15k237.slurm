@@ -1,5 +1,6 @@
 #!/bin/bash
-# Train the Full CGSP model on FB15K-237 — one V100 allocation.
+# Train the KGSAGE model on FB15K-237 — one V100 allocation.
+# KGSAGE = Knowledge Graph Semantic Anomaly GEnerator.
 # Replaces the legacy Gumbel-Softmax GAN (which was train_gan_fb15k237.slurm).
 #
 # Two-stage flow (both phases inside this single SLURM job):
@@ -12,17 +13,17 @@
 #                               D warmup then alternating G/D updates.
 #                               This is the long-running GPU work.
 #
-#   sbatch experiments/slurm/train_cgsp_fb15k237.slurm
+#   sbatch experiments/slurm/train_kgsage_fb15k237.slurm
 #
 # Prerequisites (run ONCE on the login node):
 #   1. Conda env with torch+CUDA wheel (see RUNNING_ON_DEEPTHOUGHT.md).
 #   2. FB15K-237 TSVs at data/FB15K-237/{train,valid,test}.txt.
 #
 # Override hyperparameters via env vars (no script edits required):
-#   TOTAL_EPOCHS=200 sbatch experiments/slurm/train_cgsp_fb15k237.slurm
-#   BATCH_SIZE=256 EMBEDDING_DIM=200 sbatch experiments/slurm/train_cgsp_fb15k237.slurm
+#   TOTAL_EPOCHS=200 sbatch experiments/slurm/train_kgsage_fb15k237.slurm
+#   BATCH_SIZE=256 EMBEDDING_DIM=200 sbatch experiments/slurm/train_kgsage_fb15k237.slurm
 
-#SBATCH --job-name=cgsp_train_fb15k237
+#SBATCH --job-name=kgsage_train_fb15k237
 #SBATCH --output=%x-%j.out.txt
 # (no --error directive: stderr merges into stdout — one file to tail.)
 #SBATCH --time=03:00:00
@@ -102,8 +103,8 @@ fi
 echo "  cache OK: $CACHE_PATH"
 
 # ─── PHASE 2: Adversarial Module (REINFORCE training) ─────────────────
-CKPT_PATH="experiments/gan/outputs/checkpoints/${DATASET}_cgsp.pt"
-echo "[$(date)] PHASE 2: training CGSP -> $CKPT_PATH"
+CKPT_PATH="experiments/gan/outputs/checkpoints/${DATASET}_kgsage.pt"
+echo "[$(date)] PHASE 2: training KGSAGE -> $CKPT_PATH"
 
 $PY -m experiments.gan.adversarial.train \
     --dataset             "$DATASET" \
@@ -120,7 +121,7 @@ $PY -m experiments.gan.adversarial.train \
 
 echo "----------------------------------------------------------------------"
 echo "Done $(date). Checkpoint: $CKPT_PATH"
-echo "Log:        experiments/gan/outputs/logs/${DATASET}_cgsp_training.json"
+echo "Log:        experiments/gan/outputs/logs/${DATASET}_kgsage_training.json"
 echo ""
-echo "Next: (once Phase 3 corruption module lands)"
-echo "  sbatch experiments/slurm/run_baseline_with_cgsp_fb15k237.slurm"
+echo "Next: run ADKGD with KGSAGE negatives via:"
+echo "  sbatch experiments/slurm/run_baseline_with_gan_fb15k237.slurm"

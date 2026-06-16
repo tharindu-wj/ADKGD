@@ -112,12 +112,12 @@ def main() -> int:
                     help="source of training-time negatives; 'random' = baseline (default)")
     ap.add_argument("--gan_path", default=None,
                     help="path to the GAN's .pt checkpoint (used when --neg_source=gan). "
-                         "Defaults to experiments/gan/outputs/checkpoints/<DATASET>_cgsp.pt.")
+                         "Defaults to experiments/gan/outputs/checkpoints/<DATASET>_kgsage.pt.")
     args = ap.parse_args()
 
-    # Default the GAN checkpoint to the dataset's CGSP one when not specified.
+    # Default the GAN checkpoint to the dataset's KGSAGE one when not specified.
     if args.gan_path is None:
-        args.gan_path = f"experiments/gan/outputs/checkpoints/{args.dataset}_cgsp.pt"
+        args.gan_path = f"experiments/gan/outputs/checkpoints/{args.dataset}_kgsage.pt"
 
     # This file lives at experiments/run_experiment.py; the repo root (where
     # ADKGD's data/, Our_TopK%_RankingList.py, etc. live) is one level up.

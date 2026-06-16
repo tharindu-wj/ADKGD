@@ -22,9 +22,10 @@ Examples (intuition check):
     -> classified as "1-1"
 
 These classifications inform Phase 2's cardinality-weighted sampling
-(CGSP Eqs. 5-6): tail corruption of 1-N relations and head corruption
-of N-1 relations get DOWN-WEIGHTED to avoid generating false negatives
-(triples that ARE true but happen to be absent from training).
+(following CGSP Eqs. 5-6, Tong et al. 2026): tail corruption of 1-N
+relations and head corruption of N-1 relations get DOWN-WEIGHTED to
+avoid generating false negatives (triples that ARE true but happen to
+be absent from training).
 """
 from collections import defaultdict
 

@@ -27,8 +27,8 @@ The 5-step build:
             tailPool[r] = union of type_to_entities[t] for t in C_S(r).tails
           (Pools are TYPE-AWARE: an entity is in the pool if it shares ANY
            type with the observed heads/tails, not just if it co-occurred
-           with the relation in training. This is CGSP's extension over
-           plain usage-based sampling.)
+           with the relation in training. KGSAGE inherits this type-aware
+           pooling from the CGSP framework of Tong et al. 2026.)
 
 Output is a single pickle dict consumed by Phase 2 and Phase 3.
 """

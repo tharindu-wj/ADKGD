@@ -1,4 +1,7 @@
-"""REINFORCE training loop for the CGSP adversarial pair.
+"""REINFORCE training loop for the KGSAGE adversarial pair.
+
+KGSAGE = Knowledge Graph Semantic Anomaly GEnerator. Implements the
+CGSP framework (Tong et al. 2026, DAMI) for KG anomaly generation.
 
 Algorithm overview (one training step):
 
@@ -39,8 +42,8 @@ engages - without warmup, G's reward signal is uninformative because
 an untrained D scores everything similarly.
 
 Outputs:
-  outputs/checkpoints/<DATASET>_cgsp.pt        G + D weights, metadata
-  outputs/logs/<DATASET>_cgsp_training.json    per-epoch loss curves
+  outputs/checkpoints/<DATASET>_kgsage.pt        G + D weights, metadata
+  outputs/logs/<DATASET>_kgsage_training.json    per-epoch loss curves
 """
 import argparse
 import json
@@ -197,9 +200,9 @@ def reinforce_one_epoch(G, D, opt_g, opt_d, state, baseline_ema,
     }
 
 
-def train_cgsp(state, n_warmup_epochs, n_total_epochs, hp, log_path,
-               checkpoint_path, seed=0, verbose=True,
-               checkpoint_interval=DEFAULT_CHECKPOINT_INTERVAL):
+def train_kgsage(state, n_warmup_epochs, n_total_epochs, hp, log_path,
+                 checkpoint_path, seed=0, verbose=True,
+                 checkpoint_interval=DEFAULT_CHECKPOINT_INTERVAL):
     """End-to-end training loop. Returns the final state of (G, D, baseline).
 
     Saves checkpoint + log every `checkpoint_interval` epochs as a rolling
@@ -345,7 +348,7 @@ def _save_checkpoint(checkpoint_path, state, hp, G, D, baseline_ema, n_epochs_ru
 
 
 def main():
-    """CLI entry point: train CGSP on one dataset."""
+    """CLI entry point: train KGSAGE on one dataset."""
     # Defensive defaults for Windows/CPU - cluster overrides via env take precedence.
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
@@ -382,16 +385,16 @@ def main():
     }
     print(f"Hyperparameters: {hp}", flush=True)
 
-    checkpoint_path = project_root / "experiments" / "gan" / "outputs" / "checkpoints" / f"{args.dataset}_cgsp.pt"
-    log_path = project_root / "experiments" / "gan" / "outputs" / "logs" / f"{args.dataset}_cgsp_training.json"
+    checkpoint_path = project_root / "experiments" / "gan" / "outputs" / "checkpoints" / f"{args.dataset}_kgsage.pt"
+    log_path = project_root / "experiments" / "gan" / "outputs" / "logs" / f"{args.dataset}_kgsage_training.json"
 
-    print(f"\nTraining CGSP on {args.dataset}", flush=True)
+    print(f"\nTraining KGSAGE on {args.dataset}", flush=True)
     print(f"  {state['n_entities']:,} entities, {state['n_relations']} relations, "
           f"{len(state['real_triple_set']):,} triples", flush=True)
     print(f"  warmup: {args.warmup_epochs} epochs | reinforce: {args.total_epochs - args.warmup_epochs} epochs", flush=True)
     print(f"", flush=True)
 
-    G, D, final_baseline = train_cgsp(
+    G, D, final_baseline = train_kgsage(
         state, args.warmup_epochs, args.total_epochs, hp,
         log_path=str(log_path), checkpoint_path=str(checkpoint_path),
         seed=args.seed,

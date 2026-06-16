@@ -2,7 +2,8 @@
 
 The GAN core: a Generator that learns to score hard candidates and a
 Discriminator that learns to tell real triples from the Generator's
-suggestions. Together they implement Full CGSP training via REINFORCE.
+suggestions. Together they implement KGSAGE training via REINFORCE
+(following the CGSP framework of Tong et al. 2026).
 
 Sub-modules:
   discriminator   internal TransE scorer (D)

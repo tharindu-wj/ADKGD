@@ -1,20 +1,22 @@
-# CGSP Pipeline — Locked Design
+# KGSAGE Pipeline — Locked Design
+
+**KGSAGE** (Knowledge Graph Semantic Anomaly GEnerator) — an adversarially-trained negative sampling framework for generating type-coherent, semantically plausible KG anomalies. Implements the CGSP framework (Tong et al. 2026, DAMI) inside ADKGD's experiment harness.
 
 Definitive reference for the locked design. Update only when scope changes are explicitly agreed.
 
 ## Scope
 
-Locked deliverable: replace the current Gumbel-Softmax GAN inside `experiments/gan/` with a Full CGSP implementation that generates Category-5 semantic anomalies. Validate on FB15K-237 first; extend to WN18RR and YAGO 4.5 after FB validates.
+Locked deliverable: replace the legacy Gumbel-Softmax GAN inside `experiments/gan/` with the KGSAGE implementation that generates Category-5 semantic anomalies. Validate on FB15K-237 first; extend to WN18RR and YAGO 4.5 after FB validates.
 
 | Aspect | Decision |
 |---|---|
-| Method | Full CGSP — REINFORCE + concept-aware sampling + cardinality weighting |
+| Method | KGSAGE — REINFORCE + concept-aware sampling + cardinality weighting (CGSP framework) |
 | First dataset | FB15K-237 (in-place rewrite of existing code) |
 | Future datasets | WN18RR, YAGO 4.5 (added after FB validates) |
 | Anomaly focus | Category 5 (type-coherent, semantically wrong) |
 | Stage C consumer | ADKGD bridge (runtime negative sampling) |
 | Bulk injector | **Parked** — defer to future work |
-| Versioning | **Single version** — no parallel `gan/cgsp/` subdirectory |
+| Versioning | **Single version** — no parallel subdirectory for the prior approach |
 | Codebase home | `experiments/gan/` reorganised into three phase folders |
 | Out of scope | Cat 3 cardinality / Cat 4 logical anomalies; universal/zero-shot corrupter |
 
@@ -25,7 +27,7 @@ Target anomaly: `(Bill Gates, /people/person/nationality, UK)` — type-coherent
 
 ## Architecture: three phases under `experiments/gan/`
 
-Each phase = one CGSP module = one subfolder. Dependencies flow one direction: **concept → adversarial → corruption**.
+Each phase = one CGSP module from Tong et al. 2026 = one subfolder. Dependencies flow one direction: **concept → adversarial → corruption**.
 
 ```
 experiments/gan/
@@ -58,9 +60,9 @@ experiments/gan/
     ├── concept_pools/
     │   └── FB15K-237.pkl
     ├── checkpoints/
-    │   └── FB15K-237_cgsp.pt
+    │   └── FB15K-237_kgsage.pt
     └── logs/
-        └── FB15K-237_cgsp_training.json
+        └── FB15K-237_kgsage_training.json
 ```
 
 ### Single-rule per folder
@@ -184,8 +186,8 @@ Pass criteria:
 
 **Input:** `data/FB15K-237/train.txt` + `outputs/concept_pools/FB15K-237.pkl`
 **Output:**
-- `outputs/checkpoints/FB15K-237_cgsp.pt` — trained G + D weights
-- `outputs/logs/FB15K-237_cgsp_training.json` — loss curves, baseline, reward
+- `outputs/checkpoints/FB15K-237_kgsage.pt` — trained G + D weights
+- `outputs/logs/FB15K-237_kgsage_training.json` — loss curves, baseline, reward
 
 ### Files in `adversarial/`
 
@@ -234,7 +236,7 @@ If sub-gate 2b fails (REINFORCE doesn't converge), fall back to "untrained G + c
 
 **Role:** use the trained GAN to corrupt triples at inference time. Expose a clean primitive for consumers (ADKGD now, future detectors later).
 
-**Input:** `outputs/checkpoints/FB15K-237_cgsp.pt` + `outputs/concept_pools/FB15K-237.pkl`
+**Input:** `outputs/checkpoints/FB15K-237_kgsage.pt` + `outputs/concept_pools/FB15K-237.pkl`
 **Output:** negative triples (in-memory, per call)
 
 ### Files in `corruption/`
@@ -291,9 +293,9 @@ Three sub-gates:
 - Logged outputs look like Category 5 anomalies on visual inspection
 
 **Sub-gate 3c — end-to-end with ADKGD** (HPC GPU):
-- `python experiments/run_experiment.py --dataset FB15K-237 --neg_source gan --gan_path .../FB15K-237_cgsp.pt`
+- `python experiments/run_experiment.py --dataset FB15K-237 --neg_source gan --gan_path .../FB15K-237_kgsage.pt`
 - ADKGD completes 1 training epoch + test without errors
-- Final B2 (CGSP-trained) Precision@K, Recall@K beat B0 (random-trained) on at least 3 of 5 K cutoffs
+- Final B2 (KGSAGE-trained) Precision@K, Recall@K beat B0 (random-trained) on at least 3 of 5 K cutoffs
 
 ## Incremental in-place plan — 7 phases
 
@@ -383,14 +385,14 @@ DELETE (after successful test run):
    experiments/gan/train.py                     ← legacy Gumbel training
 
 NEW SLURM:
-   experiments/slurm/train_cgsp_fb15k.slurm     (or rename existing)
+   experiments/slurm/train_kgsage_fb15k.slurm     (or rename existing)
 
 RUN:
-   sbatch experiments/slurm/train_cgsp_fb15k.slurm
+   sbatch experiments/slurm/train_kgsage_fb15k.slurm
 
 PRODUCE:
-   experiments/gan/outputs/checkpoints/FB15K-237_cgsp.pt
-   experiments/gan/outputs/logs/FB15K-237_cgsp_training.json
+   experiments/gan/outputs/checkpoints/FB15K-237_kgsage.pt
+   experiments/gan/outputs/logs/FB15K-237_kgsage_training.json
 
 VALIDATE (Phase 2b sub-gate):
    - both losses trend downward
@@ -440,7 +442,7 @@ VALIDATE (Phase 3b sub-gate):
 ```
 RUN:
    sbatch experiments/slurm/run_baseline_fb15k.slurm           # B0 (random)
-   sbatch experiments/slurm/run_baseline_with_gan_fb15k.slurm  # B2 (CGSP)
+   sbatch experiments/slurm/run_baseline_with_gan_fb15k.slurm  # B2 (KGSAGE)
 
 VALIDATE (Phase 3c sub-gate, the empirical claim):
    - B2 beats B0 on at least 3 of 5 K cutoffs
@@ -546,7 +548,7 @@ Every phase ends with a validation gate. Don't move to the next phase until the 
 ## Three locked claims for the thesis
 
 1. **Architecture claim** — the library is generic at the algorithm and code level; only the trained weights and the schema adapter are dataset-specific. Adding a KB family is a ~50-line adapter; new datasets within a covered family require zero code.
-2. **Method claim** — concept-aware adversarial generation (Full CGSP) produces type-coherent semantically-plausible anomalies (Category 5), targeting the residual error class that escapes rule-based validation methods.
+2. **Method claim** — concept-aware adversarial generation (KGSAGE, following the CGSP framework) produces type-coherent semantically-plausible anomalies (Category 5), targeting the residual error class that escapes rule-based validation methods.
 3. **Empirical claim** — detectors trained with our generator's negatives outperform random-negative-trained baselines on semantically-plausible test anomalies. Example: `(Bill Gates, nationality, UK)`.
 
 ## What's parked / out of scope
@@ -567,7 +569,7 @@ Every phase ends with a validation gate. Don't move to the next phase until the 
 |---|---|---|
 | 1 | 1.1 + 1.2 + 2.1 | Concept pools built for FB15K-237; adversarial components standalone tested |
 | 2 | 2.2 + 2.3 (start) | New Generator; REINFORCE training launched on HPC |
-| 3 | 2.3 (finish) + 3.1 + 3.2 | Trained CGSP checkpoint; primitive working; bridge connected |
+| 3 | 2.3 (finish) + 3.1 + 3.2 | Trained KGSAGE checkpoint; primitive working; bridge connected |
 | 4 | 3.3 | B0 vs B2 comparison; decision point to extend to WN18RR + YAGO 4.5 |
 
 After FB15K-237 validates, WN18RR and YAGO 4.5 each take ~1.5-2 weeks (just adapter + retraining; no algorithmic rewrite).
@@ -581,8 +583,8 @@ PER DATASET, PHASE 1 PRODUCES (concept module):
   experiments/gan/outputs/concept_pools/<DATASET>.pkl  internal cache, rebuildable
 
 PER DATASET, PHASE 2 PRODUCES (adversarial module):
-  experiments/gan/outputs/checkpoints/<DATASET>_cgsp.pt
-  experiments/gan/outputs/logs/<DATASET>_cgsp_training.json
+  experiments/gan/outputs/checkpoints/<DATASET>_kgsage.pt
+  experiments/gan/outputs/logs/<DATASET>_kgsage_training.json
 
 PHASE 3 OUTPUT (corruption module):
   In-memory negatives via KGCorrupter.corrupt(); no on-disk dataset files.

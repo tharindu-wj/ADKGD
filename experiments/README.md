@@ -1,6 +1,6 @@
-# experiments/ — CGSP research pipeline
+# experiments/ — KGSAGE research pipeline
 
-Implements the Full CGSP (Concept-Guided Generative Sampling Paradigm) adversarial negative generator, replacing ADKGD's random negative sampling with type-coherent semantically-plausible anomalies (Category 5).
+**KGSAGE** (Knowledge Graph Semantic Anomaly GEnerator) — adversarial negative generator that replaces ADKGD's random negative sampling with type-coherent semantically-plausible anomalies (Category 5). Implements the CGSP framework (Concept-Guided Generative Sampling Paradigm, Tong et al. 2026, DAMI) inside ADKGD's experiment harness.
 
 Canonical design reference: **[PIPELINE.md](PIPELINE.md)** — locked decisions, output formats, validation gates per phase.
 
@@ -22,11 +22,11 @@ Three-phase pipeline, each phase a folder under `experiments/gan/`:
               │
               ▼
    ┌─────────────────────────────────────────────────────────────────┐
-   │  PHASE 2 - adversarial/    train CGSP (REINFORCE)               │
+   │  PHASE 2 - adversarial/    train KGSAGE (REINFORCE)             │
    │   discriminator.py (TransE D) + generator.py (MLP G)            │
    │   + candidate_pool.py + train.py                                │
-   │   -> experiments/gan/outputs/checkpoints/<DATASET>_cgsp.pt      │
-   │   -> experiments/gan/outputs/logs/<DATASET>_cgsp_training.json  │
+   │   -> experiments/gan/outputs/checkpoints/<DATASET>_kgsage.pt      │
+   │   -> experiments/gan/outputs/logs/<DATASET>_kgsage_training.json  │
    └─────────────────────────────────────────────────────────────────┘
               │
               ▼
@@ -45,7 +45,7 @@ Three-phase pipeline, each phase a folder under `experiments/gan/`:
 
 | Aspect | Decision |
 |---|---|
-| Method | Full CGSP only — REINFORCE + concept + cardinality |
+| Method | KGSAGE (CGSP framework) — REINFORCE + concept + cardinality |
 | First dataset | FB15K-237 (in-place rewrite, incremental phases) |
 | Future datasets | WN18RR, YAGO 4.5 (after FB validates end-to-end) |
 | Anomaly focus | Category 5 (type-coherent, semantically wrong) |
@@ -62,9 +62,9 @@ experiments/
 ├── run_experiment.py                  ← ADKGD orchestrator (train+test+RESULTS)
 │
 ├── slurm/                             ← HPC launchers
-│   ├── train_cgsp_fb15k237.slurm         ← NEW - train CGSP (Phase 1+2)
+│   ├── train_kgsage_fb15k237.slurm         ← NEW - train KGSAGE (Phase 1+2)
 │   ├── run_baseline_fb15k237.slurm        ← B0 baseline (random negs)
-│   ├── run_baseline_with_gan_fb15k237.slurm  ← will become CGSP B2 after Phase 3
+│   ├── run_baseline_with_gan_fb15k237.slurm  ← will become KGSAGE B2 after Phase 3
 │   ├── train_gan_fb15k237.slurm           ← LEGACY (Gumbel GAN), deprecated
 │   ├── train_gan_wn18rr.slurm             ← LEGACY (WN18RR not yet migrated)
 │   ├── run_baseline_wn18rr.slurm          ← B0 baseline for WN18RR
@@ -89,8 +89,8 @@ experiments/
     │
     ├── outputs/
     │   ├── concept_pools/<DATASET>.pkl       ← Phase 1 cache
-    │   ├── checkpoints/<DATASET>_cgsp.pt     ← Phase 2 checkpoint
-    │   └── logs/<DATASET>_cgsp_training.json ← Phase 2 training log
+    │   ├── checkpoints/<DATASET>_kgsage.pt     ← Phase 2 checkpoint
+    │   └── logs/<DATASET>_kgsage_training.json ← Phase 2 training log
     │
     ├── README.md                      ← per-codebase quickstart
     ├── data.py                        ← shared KG loader (legacy + new)
@@ -136,7 +136,7 @@ Successful output ends with a summary block showing entity coverage, median pool
 
 ---
 
-## Phase 2 - Train CGSP
+## Phase 2 - Train KGSAGE
 
 ### Local smoke test (CPU, small fraction)
 
@@ -155,16 +155,16 @@ python -m experiments.gan.adversarial.train `
 The SLURM script runs Phase 1 (preprocess) AND Phase 2 (REINFORCE training) end-to-end:
 
 ```bash
-sbatch experiments/slurm/train_cgsp_fb15k237.slurm
-# -> experiments/gan/outputs/checkpoints/FB15K-237_cgsp.pt
-# -> experiments/gan/outputs/logs/FB15K-237_cgsp_training.json
+sbatch experiments/slurm/train_kgsage_fb15k237.slurm
+# -> experiments/gan/outputs/checkpoints/FB15K-237_kgsage.pt
+# -> experiments/gan/outputs/logs/FB15K-237_kgsage_training.json
 ```
 
 Override hyperparameters via env vars (no script edits required):
 
 ```bash
-TOTAL_EPOCHS=200 sbatch experiments/slurm/train_cgsp_fb15k237.slurm
-BATCH_SIZE=256 EMBEDDING_DIM=200 sbatch experiments/slurm/train_cgsp_fb15k237.slurm
+TOTAL_EPOCHS=200 sbatch experiments/slurm/train_kgsage_fb15k237.slurm
+BATCH_SIZE=256 EMBEDDING_DIM=200 sbatch experiments/slurm/train_kgsage_fb15k237.slurm
 ```
 
 ### Hyperparameter defaults (from PIPELINE.md)
@@ -187,7 +187,7 @@ After the SLURM job completes, inspect the training log:
 
 ```python
 import json
-with open("experiments/gan/outputs/logs/FB15K-237_cgsp_training.json") as f:
+with open("experiments/gan/outputs/logs/FB15K-237_kgsage_training.json") as f:
     log = json.load(f)
 for e in log["epochs"]:
     print(e["epoch"], e["phase"], e["d_loss"], e["g_loss"], e["baseline"])
@@ -202,7 +202,7 @@ Expected pattern: D and G losses trend down; baseline_ema rises slowly and stays
 **Not yet built.** Will provide the `KGCorrupter.corrupt(triple) -> triple` primitive that ADKGD consumes for runtime negative sampling. Tracking todo: `Phase 3: corruption/ - infer.py + api.py + adkgd_bridge.py`.
 
 Once landed, this section will document:
-- Running ADKGD with CGSP negatives (`--neg_source gan_v3`)
+- Running ADKGD with KGSAGE negatives (`--neg_source gan`)
 - The new `experiments/gan/corruption/adkgd_bridge.py` (replaces legacy bridge)
 - B0 vs B2 comparison procedure
 
@@ -210,7 +210,7 @@ Once landed, this section will document:
 
 ## Run ADKGD baseline (B0)
 
-The B0 baseline (random negatives) still works through the existing orchestrator and SLURM scripts. It's the reference point CGSP gets compared against.
+The B0 baseline (random negatives) still works through the existing orchestrator and SLURM scripts. It's the reference point KGSAGE gets compared against.
 
 Local:
 
@@ -231,7 +231,7 @@ sbatch experiments/slurm/run_baseline_fb15k237.slurm
 
 Once Phase 3 lands, the comparison table populated by repeated `run_experiment.py` invocations:
 
-| K | B0 (random) | B2 (CGSP) | Δ |
+| K | B0 (random) | B2 (KGSAGE) | Δ |
 |---|---|---|---|
 | 1% | 0.9581 (paper 0.951) | _from B2 .out.txt_ | _to fill_ |
 | 2% | 0.8836 | _to fill_ | _to fill_ |
@@ -252,7 +252,7 @@ Once Phase 3 lands, the comparison table populated by repeated `run_experiment.p
 | `WN18RR` | `data/WN18RR/{train,valid,test}.txt` | 93,003 | Future - `WordNetAdapter` not yet built. |
 | `YAGO 4.5` | `data/YAGO4.5/` (TBD) | TBD | Future - acquisition + `YagoAdapter` not yet built. |
 
-Dropped from scope: Kinship, KG20C (single-type entities; no useful concept structure for CGSP).
+Dropped from scope: Kinship, KG20C (single-type entities; no useful concept structure for KGSAGE).
 
 ---
 
@@ -262,7 +262,7 @@ Every SLURM script merges stdout and stderr into a single file via `#SBATCH --ou
 
 | SLURM script | `--job-name` | Log filename pattern |
 |---|---|---|
-| `train_cgsp_fb15k237.slurm` | `cgsp_train_fb15k237` | `cgsp_train_fb15k237-<jobid>.out.txt` |
+| `train_kgsage_fb15k237.slurm` | `kgsage_train_fb15k237` | `kgsage_train_fb15k237-<jobid>.out.txt` |
 | `run_baseline_fb15k237.slurm` | `adkgd_fb15k237` | `adkgd_fb15k237-<jobid>.out.txt` |
 | `run_baseline_with_gan_fb15k237.slurm` | `adkgd_baseline_with_gan_fb15k237` | `adkgd_baseline_with_gan_fb15k237-<jobid>.out.txt` |
 | `train_gan_fb15k237.slurm` (legacy) | `gan_train_fb15k237` | `gan_train_fb15k237-<jobid>.out.txt` |
@@ -271,12 +271,12 @@ Every SLURM script merges stdout and stderr into a single file via `#SBATCH --ou
 ### Useful tailing commands
 
 ```bash
-# Tail the latest CGSP training log without typing the job id
+# Tail the latest KGSAGE training log without typing the job id
 cd ~/ADKGD
-tail -f "$(ls -t cgsp_train_fb15k237-*.out.txt | head -1)"
+tail -f "$(ls -t kgsage_train_fb15k237-*.out.txt | head -1)"
 
 # Tail a specific job id
-tail -f cgsp_train_fb15k237-2886370.out.txt
+tail -f kgsage_train_fb15k237-2886370.out.txt
 
 # List the latest few logs across all SLURMs
 ls -t *-*.out.txt | head -10
@@ -287,8 +287,8 @@ ls -t *-*.out.txt | head -10
 | Where | What it contains |
 |---|---|
 | `~/ADKGD/<jobname>-<jobid>.out.txt` | SLURM stdout: GPU pre-flight, env activation, all `print()`/`echo` output, Python tracebacks, per-epoch loss lines |
-| `experiments/gan/outputs/logs/<DATASET>_cgsp_training.json` | Structured per-epoch loss curves (parseable for plotting) |
-| `experiments/gan/outputs/checkpoints/<DATASET>_cgsp.pt` | Trained G + D weights + metadata |
+| `experiments/gan/outputs/logs/<DATASET>_kgsage_training.json` | Structured per-epoch loss curves (parseable for plotting) |
+| `experiments/gan/outputs/checkpoints/<DATASET>_kgsage.pt` | Trained G + D weights + metadata |
 | `checkpoints/<dataset>/ADKGD_<dataset>_...log.txt` | ADKGD-internal (after B0 or B2 run): Precision/Recall per K cutoff |
 
 ---
@@ -323,7 +323,7 @@ scancel <jobid>
 | `gan/train.py` | `gan/adversarial/train.py` | Superseded by Phase 2.3 |
 | `gan/corrupt_triples.py` | `gan/corruption/infer.py` | To be replaced in Phase 3.1 |
 | `gan/adkgd_bridge.py` | `gan/corruption/adkgd_bridge.py` | To be moved in Phase 3.2 |
-| `slurm/train_gan_fb15k237.slurm` | `slurm/train_cgsp_fb15k237.slurm` | Superseded; old script left as reference |
+| `slurm/train_gan_fb15k237.slurm` | `slurm/train_kgsage_fb15k237.slurm` | Superseded; old script left as reference |
 
 Legacy files are deleted at end of Phase 3 once the new pipeline is end-to-end validated.
 

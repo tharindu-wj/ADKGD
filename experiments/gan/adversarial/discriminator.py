@@ -1,4 +1,4 @@
-"""Internal TransE Discriminator for the CGSP adversarial loop.
+"""Internal TransE Discriminator for the KGSAGE adversarial loop.
 
 The Discriminator D plays two roles simultaneously:
   1. SCORER: produces a real-valued score for any triple (h, r, t).

@@ -9,7 +9,7 @@ Usage:
     from experiments.gan.corruption.api import KGCorrupter
 
     corrupter = KGCorrupter(
-        checkpoint_path="experiments/gan/outputs/checkpoints/FB15K-237_cgsp.pt",
+        checkpoint_path="experiments/gan/outputs/checkpoints/FB15K-237_kgsage.pt",
         concept_pools_path="experiments/gan/outputs/concept_pools/FB15K-237.pkl",
     )
 
@@ -45,7 +45,7 @@ DEFAULT_MAX_RETRIES = 10
 
 
 class KGCorrupter:
-    """The CGSP corruption primitive.
+    """The KGSAGE corruption primitive.
 
     Init is heavy (loads checkpoint + concept pools); corrupt() is
     cheap (typically <1 ms per call once init is done).
@@ -58,7 +58,7 @@ class KGCorrupter:
         """Load the trained pair + concept pools.
 
         Args:
-          checkpoint_path:    path to <DATASET>_cgsp.pt (Phase 2 output).
+          checkpoint_path:    path to <DATASET>_kgsage.pt (Phase 2 output).
           concept_pools_path: path to <DATASET>.pkl     (Phase 1 output).
           n_candidates:       candidate pool size at inference.
           max_retries:        attempts to redraw on self-loop / real-KG

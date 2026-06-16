@@ -1,6 +1,6 @@
 """Inference internals for Phase 3 corruption.
 
-This module is the engine room. It loads a CGSP checkpoint, reconstructs
+This module is the engine room. It loads a KGSAGE checkpoint, reconstructs
 the trained G + D, and provides the one-positive-in -> one-negative-out
 function that the KGCorrupter class wraps.
 
@@ -53,10 +53,10 @@ _log = logging.getLogger(__name__)
 
 
 def load_checkpoint(checkpoint_path, device=None):
-    """Reconstruct (G, D) from a CGSP checkpoint produced by adversarial/train.py.
+    """Reconstruct (G, D) from a KGSAGE checkpoint produced by adversarial/train.py.
 
     Args:
-      checkpoint_path: path to <DATASET>_cgsp.pt.
+      checkpoint_path: path to <DATASET>_kgsage.pt.
       device:          torch device; defaults to CUDA if available else CPU.
 
     Returns:

@@ -1,4 +1,4 @@
-"""Bridge between ADKGD's Reader and the CGSP corruption library.
+"""Bridge between ADKGD's Reader and the KGSAGE corruption library.
 
 ADKGD's dataset.py imports this module by name (`from adkgd_bridge import ...`)
 after adding experiments/gan/ to sys.path. We expose three symbols matching
@@ -18,11 +18,11 @@ this bridge is just a thin string<->int translator.
 The 3-step generate() flow per ADKGD-side batch:
 
   STEP 1: Translate ADKGD integer IDs -> strings using ADKGD's id-maps.
-          (ADKGD and CGSP can number the same entity differently; strings
+          (ADKGD and KGSAGE can number the same entity differently; strings
            are the lingua franca that keeps both worlds aligned.)
 
   STEP 2: Call KGCorrupter.corrupt_batch() to produce string-typed
-          negatives. CGSP handles slot choice, candidate pooling,
+          negatives. KGSAGE handles slot choice, candidate pooling,
           concept filtering, REINFORCE-trained scoring, and validation.
 
   STEP 3: Translate the negatives' strings back to ADKGD integer IDs
@@ -52,14 +52,14 @@ __all__ = ["load_gan", "generate", "render_stats"]
 
 
 def load_gan(ckpt_path, concept_pools_path=None, device=None):
-    """Load a CGSP checkpoint once; return a payload to reuse per batch.
+    """Load a KGSAGE checkpoint once; return a payload to reuse per batch.
 
     Args:
-      ckpt_path:           path to <DATASET>_cgsp.pt (Phase 2 output).
+      ckpt_path:           path to <DATASET>_kgsage.pt (Phase 2 output).
       concept_pools_path:  path to <DATASET>.pkl (Phase 1 output). If None,
                            derived from ckpt_path by replacing the
                            checkpoints/ folder with concept_pools/ and
-                           stripping the "_cgsp.pt" suffix.
+                           stripping the "_kgsage.pt" suffix.
       device:              torch device (None -> CUDA if available else CPU).
 
     Returns:
@@ -75,8 +75,8 @@ def load_gan(ckpt_path, concept_pools_path=None, device=None):
         concept_pools_path=concept_pools_path,
         device=device,
     )
-    print(f"[GAN-CGSP] loaded checkpoint from {ckpt_path}", flush=True)
-    print(f"[GAN-CGSP] loaded concept pools from {concept_pools_path}", flush=True)
+    print(f"[KGSAGE] loaded checkpoint from {ckpt_path}", flush=True)
+    print(f"[KGSAGE] loaded concept pools from {concept_pools_path}", flush=True)
     return {
         "corrupter": corrupter,
         "ckpt_path": ckpt_path,
@@ -99,7 +99,7 @@ def generate(adkgd_triples, *,
       adkgd_ent2id:     reverse map.
       adkgd_rel2id:     reverse map.
       rng:              numpy Generator (we extract a single int seed from it
-                        to keep CGSP's Python-rng path deterministic and
+                        to keep KGSAGE's Python-rng path deterministic and
                         independent of the wider torch/numpy global state).
 
     Returns:
@@ -129,7 +129,7 @@ def generate(adkgd_triples, *,
     # Snapshot the cumulative stats so we can compute per-batch deltas.
     stats_before = corrupter.stats()
 
-    # STEP 2: CGSP corruption (strings in, strings out).
+    # STEP 2: KGSAGE corruption (strings in, strings out).
     string_negatives = corrupter.corrupt_batch(string_positives, seed=seed)
 
     # STEP 3: strings -> ADKGD ints.
@@ -141,7 +141,7 @@ def generate(adkgd_triples, *,
             )
         except KeyError as exc:
             raise KeyError(
-                f"ADKGD vocabulary missing entity/relation produced by CGSP: "
+                f"ADKGD vocabulary missing entity/relation produced by KGSAGE: "
                 f"{exc}. This usually means ADKGD's vocab differs from the "
                 f"vocab the GAN was trained on. Re-train the GAN on ADKGD's "
                 f"current train.txt, or check that data/<DATASET>/train.txt "
@@ -160,7 +160,7 @@ def render_stats(stats):
     """Format batch stats for ADKGD's '[GAN] ...' log line.
 
     Mirrors the legacy Gumbel-Softmax format closely; the only structural
-    difference is no `rel=` column - CGSP only corrupts head/tail slots.
+    difference is no `rel=` column - KGSAGE only corrupts head/tail slots.
     """
     total = stats.get("processed", 0)
     retries = stats.get("retries", 0)
@@ -181,14 +181,14 @@ def _derive_concept_pools_path(ckpt_path):
     """Guess the concept_pools.pkl path from the checkpoint path.
 
     Expected layout:
-      experiments/gan/outputs/checkpoints/<DATASET>_cgsp.pt
+      experiments/gan/outputs/checkpoints/<DATASET>_kgsage.pt
       experiments/gan/outputs/concept_pools/<DATASET>.pkl
     """
     ckpt_dir = os.path.dirname(ckpt_path)
     name = os.path.basename(ckpt_path)
-    # Strip "_cgsp.pt" suffix to get the dataset name.
-    if name.endswith("_cgsp.pt"):
-        dataset = name[:-len("_cgsp.pt")]
+    # Strip "_kgsage.pt" suffix to get the dataset name.
+    if name.endswith("_kgsage.pt"):
+        dataset = name[:-len("_kgsage.pt")]
     elif name.endswith(".pt"):
         dataset = name[:-len(".pt")]
     else:
