@@ -62,13 +62,11 @@ experiments/
 ├── run_experiment.py                  ← ADKGD orchestrator (train+test+RESULTS)
 │
 ├── slurm/                             ← HPC launchers
-│   ├── train_kgsage_fb15k237.slurm         ← NEW - train KGSAGE (Phase 1+2)
-│   ├── run_baseline_fb15k237.slurm        ← B0 baseline (random negs)
-│   ├── run_baseline_with_gan_fb15k237.slurm  ← will become KGSAGE B2 after Phase 3
-│   ├── train_gan_fb15k237.slurm           ← LEGACY (Gumbel GAN), deprecated
-│   ├── train_gan_wn18rr.slurm             ← LEGACY (WN18RR not yet migrated)
-│   ├── run_baseline_wn18rr.slurm          ← B0 baseline for WN18RR
-│   └── run_baseline_with_gan_wn18rr.slurm ← WN18RR variant
+│   ├── train_kgsage_fb15k237.slurm           ← train KGSAGE (Phase 1+2)
+│   ├── run_adkgd_fb15k237.slurm           ← B0 baseline (random negs)
+│   ├── run_adkgd_with_kgsage_fb15k237.slurm  ← B2 (ADKGD with KGSAGE negs)
+│   ├── run_adkgd_wn18rr.slurm             ← B0 baseline for WN18RR
+│   └── run_adkgd_with_kgsage_wn18rr.slurm ← B2 WN18RR (needs train_kgsage_wn18rr first)
 │
 └── gan/
     ├── concept/                       ← Phase 1 - Concept Module
@@ -221,7 +219,7 @@ python experiments/run_experiment.py --dataset FB15K-237 --anomaly_ratio 0.05 --
 HPC:
 
 ```bash
-sbatch experiments/slurm/run_baseline_fb15k237.slurm
+sbatch experiments/slurm/run_adkgd_fb15k237.slurm
 # -> checkpoints/FB15K-237/ADKGD_FB15K-237_0.05_Neighbors39__log.txt
 ```
 
@@ -263,10 +261,9 @@ Every SLURM script merges stdout and stderr into a single file via `#SBATCH --ou
 | SLURM script | `--job-name` | Log filename pattern |
 |---|---|---|
 | `train_kgsage_fb15k237.slurm` | `kgsage_train_fb15k237` | `kgsage_train_fb15k237-<jobid>.out.txt` |
-| `run_baseline_fb15k237.slurm` | `adkgd_fb15k237` | `adkgd_fb15k237-<jobid>.out.txt` |
-| `run_baseline_with_gan_fb15k237.slurm` | `adkgd_baseline_with_gan_fb15k237` | `adkgd_baseline_with_gan_fb15k237-<jobid>.out.txt` |
-| `train_gan_fb15k237.slurm` (legacy) | `gan_train_fb15k237` | `gan_train_fb15k237-<jobid>.out.txt` |
-| `run_baseline_wn18rr.slurm` | `adkgd_wn18rr` | `adkgd_wn18rr-<jobid>.out.txt` |
+| `run_adkgd_fb15k237.slurm` | `adkgd_fb15k237` | `adkgd_fb15k237-<jobid>.out.txt` |
+| `run_adkgd_with_kgsage_fb15k237.slurm` | `adkgd_with_kgsage_fb15k237` | `adkgd_with_kgsage_fb15k237-<jobid>.out.txt` |
+| `run_adkgd_wn18rr.slurm` | `adkgd_wn18rr` | `adkgd_wn18rr-<jobid>.out.txt` |
 
 ### Useful tailing commands
 
@@ -323,7 +320,9 @@ scancel <jobid>
 | `gan/train.py` | `gan/adversarial/train.py` | Superseded by Phase 2.3 |
 | `gan/corrupt_triples.py` | `gan/corruption/infer.py` | To be replaced in Phase 3.1 |
 | `gan/adkgd_bridge.py` | `gan/corruption/adkgd_bridge.py` | To be moved in Phase 3.2 |
-| `slurm/train_gan_fb15k237.slurm` | `slurm/train_kgsage_fb15k237.slurm` | Superseded; old script left as reference |
+| `slurm/train_gan_fb15k237.slurm` | `slurm/train_kgsage_fb15k237.slurm` | Superseded and deleted |
+| `slurm/run_baseline_with_gan_*.slurm` | `slurm/run_adkgd_with_kgsage_*.slurm` | Renamed (B2 launcher; "baseline" → "adkgd") |
+| `slurm/run_baseline_*.slurm` | `slurm/run_adkgd_*.slurm` | Renamed (B0 launchers; names what actually runs) |
 
 Legacy files are deleted at end of Phase 3 once the new pipeline is end-to-end validated.
 

@@ -441,8 +441,8 @@ VALIDATE (Phase 3b sub-gate):
 
 ```
 RUN:
-   sbatch experiments/slurm/run_baseline_fb15k.slurm           # B0 (random)
-   sbatch experiments/slurm/run_baseline_with_gan_fb15k.slurm  # B2 (KGSAGE)
+   sbatch experiments/slurm/run_adkgd_fb15k237.slurm                # B0 (random)
+   sbatch experiments/slurm/run_adkgd_with_kgsage_fb15k237.slurm     # B2 (KGSAGE)
 
 VALIDATE (Phase 3c sub-gate, the empirical claim):
    - B2 beats B0 on at least 3 of 5 K cutoffs

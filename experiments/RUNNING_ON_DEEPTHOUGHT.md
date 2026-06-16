@@ -3,7 +3,7 @@
 How to reproduce the FB15K-237 column of the ADKGD paper's Table 2 on the
 DeepThought HPC as a SLURM batch job on the **GPU partition (Tesla V100)**,
 using [`run_experiment.py`](run_experiment.py) as the orchestrator and
-[`experiments/slurm/run_baseline_fb15k237.slurm`](slurm/run_baseline_fb15k237.slurm) as the
+[`experiments/slurm/run_adkgd_fb15k237.slurm`](slurm/run_adkgd_fb15k237.slurm) as the
 launcher.
 
 ## Why batch (not the login node)
@@ -19,7 +19,7 @@ packages — it never reaches out to PyPI mid-run.
 
 ## What one job produces
 
-One submission of `experiments/slurm/run_baseline_fb15k237.slurm` trains ADKGD on FB15K-237 at
+One submission of `experiments/slurm/run_adkgd_fb15k237.slurm` trains ADKGD on FB15K-237 at
 `anomaly_ratio=0.05`, seed 0, for 1 epoch, then evaluates. The job's
 `.out.txt` ends with:
 
@@ -67,7 +67,7 @@ to worry about.
 ## 2. Point the job script at your paths
 
 Edit the two variables at the top of
-[`experiments/slurm/run_baseline_fb15k237.slurm`](slurm/run_baseline_fb15k237.slurm) if your
+[`experiments/slurm/run_adkgd_fb15k237.slurm`](slurm/run_adkgd_fb15k237.slurm) if your
 layout differs:
 
 ```bash
@@ -85,26 +85,26 @@ There are three slurm launchers in `experiments/slurm/`. Submit them in this ord
 
 | # | Launcher | When |
 |---|---|---|
-| 1 | `train_gan_fb15k237.slurm` | **One-time** per dataset — produces the GAN checkpoint used by B1. Skip if a checkpoint already exists. |
-| 2 | `run_baseline_fb15k237.slurm` | **B0** — ADKGD baseline with random negatives (reproduces Wu et al. 2024 Table 2). |
-| 3 | `run_baseline_with_gan_fb15k237.slurm` | **B1** — ADKGD baseline, but with the trained GAN supplying training negatives in-process. Requires step 1 to have produced `experiments/gan/outputs/checkpoints/fb15k237.pt`. |
+| 1 | `train_kgsage_fb15k237.slurm` | **One-time** per dataset — produces the KGSAGE checkpoint used by B2. Skip if a checkpoint already exists. |
+| 2 | `run_adkgd_fb15k237.slurm` | **B0** — ADKGD baseline with random negatives (reproduces Wu et al. 2024 Table 2). |
+| 3 | `run_adkgd_with_kgsage_fb15k237.slurm` | **B2** — ADKGD baseline, but with the trained KGSAGE generator supplying training negatives in-process. Requires step 1 to have produced `experiments/gan/outputs/checkpoints/FB15K-237_kgsage.pt`. |
 
-Step 2 (B0) and step 3 (B1) are independent — submit them in either order.
+Step 2 (B0) and step 3 (B2) are independent — submit them in either order.
 Step 1 must happen before step 3.
 
 ```bash
 cd $HOME/ADKGD
 git pull                                              # get latest run_experiment.py / slurm
 
-# (one-time, only if no checkpoint yet) Train the GAN:
-sbatch experiments/slurm/train_gan_fb15k237.slurm
+# (one-time, only if no checkpoint yet) Train KGSAGE:
+sbatch experiments/slurm/train_kgsage_fb15k237.slurm
 
 # B0 baseline
-sbatch --test-only experiments/slurm/run_baseline_fb15k237.slurm     # dry-run: validate the script
-sbatch experiments/slurm/run_baseline_fb15k237.slurm                 # real submit → prints a job id
+sbatch --test-only experiments/slurm/run_adkgd_fb15k237.slurm     # dry-run: validate the script
+sbatch experiments/slurm/run_adkgd_fb15k237.slurm                 # real submit → prints a job id
 
-# B1 baseline + the GAN negatives (after step 1 has finished)
-sbatch experiments/slurm/run_baseline_with_gan_fb15k237.slurm
+# B2: baseline + KGSAGE negatives (after step 1 has finished)
+sbatch experiments/slurm/run_adkgd_with_kgsage_fb15k237.slurm
 
 squeue -u $USER                                       # PD = pending, R = running
 tail -f adkgd_fb15k237-<jobid>.out.txt                   # live log (training progress)
@@ -199,7 +199,7 @@ python -m pip install torch --index-url https://download.pytorch.org/whl/cu121
 python -c "import torch; print('torch', torch.__version__, '| cuda build', torch.version.cuda)"
 
 # 3. Resubmit:
-sbatch experiments/slurm/run_baseline_fb15k237.slurm
+sbatch experiments/slurm/run_adkgd_fb15k237.slurm
 ```
 
 ## Troubleshooting
@@ -208,7 +208,7 @@ sbatch experiments/slurm/run_baseline_fb15k237.slurm
 |---|---|
 | `module: command not found` or `Miniconda3` missing | `module avail miniconda` and use the exact name (maybe `miniconda/3.0`). |
 | `CommandNotFoundError: conda activate` | The `source "$(conda info --base)/etc/profile.d/conda.sh"` line must run before `conda activate`. |
-| `/bin/bash^M: bad interpreter` | CRLF line endings from a Windows checkout. `dos2unix experiments/slurm/run_baseline_fb15k237.slurm` on the HPC. |
+| `/bin/bash^M: bad interpreter` | CRLF line endings from a Windows checkout. `dos2unix experiments/slurm/run_adkgd_fb15k237.slurm` on the HPC. |
 | Pre-flight assert: `torch cannot see a GPU` | CPU-only torch wheel got installed. Reinstall per step 4 above. |
 | `ModuleNotFoundError` for torch / numpy / sklearn / matplotlib | The env wasn't built or wasn't activated — redo step 1; confirm `CONDA_ENV` path in the slurm script. |
 | Job killed, `oom-kill` in log | Raise `--mem` in the script (e.g. 16G → 32G). FB15K-237 at batch 256 should fit in 16G; only an issue if you bump batch size. |
@@ -229,7 +229,7 @@ on V100; expect 5–10× slower on CPU). It's useful for:
   in well under a minute.
 - Sanity-checking your env without burning a scarce V100 slot.
 
-To make a CPU variant, copy `run_baseline_fb15k237.slurm` and:
+To make a CPU variant, copy `run_adkgd_fb15k237.slurm` and:
 
 - Set `#SBATCH --partition=general` (drop the `gpu` partition line)
 - Delete `#SBATCH --gres=gpu:tesla_v100:1`
