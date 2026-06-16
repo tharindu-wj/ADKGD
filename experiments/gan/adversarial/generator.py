@@ -100,6 +100,15 @@ class CandidateScorer(nn.Module):
         Returns:
           P_G: FloatTensor of shape [..., N_S] - rows sum to 1 along last dim.
         """
+        # Inputs may be built on CPU (e.g., during inference from Python
+        # candidate sampling) while the model is on GPU. Migrate to E's
+        # device once here so callers don't have to.
+        target_device = E.weight.device
+        if candidate_triple_ids.device != target_device:
+            candidate_triple_ids = candidate_triple_ids.to(target_device)
+        if weights is not None and weights.device != target_device:
+            weights = weights.to(target_device)
+
         h_ids = candidate_triple_ids[..., 0]
         r_ids = candidate_triple_ids[..., 1]
         t_ids = candidate_triple_ids[..., 2]
