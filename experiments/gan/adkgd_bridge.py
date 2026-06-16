@@ -169,12 +169,14 @@ def render_stats(stats):
     total = stats.get("processed", 0)
     retries = stats.get("retries", 0)
     fb = stats.get("uniform_fallbacks", 0)
+    oov = stats.get("oov_fallbacks", 0)
     head = stats.get("slot_head", 0)
     tail = stats.get("slot_tail", 0)
     if total == 0:
-        return f"processed=0  retries=0  uniform_fallbacks=0"
+        return f"processed=0  retries=0  uniform_fallbacks=0  oov_fallbacks=0"
     return (
-        f"processed={total:,}  retries={retries}  uniform_fallbacks={fb}\n"
+        f"processed={total:,}  retries={retries}  "
+        f"uniform_fallbacks={fb}  oov_fallbacks={oov}\n"
         f"       slot_distribution: "
         f"head={head}/{total}({head/total*100:.1f}%) "
         f"tail={tail}/{total}({tail/total*100:.1f}%)"

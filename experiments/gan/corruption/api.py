@@ -113,18 +113,24 @@ class KGCorrupter:
         Returns:
           (h_str, r_str, t_str) - the negative triple.
         """
-        # STEP 1: resolve strings to ints.
         h_str, r_str, t_str = positive
-        try:
-            positive_ids = (
-                self.entity_to_id[h_str],
-                self.relation_to_id[r_str],
-                self.entity_to_id[t_str],
-            )
-        except KeyError as exc:
-            raise KeyError(
-                f"Unknown entity or relation in positive {positive!r}: {exc}"
-            ) from exc
+
+        # OOV guard: ADKGD's vocab includes valid+test entities while ours
+        # is built from train only. If any part of the positive is missing,
+        # the model has no learned embedding for it - fall back to uniform
+        # random corruption from our known vocabulary. The returned entity
+        # is in ADKGD's vocab (their vocab is a superset of ours).
+        if (h_str not in self.entity_to_id
+                or r_str not in self.relation_to_id
+                or t_str not in self.entity_to_id):
+            return self._oov_random_corrupt(positive, slot, seed)
+
+        # STEP 1: resolve strings to ints.
+        positive_ids = (
+            self.entity_to_id[h_str],
+            self.relation_to_id[r_str],
+            self.entity_to_id[t_str],
+        )
 
         rng = random.Random(seed) if seed is not None else self._default_rng
 
@@ -189,12 +195,55 @@ class KGCorrupter:
         """Zero the counters (used between experiments)."""
         self._stats = _make_empty_stats()
 
+    # ─── internal ────────────────────────────────────────────────
+
+    def _oov_random_corrupt(self, positive, slot, seed):
+        """Uniform random corruption for positives with OOV entities or relations.
+
+        Used when the input positive contains an entity or relation that's
+        not in our vocabulary (e.g., from valid/test splits while we trained
+        on train only). The model can't score such triples, so we degrade
+        gracefully to uniform random corruption using ONLY entities we know.
+
+        The returned triple uses ADKGD-known strings throughout: the kept
+        slot keeps its original (already in ADKGD's vocab); the changed
+        slot is from our vocab (subset of ADKGD's vocab).
+        """
+        rng = random.Random(seed) if seed is not None else self._default_rng
+        h_str, r_str, t_str = positive
+
+        # Pick slot uniformly (we have no cardinality stats for an OOV relation).
+        if slot is None:
+            slot = "head" if rng.random() < 0.5 else "tail"
+
+        # Random pick from our known entity vocab.
+        n_entities = len(self.entity_to_id)
+        kept_str = t_str if slot == "head" else h_str
+        # Loop in case the random pick equals the kept slot (rare but possible).
+        for _ in range(50):
+            new_id = rng.randint(0, n_entities - 1)
+            new_str = self.id_to_entity[new_id]
+            if new_str != kept_str:
+                break
+        else:
+            new_str = self.id_to_entity[0]  # last-resort
+
+        result = (new_str, r_str, t_str) if slot == "head" else (h_str, r_str, new_str)
+
+        # Update stats: count OOV explicitly so we can monitor frequency.
+        self._stats["processed"] += 1
+        self._stats["oov_fallbacks"] += 1
+        self._stats[f"slot_{slot}"] += 1
+
+        return result
+
 
 def _make_empty_stats():
     return {
         "processed": 0,
         "retries": 0,
         "uniform_fallbacks": 0,
+        "oov_fallbacks": 0,
         "slot_head": 0,
         "slot_tail": 0,
     }
