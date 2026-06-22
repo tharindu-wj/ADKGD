@@ -1,19 +1,18 @@
 #!/bin/bash
-# ADKGD on WN18RR — same as run_adkgd_wn18rr.slurm but with
-# KGSAGE-generated training negatives instead of uniform random corruption.
-# This is variant B2 in the comparison table.
+# ADKGD baseline on WN18RR, but with the TRAINED GAN supplying training
+# negatives instead of uniform random corruption (Phase B / variant B1).
+# Sibling of run_baseline_wn18rr.slurm — same everything except --neg_source gan
+# and a different --job-name so the .out.txt files don't collide.
 #
-# Before submitting: the KGSAGE checkpoint at $GAN_CKPT must exist. Produce it
-# by running `sbatch experiments/slurm/train_kgsage_wn18rr.slurm` first.
-# (Note: train_kgsage_wn18rr.slurm doesn't exist yet — add when extending
-#  KGSAGE to WN18RR after FB15K-237 validates.)
+# Before submitting: GAN checkpoint at $GAN_CKPT must exist. Produce it by
+# running `sbatch experiments/slurm/train_gan_wn18rr.slurm` first.
 #
 # ADKGD loads the checkpoint in-process via experiments/gan/adkgd_bridge.py;
 # negatives are generated per training batch — no intermediate TSV file.
 #
-#   sbatch experiments/slurm/run_adkgd_with_kgsage_wn18rr.slurm
+#   sbatch experiments/slurm/run_baseline_with_gan_wn18rr.slurm
 
-#SBATCH --job-name=adkgd_with_kgsage_wn18rr
+#SBATCH --job-name=adkgd_baseline_with_gan_wn18rr
 #SBATCH --output=%x-%j.out.txt
 # (no --error directive: stderr merges into stdout so Python's logging output
 #  shows up in the same file as the print/echo lines. See baseline slurm.)
@@ -63,14 +62,14 @@ $PY -c "import numpy, sklearn, matplotlib; print('deps ok | numpy', numpy.__vers
 
 cd "$PROJECT_DIR"
 
-# Belt-and-braces: confirm the KGSAGE checkpoint is present before we burn epoch time.
-GAN_CKPT="${GAN_CKPT:-experiments/gan/outputs/checkpoints/WN18RR_kgsage.pt}"
+# Belt-and-braces: confirm the GAN checkpoint is present before we burn epoch time.
+GAN_CKPT="${GAN_CKPT:-experiments/gan/outputs/checkpoints/wn18rr.pt}"
 if [[ ! -f "$GAN_CKPT" ]]; then
     echo "ERROR: $GAN_CKPT not found at $PROJECT_DIR/$GAN_CKPT" >&2
-    echo "Train KGSAGE first: sbatch experiments/slurm/train_kgsage_wn18rr.slurm" >&2
+    echo "Train GAN first: sbatch experiments/slurm/train_gan_wn18rr.slurm" >&2
     exit 1
 fi
-echo "Using KGSAGE checkpoint: $GAN_CKPT ($(du -h "$GAN_CKPT" | cut -f1))"
+echo "Using GAN checkpoint: $GAN_CKPT ($(du -h "$GAN_CKPT" | cut -f1))"
 
 # Change experiment parameters here, never inside this file's SLURM header.
 # Use $PY (absolute env python) so subprocesses spawned by run_experiment.py via

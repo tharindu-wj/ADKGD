@@ -82,11 +82,8 @@ python experiments/gan/train.py \
 HPC (FB15K-237 on V100):
 
 ```bash
-sbatch experiments/slurm/train_kgsage_fb15k237.slurm
+sbatch experiments/slurm/train_gan_fb15k237.slurm
 ```
-
-(Legacy `train_gan_fb15k237.slurm` for the Gumbel-Softmax pipeline has
-been removed — KGSAGE supersedes it.)
 
 Notable hyperparameters (with sane defaults in `train.py`):
 

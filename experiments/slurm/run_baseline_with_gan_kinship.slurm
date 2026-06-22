@@ -1,16 +1,21 @@
 #!/bin/bash
-# ADKGD baseline on FB15K-237 — ONE experiment (anomaly_ratio=0.05, seed=0).
-# All experiment logic lives in experiments/run_experiment.py; this script is
-# just the HPC launcher (resource request + env activation + GPU check + invocation).
+# ADKGD baseline on Kinship, but with the TRAINED GAN supplying training
+# negatives instead of uniform random corruption (Phase B / variant B1).
+# Sibling of run_baseline_kinship.slurm — same everything except --neg_source gan
+# and a different --job-name so the .out.txt files don't collide.
 #
-#   sbatch experiments/slurm/run_adkgd_fb15k237.slurm
+# Before submitting: GAN checkpoint at $GAN_CKPT must exist. Produce it by
+# running `sbatch experiments/slurm/train_gan_kinship.slurm` first.
+#
+# ADKGD loads the checkpoint in-process via experiments/gan/adkgd_bridge.py;
+# negatives are generated per training batch — no intermediate TSV file.
+#
+#   sbatch experiments/slurm/run_baseline_with_gan_kinship.slurm
 
-#SBATCH --job-name=adkgd_fb15k237
+#SBATCH --job-name=adkgd_baseline_with_gan_kinship
 #SBATCH --output=%x-%j.out.txt
-# (no --error directive on purpose: SLURM then merges stderr into stdout, so
-#  Python's logging output ends up in the same file as print/echo -- one file
-#  to tail. Drop this comment and add `#SBATCH --error=%x-%j.err.txt` if you
-#  ever need them split again.)
+# (no --error directive: stderr merges into stdout so Python's logging output
+#  shows up in the same file as the print/echo lines. See baseline slurm.)
 #SBATCH --time=01:30:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -57,13 +62,24 @@ $PY -c "import numpy, sklearn, matplotlib; print('deps ok | numpy', numpy.__vers
 
 cd "$PROJECT_DIR"
 
+# Belt-and-braces: confirm the GAN checkpoint is present before we burn epoch time.
+GAN_CKPT="${GAN_CKPT:-experiments/gan/outputs/checkpoints/kinship.pt}"
+if [[ ! -f "$GAN_CKPT" ]]; then
+    echo "ERROR: $GAN_CKPT not found at $PROJECT_DIR/$GAN_CKPT" >&2
+    echo "Train GAN first: sbatch experiments/slurm/train_gan_kinship.slurm" >&2
+    exit 1
+fi
+echo "Using GAN checkpoint: $GAN_CKPT ($(du -h "$GAN_CKPT" | cut -f1))"
+
 # Change experiment parameters here, never inside this file's SLURM header.
 # Use $PY (absolute env python) so subprocesses spawned by run_experiment.py via
 # sys.executable also use the env -- guaranteeing sklearn/matplotlib are visible.
 $PY experiments/run_experiment.py \
-    --dataset FB15K-237 \
+    --dataset Kinship \
     --anomaly_ratio 0.05 \
     --seed 0 \
-    --max_epoch 1
+    --max_epoch 1 \
+    --neg_source gan \
+    --gan_path "$GAN_CKPT"
 
 echo "Done $(date)"

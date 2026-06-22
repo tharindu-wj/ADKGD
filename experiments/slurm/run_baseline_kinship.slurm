@@ -1,11 +1,11 @@
 #!/bin/bash
-# ADKGD baseline on WN18RR — ONE experiment (anomaly_ratio=0.05, seed=0).
+# ADKGD baseline on Kinship — ONE experiment (anomaly_ratio=0.05, seed=0).
 # All experiment logic lives in experiments/run_experiment.py; this script is
 # just the HPC launcher (resource request + env activation + GPU check + invocation).
 #
-#   sbatch experiments/slurm/run_adkgd_wn18rr.slurm
+#   sbatch experiments/slurm/run_baseline_kinship.slurm
 
-#SBATCH --job-name=adkgd_wn18rr
+#SBATCH --job-name=adkgd_kinship
 #SBATCH --output=%x-%j.out.txt
 # (no --error directive on purpose: SLURM then merges stderr into stdout, so
 #  Python's logging output ends up in the same file as print/echo -- one file
@@ -61,7 +61,7 @@ cd "$PROJECT_DIR"
 # Use $PY (absolute env python) so subprocesses spawned by run_experiment.py via
 # sys.executable also use the env -- guaranteeing sklearn/matplotlib are visible.
 $PY experiments/run_experiment.py \
-    --dataset WN18RR \
+    --dataset Kinship \
     --anomaly_ratio 0.05 \
     --seed 0 \
     --max_epoch 1

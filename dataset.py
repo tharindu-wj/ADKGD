@@ -321,16 +321,11 @@ class Reader:
         )
         print('[GAN] ' + render_stats(stats))
 
-        # Print a SAMPLE of (positive, negative) pairs so the user can verify
-        # what the GAN produced without flooding the SLURM log. On FB15K-237
-        # the full set is ~325k pairs per batch -> several GB of stdout.
-        # The aggregate counts already live in render_stats(stats) above; this
-        # print exists only so a human can eyeball the corruption quality.
-        n = len(pos_triples)
-        sample_size = min(20, n)
-        print('[GAN] %d (positive -> negative) pairs (showing first %d):'
-              % (n, sample_size))
-        for i in range(sample_size):
+        # Print every (positive, negative) pair so the user can verify what the
+        # GAN produced. WARNING: on FB15K-237 (~325k pairs) this is a lot of output;
+        # cap or switch back to a sample if the slurm log gets too noisy.
+        print('[GAN] %d (positive -> negative) pairs:' % len(pos_triples))
+        for i in range(len(pos_triples)):
             ph, pr, pt = pos_triples[i]
             nh, nr, nt = negatives[i]
             moved = []
