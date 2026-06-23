@@ -1,4 +1,8 @@
-"""FB15K-237 loader for KGSAGE.
+"""Generic KG loader for KGSAGE.
+
+Loads any TSV-format KG that has train.txt / valid.txt / test.txt in a single
+directory. The loader is format-agnostic — works for FB15K-237, WN18RR,
+NELL-995, and any custom dataset in the same format.
 
 Two output formats from the same data:
 
@@ -7,26 +11,26 @@ Two output formats from the same data:
      edge_type has shape (num_edges,)    : relation ID per edge.
      This is the format `torch_geometric.nn.RGCNConv` expects.
 
-  2. Python triples (h, r, t) — used by everything else (Test 1.3 audit,
+  2. Python triples (h, r, t) — used by everything else (dataset audit,
      link prediction evaluation, etc.).
 
 We deliberately keep this loader separate from the simple GAN's `experiments/gan/data.py`
 because the KGSAGE pipeline has different needs:
   - PyG needs tensors built up front, not per-batch
-  - We need head/tail counts per relation for the density audit
+  - We need head/tail counts per relation for the dataset-level audit
   - We need a clean train/valid/test split (the simple GAN merges all splits)
 
 Vocab strategy: first-seen ordering. Train.txt is loaded first, so its entities
-and relations get the lowest IDs. This matches FB15K-237's standard convention
-and means valid/test only-entities (if any) get higher IDs.
+and relations get the lowest IDs. This matches the standard KGE convention and
+means valid/test only-entities (if any) get higher IDs.
 """
 import os
 
 import torch
 
 
-def load_fb15k237(data_dir):
-    """Load FB15K-237 from `data_dir/{train,valid,test}.txt`.
+def load_kg(data_dir):
+    """Load a KG from `data_dir/{train,valid,test}.txt`.
 
     Each line in those files is three tab-separated strings:
         head_string<TAB>relation_string<TAB>tail_string
@@ -62,8 +66,9 @@ def load_fb15k237(data_dir):
     )
 
     # ─── Step 2: parse valid.txt and test.txt; allow vocab extension ───
-    # On FB15K-237 the train vocab covers everything, but other KGs may have
-    # entities or relations that only appear in valid/test.
+    # On most KGs the train vocab covers everything, but some have entities
+    # or relations that only appear in valid/test — we tolerate this by
+    # extending the vocab as we go.
     triples_valid = _parse_split(
         os.path.join(data_dir, "valid.txt"),
         ent2id,

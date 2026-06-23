@@ -33,26 +33,23 @@ DECISION GATE:
             ESCALATE: try CompGCN (Plan B), longer training, or pivot.
 
 DATA SOURCE:
-  We use the output of audit_density.py (Test 1.3) to identify the
+  We use the output of audit_dataset.py (Test 1.3) to identify the
   anti-symmetric and symmetric pairs. This avoids hand-curation and
   makes the test data-driven.
 
 Usage:
-    python -m experiments.kgsage.test_antisym_signal \\
+    python -m kgsage.cli.audit_embeddings --dataset fb15k237 \\
         --ckpt experiments/kgsage/outputs/fb15k237_encoder.pt \\
-        --audit experiments/kgsage/outputs/density_audit.json
+        --audit experiments/kgsage/outputs/fb15k237_density_audit.json
 """
 import argparse
 import json
-import sys
-from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-from experiments.kgsage.encoder import KGSAGELinkPredictor
+from kgsage.data.datasets import resolve_dataset
+from kgsage.encoder.models import KGSAGELinkPredictor
 
 
 # Decision-gate threshold from the thesis plan.
@@ -120,29 +117,47 @@ def mann_whitney_u(group1, group2):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--ckpt", default="experiments/kgsage/outputs/fb15k237_encoder.pt")
-    ap.add_argument("--audit", default="experiments/kgsage/outputs/density_audit.json")
+    import sys
+    from pathlib import Path
+
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dataset", required=True,
+                    help="known short name (fb15k237, wn18rr, nell995, dummy_kg) "
+                         "or a filesystem path to a directory")
+    ap.add_argument("--ckpt", default=None,
+                    help="checkpoint path (default: "
+                         "experiments/kgsage/outputs/<dataset>_encoder.pt)")
+    ap.add_argument("--audit", default=None,
+                    help="dataset audit JSON path (default: "
+                         "experiments/kgsage/outputs/<dataset>_density_audit.json)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--sample_size", type=int, default=SAMPLE_SIZE,
                     help="how many top pairs from each group to test")
     args = ap.parse_args()
 
-    if not Path(args.ckpt).exists():
-        print(f"!! checkpoint not found: {args.ckpt}", file=sys.stderr)
-        print("   run train_encoder.py first.", file=sys.stderr)
+    # Resolve dataset name → config dict (gives us the canonical short name).
+    config = resolve_dataset(args.dataset)
+    ckpt_path = args.ckpt or f"experiments/kgsage/outputs/{config['name']}_encoder.pt"
+    audit_path = args.audit or f"experiments/kgsage/outputs/{config['name']}_density_audit.json"
+
+    if not Path(ckpt_path).exists():
+        print(f"!! checkpoint not found: {ckpt_path}", file=sys.stderr)
+        print(f"   run `python -m kgsage.cli.train_encoder --dataset {args.dataset}` first.",
+              file=sys.stderr)
         return 1
 
-    if not Path(args.audit).exists():
-        print(f"!! audit results not found: {args.audit}", file=sys.stderr)
-        print("   run audit_density.py first.", file=sys.stderr)
+    if not Path(audit_path).exists():
+        print(f"!! audit results not found: {audit_path}", file=sys.stderr)
+        print(f"   run `python -m kgsage.cli.audit_dataset --dataset {args.dataset}` first.",
+              file=sys.stderr)
         return 1
 
     # ─── Load the trained model ────────────────────────────────────────
-    print(f"Loading checkpoint {args.ckpt}...", flush=True)
+    print(f"Loading checkpoint {ckpt_path}...", flush=True)
     device = torch.device(args.device)
     model, ent2id, rel2id = KGSAGELinkPredictor.load_pretrained(
-        args.ckpt, device=device,
+        ckpt_path, device=device,
     )
 
     # The relation embedding table is the artifact we test.
@@ -150,8 +165,8 @@ def main():
     print(f"  relation embedding shape: {tuple(rel_emb.shape)}", flush=True)
 
     # ─── Load the audit results ────────────────────────────────────────
-    print(f"Loading audit results from {args.audit}...", flush=True)
-    with open(args.audit, encoding="utf-8") as f:
+    print(f"Loading audit results from {audit_path}...", flush=True)
+    with open(audit_path, encoding="utf-8") as f:
         audit = json.load(f)
 
     antisym_pairs = audit["antisym_pairs"][:args.sample_size]
@@ -161,7 +176,8 @@ def main():
         print(f"!! Audit found too few pairs to test: "
               f"{len(antisym_pairs)} anti-symmetric, {len(sym_pairs)} symmetric.",
               file=sys.stderr)
-        print("   Re-run audit_density.py and check thresholds.", file=sys.stderr)
+        print(f"   Re-run `python -m kgsage.cli.audit_dataset --dataset {args.dataset}` "
+              f"and check thresholds.", file=sys.stderr)
         return 1
 
     print(f"  using top {len(antisym_pairs)} anti-symmetric, "

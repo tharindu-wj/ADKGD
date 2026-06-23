@@ -1,14 +1,13 @@
-"""Test 1.1 — Link prediction MRR on FB15K-237 test set.
+"""Test 1.1 — Link prediction MRR on the test set.
 
 This is the sanity check after training. If MRR is too low we know
 something went wrong (data loading bug, optimisation bug, vanishing
 gradients) before we move on to the more subtle Test 1.2.
 
-DECISION GATE:
-  PASS    : MRR ≥ 0.30 (matches modern RGCN+DistMult variants)
-  WARN    : 0.20 ≤ MRR < 0.30 (slightly underperforming but usable;
-            check whether Test 1.2 still passes before deciding)
-  FAIL    : MRR < 0.20 (something is wrong; debug before Phase 2)
+DECISION GATE (per-dataset, overridable via kgsage.data.datasets):
+  PASS    : MRR ≥ `expected_mrr` for the dataset (default: 0.30)
+  WARN    : 0.66 × expected_mrr ≤ MRR < expected_mrr
+  FAIL    : MRR < 0.66 × expected_mrr (something is wrong; debug before Phase 2)
 
 WHAT MRR MEANS:
   For every test triple (h, r, t), we ask the model:
@@ -17,8 +16,8 @@ WHAT MRR MEANS:
   We take the rank of the true entity in each case (smaller = better).
   Reciprocal rank = 1 / rank. MRR is the mean across all test triples.
 
-  An MRR of 0.30 means on average the true answer is somewhere around
-  rank 3 — out of ~14,541 possible entities. That's solid.
+  An MRR of 0.30 on FB15K-237 means on average the true answer is somewhere
+  around rank 3 — out of ~14,541 possible entities. That's solid.
 
 FILTERED MRR:
   When ranking, we don't count OTHER known true triples as "ahead of"
@@ -28,26 +27,22 @@ FILTERED MRR:
   This is standard practice; it gives a more honest evaluation.
 
 Usage:
-    python -m experiments.kgsage.evaluate_lp \\
-        --data data/FB15K-237 \\
+    python -m kgsage.cli.evaluate_encoder \\
+        --dataset fb15k237 \\
         --ckpt experiments/kgsage/outputs/fb15k237_encoder.pt
 """
 import argparse
-import sys
 import time
-from pathlib import Path
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from kgsage.data.loaders import load_kg
+from kgsage.data.datasets import resolve_dataset
+from kgsage.encoder.models import KGSAGELinkPredictor
 
-from experiments.kgsage.data import load_fb15k237
-from experiments.kgsage.encoder import KGSAGELinkPredictor
 
-
-# Decision-gate thresholds, in line with the thesis plan.
-PASS_MRR = 0.30
-WARN_MRR = 0.20
+# Global default for datasets that don't specify their own expected_mrr.
+DEFAULT_PASS_MRR = 0.30
 
 
 def compute_filtered_mrr(model, kg, device, max_eval=None):
@@ -149,26 +144,45 @@ def compute_filtered_mrr(model, kg, device, max_eval=None):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--data", default="data/FB15K-237")
-    ap.add_argument("--ckpt", default="experiments/kgsage/outputs/fb15k237_encoder.pt")
+    import sys
+    from pathlib import Path
+
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dataset", required=True,
+                    help="known short name (fb15k237, wn18rr, nell995, dummy_kg) "
+                         "or a filesystem path to a directory")
+    ap.add_argument("--ckpt", default=None,
+                    help="checkpoint path (default: "
+                         "experiments/kgsage/outputs/<dataset>_encoder.pt)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--max_eval", type=int, default=None,
-                    help="Evaluate only N test triples (for quick local smoke test)")
+                    help="evaluate only N test triples (for quick local smoke test)")
     args = ap.parse_args()
 
-    if not Path(args.ckpt).exists():
-        print(f"!! checkpoint not found: {args.ckpt}", file=sys.stderr)
-        print("   run train_encoder.py first.", file=sys.stderr)
+    # Resolve dataset name → config dict.
+    config = resolve_dataset(args.dataset)
+    ckpt_path = args.ckpt or f"experiments/kgsage/outputs/{config['name']}_encoder.pt"
+
+    if not Path(ckpt_path).exists():
+        print(f"!! checkpoint not found: {ckpt_path}", file=sys.stderr)
+        print(f"   run `python -m kgsage.cli.train_encoder --dataset {args.dataset}` first.",
+              file=sys.stderr)
         return 1
 
-    print(f"Loading {args.data}/...", flush=True)
-    kg = load_fb15k237(args.data)
+    # Determine the pass threshold — use dataset's expected_mrr, fall back to global default.
+    pass_mrr = config.get("expected_mrr")
+    if pass_mrr is None:
+        pass_mrr = DEFAULT_PASS_MRR
+    warn_mrr = pass_mrr * 2 / 3  # warn at 66% of pass threshold
+
+    print(f"Loading {config['name']} from {config['path']}/...", flush=True)
+    kg = load_kg(config["path"])
     print(f"  {len(kg['triples_test']):,} test triples\n", flush=True)
 
-    print(f"Loading checkpoint {args.ckpt}...", flush=True)
+    print(f"Loading checkpoint {ckpt_path}...", flush=True)
     device = torch.device(args.device)
-    model, _, _ = KGSAGELinkPredictor.load_pretrained(args.ckpt, device=device)
+    model, _, _ = KGSAGELinkPredictor.load_pretrained(ckpt_path, device=device)
     print(f"  loaded on {device}\n", flush=True)
 
     print("Computing filtered MRR... (this is slow — scoring every entity per query)", flush=True)
@@ -179,29 +193,31 @@ def main():
     print("=" * 70)
     print("  KGSAGE Phase 1 Test 1.1 — Link Prediction MRR")
     print("=" * 70)
+    print(f"  Dataset                 : {config['name']}")
+    print(f"  Pass threshold (MRR)    : {pass_mrr:.2f}")
     print(f"  Test triples evaluated  : {results['n_test']:>6,}")
     print(f"  MRR (filtered)          : {results['mrr']:.4f}")
     print(f"  Hits@1                  : {results['hits_at_1']:.4f}")
     print(f"  Hits@3                  : {results['hits_at_3']:.4f}")
     print(f"  Hits@10                 : {results['hits_at_10']:.4f}")
     print()
-    if results["mrr"] >= PASS_MRR:
+    if results["mrr"] >= pass_mrr:
         verdict = "PASS"
-        reason = (f"MRR {results['mrr']:.4f} ≥ {PASS_MRR}. "
+        reason = (f"MRR {results['mrr']:.4f} ≥ {pass_mrr:.2f}. "
                   f"Encoder is well-trained. Proceed to Test 1.2.")
-    elif results["mrr"] >= WARN_MRR:
+    elif results["mrr"] >= warn_mrr:
         verdict = "WARN"
-        reason = (f"MRR {results['mrr']:.4f} is below the {PASS_MRR} target "
-                  f"but above the {WARN_MRR} debug threshold. "
+        reason = (f"MRR {results['mrr']:.4f} is below the {pass_mrr:.2f} target "
+                  f"but above the {warn_mrr:.2f} debug threshold. "
                   f"Check Test 1.2 result before deciding to retrain.")
     else:
         verdict = "FAIL"
-        reason = (f"MRR {results['mrr']:.4f} < {WARN_MRR}. "
+        reason = (f"MRR {results['mrr']:.4f} < {warn_mrr:.2f}. "
                   f"Something is wrong with training. "
                   f"Check: data loader (edge_index shape, edge_type dtype), "
                   f"learning rate (try 1e-4 instead of 1e-3), "
                   f"number of epochs (try doubling), "
-                  f"basis count (try 50 instead of 30).")
+                  f"basis count (try a different value).")
     print("=" * 70)
     print(f"  DECISION: {verdict}")
     print("=" * 70)

@@ -1,8 +1,8 @@
-"""Test 1.3 — anti-symmetric predicate pair density audit on FB15K-237.
+"""Test 1.3 — dataset-level anti-symmetric predicate pair density audit.
 
 This is the FIRST decision gate of Phase 1, and the cheapest one to run.
-It tells us whether FB15K-237 actually has the anti-symmetric structure
-KGSAGE needs to learn from.
+It tells us whether the dataset actually has the anti-symmetric structure
+KGSAGE needs to learn from — *before* spending GPU time on encoder training.
 
 WHY THIS MATTERS:
   FB15K-237 was deliberately constructed by Toutanova-Chen 2015 to remove
@@ -30,13 +30,15 @@ WHAT WE COMPUTE:
     support(r) ≥ MIN_SUPPORT
     ratio(r, r') > SYM_RATIO  (the swap almost always co-occurs)
 
-DECISION GATE:
-  PASS if we find ≥ 30 anti-symmetric pairs with support(r) ≥ 100.
-  FAIL if we find < 10 — the data is too sparse for learned generation;
-       pivot to NELL-995 or rule-mining.
+DECISION GATE (overridable per dataset via kgsage.data.datasets):
+  PASS if we find ≥ `antisym_min_pairs` anti-symmetric pairs with support ≥ MIN_SUPPORT.
+  FAIL if we find very few — the dataset is too sparse for learned generation;
+       pivot to a different dataset or to rule-mining.
 
 Usage:
-    python -m experiments.kgsage.audit_density --data data/FB15K-237
+    python -m kgsage.cli.audit_dataset --dataset fb15k237
+    python -m kgsage.cli.audit_dataset --dataset wn18rr
+    python -m kgsage.cli.audit_dataset --dataset /path/to/custom_kg
 """
 import argparse
 import json
@@ -44,19 +46,26 @@ import os
 from collections import defaultdict
 from pathlib import Path
 
-from .data import load_fb15k237
+from kgsage.data.loaders import load_kg
+from kgsage.data.datasets import resolve_dataset
 
 
 # Thresholds — tweak in CONTRADICTION_SPEC.md, change here too.
 MIN_SUPPORT = 100      # Need at least this many anchor triples per relation.
 ANTISYM_RATIO = 0.01   # ratio below this = mutually exclusive on role-swap
 SYM_RATIO = 0.5        # ratio above this  = symmetric, exclude as partner
-PASS_COUNT = 30        # ≥ this many anti-sym pairs → green light
-FAIL_COUNT = 10        # < this many anti-sym pairs → red flag, pivot
+DEFAULT_PASS_COUNT = 30   # default if dataset doesn't specify
+DEFAULT_FAIL_COUNT = 10   # default if dataset doesn't specify
 
 
-def audit(kg):
+def audit(kg, dataset_name=None, pass_count=None, fail_count=None):
     """Run the density audit and return a results dict.
+
+    Inputs:
+      kg            : dict from load_kg() — the loaded knowledge graph
+      dataset_name  : str — used only for the decision-reason text
+      pass_count    : int — overrides DEFAULT_PASS_COUNT (resolve_dataset supplies it)
+      fail_count    : int — overrides DEFAULT_FAIL_COUNT (resolve_dataset supplies it)
 
     Returns:
         dict with:
@@ -129,30 +138,35 @@ def audit(kg):
     sym.sort(key=lambda x: x["ratio"], reverse=True)  # highest ratio first
 
     # ─── Step 6: decision gate ──────────────────────────────────────────
+    pass_count = pass_count if pass_count is not None else DEFAULT_PASS_COUNT
+    fail_count = fail_count if fail_count is not None else DEFAULT_FAIL_COUNT
+    dataset_label = dataset_name or "this dataset"
+
     n_antisym = len(antisym)
-    if n_antisym >= PASS_COUNT:
+    if n_antisym >= pass_count:
         decision = "PASS"
         reason = (
             f"Found {n_antisym} anti-symmetric relation pairs with support ≥ "
             f"{MIN_SUPPORT} and ratio < {ANTISYM_RATIO}. "
-            f"FB15K-237 has enough signal; proceed to encoder training."
+            f"{dataset_label} has enough signal; proceed to encoder training."
         )
-    elif n_antisym >= FAIL_COUNT:
+    elif n_antisym >= fail_count:
         decision = "MARGINAL"
         reason = (
-            f"Found {n_antisym} anti-symmetric pairs (need ≥ {PASS_COUNT} for clean PASS, "
-            f"have ≥ {FAIL_COUNT}). Proceed with caution; KGSAGE may have low "
-            f"diversity. Consider adding NELL-995 or relaxing thresholds."
+            f"Found {n_antisym} anti-symmetric pairs (need ≥ {pass_count} for clean PASS, "
+            f"have ≥ {fail_count}). Proceed with caution; KGSAGE may have low "
+            f"diversity. Consider trying a different dataset or relaxing thresholds."
         )
     else:
         decision = "FAIL"
         reason = (
-            f"Only {n_antisym} anti-symmetric pairs found (need ≥ {FAIL_COUNT}). "
-            f"FB15K-237 inverse removal was too aggressive. PIVOT: try NELL-995, "
-            f"add WN18RR, or switch thesis to rule-mining without KGSAGE."
+            f"Only {n_antisym} anti-symmetric pairs found (need ≥ {fail_count}). "
+            f"{dataset_label} is too sparse for learned generation. PIVOT: try a "
+            f"different dataset (NELL-995, YAGO-4.5), or switch thesis to rule-mining."
         )
 
     return {
+        "dataset_name": dataset_label,
         "relation_support": dict(relation_support),
         "antisym_pairs": antisym,
         "sym_pairs": sym,
@@ -164,8 +178,8 @@ def audit(kg):
             "min_support": MIN_SUPPORT,
             "antisym_ratio": ANTISYM_RATIO,
             "sym_ratio": SYM_RATIO,
-            "pass_count": PASS_COUNT,
-            "fail_count": FAIL_COUNT,
+            "pass_count": pass_count,
+            "fail_count": fail_count,
         },
     }
 
@@ -173,19 +187,23 @@ def audit(kg):
 def print_report(kg, results, top_k=20):
     """Pretty-print the audit results for human inspection."""
     id2rel = kg["id2rel"]
+    thresholds = results["thresholds"]
 
     print("=" * 70)
-    print(f"  KGSAGE Phase 1 Test 1.3 — Anti-Symmetric Predicate Pair Density Audit")
+    print(f"  KGSAGE Phase 1 Test 1.3 — Dataset Anti-Symmetric Pair Density Audit")
     print("=" * 70)
     print()
+    print(f"  Dataset          : {results['dataset_name']}")
     print(f"  Training triples : {len(kg['triples_train']):>8,}")
     print(f"  Relations        : {kg['n_rel']:>8,}")
     print(f"  Entities         : {kg['n_ent']:>8,}")
     print()
     print(f"  Thresholds")
-    print(f"    min support per relation        : {MIN_SUPPORT}")
-    print(f"    anti-symmetric ratio (max)      : {ANTISYM_RATIO}")
-    print(f"    symmetric ratio (min)           : {SYM_RATIO}")
+    print(f"    min support per relation        : {thresholds['min_support']}")
+    print(f"    anti-symmetric ratio (max)      : {thresholds['antisym_ratio']}")
+    print(f"    symmetric ratio (min)           : {thresholds['sym_ratio']}")
+    print(f"    pass count (anti-sym pairs)     : {thresholds['pass_count']}")
+    print(f"    fail count (anti-sym pairs)     : {thresholds['fail_count']}")
     print()
     print(f"  Found")
     print(f"    anti-symmetric pairs            : {results['n_antisym']:>4}")
@@ -224,23 +242,41 @@ def _short(rel_string, max_len=50):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--data", default="data/FB15K-237",
-                    help="dataset folder under data/")
-    ap.add_argument("--out", default="experiments/kgsage/outputs/density_audit.json",
-                    help="where to save the audit results JSON")
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dataset", required=True,
+                    help="known short name (fb15k237, wn18rr, nell995, dummy_kg) "
+                         "or a filesystem path to a directory containing "
+                         "train.txt / valid.txt / test.txt")
+    ap.add_argument("--out", default=None,
+                    help="where to save the audit JSON (default: "
+                         "experiments/kgsage/outputs/<dataset>_density_audit.json)")
     ap.add_argument("--top_k", type=int, default=20,
                     help="how many pairs to show in the printed report")
     args = ap.parse_args()
 
-    print(f"Loading {args.data}/...", flush=True)
-    kg = load_fb15k237(args.data)
+    # Resolve the dataset spec — accepts a short name or a path.
+    config = resolve_dataset(args.dataset)
+
+    # Default output path includes dataset name so multiple datasets can coexist.
+    if args.out is None:
+        args.out = f"experiments/kgsage/outputs/{config['name']}_density_audit.json"
+
+    print(f"Loading {config['name']} from {config['path']}/...", flush=True)
+    kg = load_kg(config["path"])
     print(f"  loaded {len(kg['triples_train']):,} train, "
           f"{len(kg['triples_valid']):,} valid, "
           f"{len(kg['triples_test']):,} test triples", flush=True)
     print()
 
-    results = audit(kg)
+    # Pass the dataset's per-dataset thresholds into the audit (resolve_dataset
+    # gives None for unknown paths → audit uses the global DEFAULT_*_COUNTs).
+    results = audit(
+        kg,
+        dataset_name=config["name"],
+        pass_count=config.get("antisym_min_pairs"),
+        fail_count=None,  # we keep the same FAIL threshold globally
+    )
     print_report(kg, results, top_k=args.top_k)
 
     # ─── Save results to JSON for Test 1.2 to consume ────────────────────
@@ -253,6 +289,7 @@ def main():
     # look them up without re-running the audit.
     id2rel = kg["id2rel"]
     save_payload = {
+        "dataset_name": results["dataset_name"],
         "decision": results["decision"],
         "decision_reason": results["decision_reason"],
         "n_antisym": results["n_antisym"],

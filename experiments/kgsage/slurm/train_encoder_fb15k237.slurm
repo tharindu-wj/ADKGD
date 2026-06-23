@@ -5,22 +5,25 @@
 # (entity + relation embeddings) feeds Phase 2 (KGSAGE Generator +
 # Discriminator), which will get its own SLURM script later.
 #
-#   sbatch experiments/slurm/train_kgsage_fb15k237.slurm
+#   sbatch experiments/kgsage/slurm/train_encoder_fb15k237.slurm
 #
 # Prerequisites (run ONCE on the login node):
 #   1. Conda env with torch+CUDA wheel (see RUNNING_ON_DEEPTHOUGHT.md).
 #   2. PyTorch Geometric installed in that env:
 #        pip install torch_geometric
 #   3. FB15K-237 TSVs at data/FB15K-237/{train,valid,test}.txt
-#   4. Phase 1 Test 1.3 (density audit) has passed:
-#        python -m experiments.kgsage.audit_density --data data/FB15K-237
+#   4. Phase 1 Test 1.3 (dataset audit) has passed on the login node:
+#        python -m kgsage.cli.audit_dataset --dataset fb15k237
 #
 # Override hyperparameters via env vars (no script edits required):
-#   EPOCHS=300 sbatch experiments/slurm/train_kgsage_fb15k237.slurm
-#   DIM=256 BATCH_SIZE=1024 sbatch experiments/slurm/train_kgsage_fb15k237.slurm
-#   DATASET_DIR=data/WN18RR \
-#       CKPT_PATH=experiments/kgsage/outputs/wn18rr_encoder.pt \
-#       sbatch experiments/slurm/train_kgsage_fb15k237.slurm
+#   EPOCHS=300 sbatch experiments/kgsage/slurm/train_encoder_fb15k237.slurm
+#   DIM=256 BATCH_SIZE=1024 sbatch experiments/kgsage/slurm/train_encoder_fb15k237.slurm
+#
+# To train on a different dataset, use one of the sibling SLURM scripts:
+#   experiments/kgsage/slurm/train_encoder_wn18rr.slurm   (when written)
+#   experiments/kgsage/slurm/train_encoder_nell995.slurm  (when written)
+# OR override DATASET via env var on this script (uses FB15K-237 hyperparams):
+#   DATASET=wn18rr sbatch experiments/kgsage/slurm/train_encoder_fb15k237.slurm
 
 #SBATCH --job-name=kgsage_train_encoder_fb15k237
 #SBATCH --output=%x-%j.out.txt
@@ -40,30 +43,28 @@ PROJECT_DIR="$HOME/ADKGD"
 CONDA_ENV="$HOME/envs/adkgd"
 
 # ---- Training knobs (override per submission via env vars) ----
-DATASET_DIR="${DATASET_DIR:-data/FB15K-237}"
-CKPT_PATH="${CKPT_PATH:-experiments/kgsage/outputs/fb15k237_encoder.pt}"
-EPOCHS="${EPOCHS:-200}"
-BATCH_SIZE="${BATCH_SIZE:-2048}"
-LR="${LR:-1e-3}"
-DIM="${DIM:-200}"
-N_LAYERS="${N_LAYERS:-2}"
-NUM_BASES="${NUM_BASES:-30}"
-MARGIN="${MARGIN:-1.0}"
+DATASET="${DATASET:-fb15k237}"
+CKPT_PATH="${CKPT_PATH:-experiments/kgsage/outputs/${DATASET}_encoder.pt}"
+# Hyperparameter overrides — if unset, kgsage.data.datasets supplies the
+# dataset's recommended default. Setting any of these forces an override.
+EPOCHS="${EPOCHS:-}"
+BATCH_SIZE="${BATCH_SIZE:-}"
+LR="${LR:-}"
+DIM="${DIM:-}"
+N_LAYERS="${N_LAYERS:-}"
+NUM_BASES="${NUM_BASES:-}"
+MARGIN="${MARGIN:-}"
+EVAL_EVERY="${EVAL_EVERY:-}"
 SEED="${SEED:-0}"
-EVAL_EVERY="${EVAL_EVERY:-10}"
 
 echo "Job $SLURM_JOB_ID on $(hostname) starting $(date)"
-echo "Dataset      : $DATASET_DIR"
+echo "Dataset      : $DATASET"
 echo "Checkpoint   : $CKPT_PATH"
-echo "Epochs       : $EPOCHS"
-echo "Batch size   : $BATCH_SIZE"
-echo "Learning rate: $LR"
-echo "Embedding dim: $DIM"
-echo "RGCN layers  : $N_LAYERS"
-echo "RGCN bases   : $NUM_BASES"
-echo "Margin       : $MARGIN"
 echo "Seed         : $SEED"
-echo "Eval every   : $EVAL_EVERY epochs"
+echo "Overrides    : EPOCHS=$EPOCHS BATCH_SIZE=$BATCH_SIZE LR=$LR DIM=$DIM"
+echo "               N_LAYERS=$N_LAYERS NUM_BASES=$NUM_BASES MARGIN=$MARGIN"
+echo "               EVAL_EVERY=$EVAL_EVERY"
+echo "               (empty = use dataset's recommended default)"
 echo "----------------------------------------------------------------------"
 
 nvidia-smi || echo "WARNING: nvidia-smi failed (no GPU visible?)"
@@ -97,45 +98,48 @@ $PY -c "from torch_geometric.nn import RGCNConv; import torch_geometric; print('
 
 cd "$PROJECT_DIR"
 
-# Belt-and-braces: make sure the dataset is on disk.
-if [[ ! -f "$DATASET_DIR/train.txt" ]]; then
-    echo "ERROR: $DATASET_DIR/train.txt not found at $PROJECT_DIR/$DATASET_DIR" >&2
-    echo "Check DATASET_DIR or pull the dataset onto the HPC." >&2
-    exit 1
-fi
+# Make `import kgsage` resolve to experiments/kgsage/ without pip-installing.
+export PYTHONPATH="$PROJECT_DIR/experiments:$PYTHONPATH"
 
 mkdir -p "$(dirname "$CKPT_PATH")"
 
+# Build the python command. Optional hyperparameter overrides only get added
+# to the command line if the env var is non-empty — empty means "use the
+# dataset's recommended default from kgsage.data.datasets".
+CMD=( "$PY" -m kgsage.cli.train_encoder
+      --dataset "$DATASET"
+      --out     "$CKPT_PATH"
+      --seed    "$SEED"
+      --device  cuda )
+
+[[ -n "$EPOCHS"     ]] && CMD+=( --epochs     "$EPOCHS" )
+[[ -n "$BATCH_SIZE" ]] && CMD+=( --batch_size "$BATCH_SIZE" )
+[[ -n "$LR"         ]] && CMD+=( --lr         "$LR" )
+[[ -n "$MARGIN"     ]] && CMD+=( --margin     "$MARGIN" )
+[[ -n "$DIM"        ]] && CMD+=( --dim        "$DIM" )
+[[ -n "$N_LAYERS"   ]] && CMD+=( --n_layers   "$N_LAYERS" )
+[[ -n "$NUM_BASES"  ]] && CMD+=( --num_bases  "$NUM_BASES" )
+[[ -n "$EVAL_EVERY" ]] && CMD+=( --eval_every "$EVAL_EVERY" )
+
 echo "[$(date)] Training KGSAGE Encoder + DistMult Decoder -> $CKPT_PATH"
-$PY -m experiments.kgsage.train_encoder \
-    --data       "$DATASET_DIR" \
-    --out        "$CKPT_PATH" \
-    --epochs     "$EPOCHS" \
-    --batch_size "$BATCH_SIZE" \
-    --lr         "$LR" \
-    --margin     "$MARGIN" \
-    --dim        "$DIM" \
-    --n_layers   "$N_LAYERS" \
-    --num_bases  "$NUM_BASES" \
-    --seed       "$SEED" \
-    --eval_every "$EVAL_EVERY" \
-    --device     cuda
+echo "Command: ${CMD[*]}"
+"${CMD[@]}"
 
 echo "----------------------------------------------------------------------"
 echo "Done $(date). Checkpoint: $CKPT_PATH"
 echo ""
 echo "Next steps (run on the LOGIN NODE, not as another SLURM job — they're cheap):"
 echo ""
-echo "  Test 1.1 — Link prediction MRR (Pass: MRR ≥ 0.30)"
+echo "  Test 1.1 — Link prediction MRR (Pass: MRR >= dataset's expected_mrr)"
 echo "    cd \$PROJECT_DIR"
-echo "    \$PY -m experiments.kgsage.evaluate_lp \\"
-echo "        --data $DATASET_DIR \\"
-echo "        --ckpt $CKPT_PATH"
+echo "    PYTHONPATH=\$PROJECT_DIR/experiments \$PY -m kgsage.cli.evaluate_encoder \\"
+echo "        --dataset $DATASET \\"
+echo "        --ckpt    $CKPT_PATH"
 echo ""
 echo "  Test 1.2 — Anti-symmetric signal in relation embeddings (Pass: p < 0.05)"
-echo "    \$PY -m experiments.kgsage.test_antisym_signal \\"
-echo "        --ckpt $CKPT_PATH \\"
-echo "        --audit experiments/kgsage/outputs/density_audit.json"
+echo "    PYTHONPATH=\$PROJECT_DIR/experiments \$PY -m kgsage.cli.audit_embeddings \\"
+echo "        --dataset $DATASET \\"
+echo "        --ckpt    $CKPT_PATH"
 echo ""
 echo "  (Both tests run in seconds on a single GPU. If you want to be thorough"
 echo "   about it, scp the checkpoint to your laptop and run there.)"

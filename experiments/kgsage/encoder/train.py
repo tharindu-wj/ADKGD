@@ -1,4 +1,4 @@
-"""Train the KGSAGE Encoder + DistMult decoder on FB15K-237.
+"""Train the KGSAGE Encoder + DistMult decoder.
 
 The training task is link prediction:
   Given (h, r, ?) — predict the correct tail entity
@@ -21,36 +21,32 @@ we're doing the standard pretraining recipe so that:
 After training we save the model with `save_pretrained()`. Phase 2's
 KGSAGE Generator and Discriminator will load it with `load_pretrained()`.
 
-Usage (Local, dummy KG, CPU):
-    python -m experiments.kgsage.train_encoder \\
-        --data data/dummy_kg \\
-        --epochs 50 \\
-        --device cpu \\
-        --out experiments/kgsage/outputs/dummy_encoder.pt
+Usage (Local smoke test, CPU):
+    python -m kgsage.cli.train_encoder \\
+        --dataset dummy_kg \\
+        --epochs 5 \\
+        --device cpu
 
 Usage (HPC, FB15K-237, V100):
-    python -m experiments.kgsage.train_encoder \\
-        --data data/FB15K-237 \\
-        --epochs 200 \\
-        --device cuda \\
-        --out experiments/kgsage/outputs/fb15k237_encoder.pt
+    python -m kgsage.cli.train_encoder \\
+        --dataset fb15k237 \\
+        --device cuda
+
+The --dataset flag accepts either a known short name (fb15k237, wn18rr,
+nell995, dummy_kg) — in which case all hyperparameters default to the
+dataset's recommended values — or a filesystem path to a custom directory.
 """
 import argparse
-import os
 import random
-import sys
 import time
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 
-# So the package import works whether you invoke as `python -m experiments.kgsage.train_encoder`
-# or `python experiments/kgsage/train_encoder.py`.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-from experiments.kgsage.data import load_fb15k237
-from experiments.kgsage.encoder import KGSAGELinkPredictor
+from kgsage.data.loaders import load_kg
+from kgsage.data.datasets import resolve_dataset
+from kgsage.encoder.models import KGSAGELinkPredictor
 
 
 def sample_negatives(positive_triples, n_ent, triple_set, rng):
@@ -151,35 +147,62 @@ def evaluate_mrr_quick(model, data, kg, device, n_eval=1000):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--data", default="data/FB15K-237",
-                    help="dataset folder under data/")
-    ap.add_argument("--out", default="experiments/kgsage/outputs/fb15k237_encoder.pt",
-                    help="where to save the trained checkpoint")
-    ap.add_argument("--epochs", type=int, default=200)
-    ap.add_argument("--batch_size", type=int, default=2048)
-    ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--margin", type=float, default=1.0)
-    ap.add_argument("--dim", type=int, default=200)
-    ap.add_argument("--n_layers", type=int, default=2)
-    ap.add_argument("--num_bases", type=int, default=30)
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dataset", required=True,
+                    help="known short name (fb15k237, wn18rr, nell995, dummy_kg) "
+                         "or a filesystem path to a directory with train.txt etc.")
+    ap.add_argument("--out", default=None,
+                    help="checkpoint output path (default: "
+                         "experiments/kgsage/outputs/<dataset>_encoder.pt)")
+    # Hyperparameter overrides — all default to None so they fall back to the
+    # dataset's recommended values in kgsage.data.datasets. If the user passes
+    # a flag explicitly, that wins.
+    ap.add_argument("--epochs", type=int, default=None)
+    ap.add_argument("--batch_size", type=int, default=None)
+    ap.add_argument("--lr", type=float, default=None)
+    ap.add_argument("--margin", type=float, default=None)
+    ap.add_argument("--dim", type=int, default=None)
+    ap.add_argument("--n_layers", type=int, default=None)
+    ap.add_argument("--num_bases", type=int, default=None)
+    ap.add_argument("--eval_every", type=int, default=None,
+                    help="run quick validation MRR every N epochs")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--eval_every", type=int, default=10,
-                    help="run quick validation MRR every N epochs")
     args = ap.parse_args()
+
+    # ─── Resolve dataset → config dict with recommended defaults ────────
+    config = resolve_dataset(args.dataset)
+
+    # Fall back to dataset defaults for any CLI arg the user didn't specify.
+    epochs     = args.epochs     if args.epochs     is not None else config["epochs"]
+    batch_size = args.batch_size if args.batch_size is not None else config["batch_size"]
+    lr         = args.lr         if args.lr         is not None else config["lr"]
+    margin     = args.margin     if args.margin     is not None else config["margin"]
+    dim        = args.dim        if args.dim        is not None else config["dim"]
+    n_layers   = args.n_layers   if args.n_layers   is not None else config["n_layers"]
+    num_bases  = args.num_bases  if args.num_bases  is not None else config["num_bases"]
+    eval_every = args.eval_every if args.eval_every is not None else config["eval_every"]
+
+    # Default output path includes dataset name so multiple datasets can coexist.
+    out_path = args.out or f"experiments/kgsage/outputs/{config['name']}_encoder.pt"
 
     # Reproducibility ─────────────────────────────────────────────────
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     rng = random.Random(args.seed)
 
-    print(f"Loading {args.data}/...", flush=True)
-    kg = load_fb15k237(args.data)
+    print(f"Loading {config['name']} from {config['path']}/...", flush=True)
+    kg = load_kg(config["path"])
     print(f"  {kg['n_ent']:,} entities, {kg['n_rel']:,} relations", flush=True)
     print(f"  train={len(kg['triples_train']):,}  "
           f"valid={len(kg['triples_valid']):,}  "
           f"test={len(kg['triples_test']):,}", flush=True)
+    print()
+    print(f"Training config:")
+    print(f"  epochs={epochs}  batch_size={batch_size}  lr={lr}  margin={margin}")
+    print(f"  dim={dim}  n_layers={n_layers}  num_bases={num_bases}")
+    print(f"  device={args.device}  seed={args.seed}")
     print()
 
     device = torch.device(args.device)
@@ -195,26 +218,26 @@ def main():
     model = KGSAGELinkPredictor(
         n_ent=kg["n_ent"],
         n_rel=kg["n_rel"],
-        dim=args.dim,
-        n_layers=args.n_layers,
-        num_bases=args.num_bases,
+        dim=dim,
+        n_layers=n_layers,
+        num_bases=num_bases,
     ).to(device)
     print(f"Model parameters: "
           f"{sum(p.numel() for p in model.parameters()):,}", flush=True)
     print()
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-
     # ─── Training loop ────────────────────────────────────────────────
     n_train = all_train_triples.size(0)
     best_mrr = 0.0
 
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"Training for {args.epochs} epochs, batch_size={args.batch_size}", flush=True)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    print(f"Training for {epochs} epochs, batch_size={batch_size}", flush=True)
     print("─" * 70)
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(1, epochs + 1):
         epoch_start = time.time()
         model.train()
 
@@ -223,8 +246,8 @@ def main():
         epoch_loss = 0.0
         n_batches = 0
 
-        for batch_start in range(0, n_train, args.batch_size):
-            batch_idx = perm[batch_start:batch_start + args.batch_size]
+        for batch_start in range(0, n_train, batch_size):
+            batch_idx = perm[batch_start:batch_start + batch_size]
             positives = all_train_triples[batch_idx]
 
             # Build one negative per positive.
@@ -247,7 +270,7 @@ def main():
             # Margin ranking loss: push pos_score above neg_score by
             # at least `margin`. `relu` clamps the negative-margin case
             # to zero — once a pair is well-separated we stop training on it.
-            loss = F.relu(args.margin - pos_scores + neg_scores).mean()
+            loss = F.relu(margin - pos_scores + neg_scores).mean()
 
             optimizer.zero_grad()
             loss.backward()
@@ -260,7 +283,7 @@ def main():
         epoch_time = time.time() - epoch_start
 
         # ─── Periodic validation MRR ───────────────────────────────────
-        if epoch % args.eval_every == 0 or epoch == args.epochs:
+        if epoch % eval_every == 0 or epoch == epochs:
             mrr = evaluate_mrr_quick(model, data, kg, device, n_eval=1000)
             print(f"  epoch {epoch:>4}  loss={epoch_loss:.4f}  "
                   f"valid_MRR={mrr:.4f}  time={epoch_time:.1f}s",
@@ -269,8 +292,8 @@ def main():
             # Save the best checkpoint by validation MRR.
             if mrr > best_mrr:
                 best_mrr = mrr
-                model.save_pretrained(args.out, kg["ent2id"], kg["rel2id"])
-                print(f"    → new best, saved to {args.out}", flush=True)
+                model.save_pretrained(out_path, kg["ent2id"], kg["rel2id"])
+                print(f"    → new best, saved to {out_path}", flush=True)
         else:
             # Quiet epochs: just print the loss and time.
             print(f"  epoch {epoch:>4}  loss={epoch_loss:.4f}  "
@@ -278,13 +301,13 @@ def main():
 
     print("─" * 70)
     print(f"Training done. Best validation MRR: {best_mrr:.4f}")
-    print(f"Checkpoint saved at: {args.out}")
+    print(f"Checkpoint saved at: {out_path}")
     print()
     print("Next steps:")
     print("  Test 1.1 (link prediction MRR):")
-    print(f"    python -m experiments.kgsage.evaluate_lp --ckpt {args.out}")
-    print("  Test 1.2 (anti-symmetric signal):")
-    print(f"    python -m experiments.kgsage.test_antisym_signal --ckpt {args.out}")
+    print(f"    python -m kgsage.cli.evaluate_encoder --dataset {args.dataset} --ckpt {out_path}")
+    print("  Test 1.2 (anti-symmetric signal in embeddings):")
+    print(f"    python -m kgsage.cli.audit_embeddings --dataset {args.dataset} --ckpt {out_path}")
 
     return 0
 
