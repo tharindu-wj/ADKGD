@@ -11,12 +11,15 @@ Master's thesis pipeline ([THESIS_PLAN](../docs/THESIS_PLAN_pairgan_contradictio
 
 KGSAGE has two phases:
 
-- **Phase 1 — Encoder pretraining** (✅ implemented). An RGCN backbone +
-  DistMult decoder learn entity and relation embeddings that capture
-  anti-symmetric predicate structure.
-- **Phase 2 — Pair-aware adversarial generation** (planned). A generator
-  emits the role-swapped contradicting partner relation `r'` for an anchor
-  triple `(h, r, t)`, conditioned on the Phase 1 embeddings.
+- **Phase 1 — Encoder pretraining**. An RGCN backbone + DistMult decoder
+  learn entity and relation embeddings that capture anti-symmetric predicate
+  structure. Implemented in `kgsage.encoder`.
+- **Phase 2 — Adversarial generation**. A Generator + Discriminator pair
+  learns to produce plausible-but-wrong triples that ADKGD trains against.
+  Lives in `kgsage.gan`. Current implementation is the simple 3-layer MLP
+  GAN (single-slot corruption); Phase 2 of the thesis upgrades it to a
+  pair-aware contradiction generator conditioned on the Phase 1 encoder
+  embeddings.
 
 ADKGD integration (Phase 4 — using KGSAGE-generated negatives in the ADKGD
 detector) lives in the sibling folder `experiments/kgsage_bridge/`, not in
@@ -26,31 +29,41 @@ this package — keeping `kgsage/` ADKGD-agnostic and standalone-extractable.
 
 ```
 kgsage/
-├── __init__.py             ← public API (load_kg, KGSAGE*, resolve_dataset)
-├── README.md               ← this file
+├── __init__.py             <- public API (load_kg, KGSAGE*, Generator, ...)
+├── README.md               <- this file
 │
-├── data/                   ← KG loading + dataset registry + dataset-level audit
-│   ├── loaders.py          ← load_kg(path)
-│   ├── datasets.py         ← KNOWN_DATASETS + resolve_dataset()
-│   └── audit_dataset.py    ← Test 1.3 (dataset anti-symmetric pair density)
+├── data/                   <- KG loading + dataset registry + dataset-level audit
+│   ├── loaders.py          <- load_kg(path)
+│   ├── datasets.py         <- KNOWN_DATASETS + resolve_dataset()
+│   └── audit_dataset.py    <- Test 1.3 (dataset anti-symmetric pair density)
 │
-├── encoder/                ← Phase 1: RGCN + DistMult
-│   ├── models.py           ← KGSAGEEncoder, KGSAGEDistMultDecoder, KGSAGELinkPredictor
-│   ├── train.py            ← Phase 1 training loop
-│   ├── evaluate.py         ← Test 1.1 (link prediction MRR)
-│   └── audit_embeddings.py ← Test 1.2 (anti-symmetric signal in trained embeddings)
+├── encoder/                <- Phase 1: RGCN + DistMult
+│   ├── models.py           <- KGSAGEEncoder, KGSAGEDistMultDecoder, KGSAGELinkPredictor
+│   ├── train.py            <- Phase 1 training loop
+│   ├── evaluate.py         <- Test 1.1 (link prediction MRR)
+│   └── audit_embeddings.py <- Test 1.2 (anti-symmetric signal in trained embeddings)
 │
-├── gan/                    ← Phase 2: pair-aware adversarial generator (future)
+├── gan/                    <- Phase 2: Generator + Discriminator (flat)
+│   ├── models.py           <- Generator + Discriminator + helpers
+│   ├── train.py            <- adversarial training loop
+│   └── evaluate.py         <- Phase 3 generation-quality metrics (placeholder)
 │
-├── cli/                    ← command-line entry points (thin wrappers)
+├── inference.py            <- public generation API:
+│                              load_checkpoint / generate_negatives /
+│                              generate_contradictions / render_stats
+│
+├── cli/                    <- command-line entry points (thin wrappers)
 │   ├── audit_dataset.py
 │   ├── train_encoder.py
 │   ├── evaluate_encoder.py
-│   └── audit_embeddings.py
+│   ├── audit_embeddings.py
+│   └── train_gan.py
 │
-└── slurm/                  ← HPC job launchers
+└── slurm/                  <- HPC job launchers
     ├── README.md
-    └── train_encoder_fb15k237.slurm
+    ├── train_encoder_fb15k237.slurm
+    ├── train_gan_fb15k237.slurm
+    └── train_gan_wn18rr.slurm
 ```
 
 ## Quick start
@@ -65,7 +78,7 @@ export PYTHONPATH="$(pwd)/experiments:$PYTHONPATH"
 # 2. Test 1.3 — does the dataset have the anti-symmetric signal we need?
 python -m kgsage.cli.audit_dataset --dataset fb15k237
 
-# 3. Train the encoder (~30 min on a V100)
+# 3. Train the encoder (Phase 1; ~30 min on a V100)
 python -m kgsage.cli.train_encoder --dataset fb15k237
 
 # 4. Test 1.1 — link prediction MRR
@@ -73,7 +86,29 @@ python -m kgsage.cli.evaluate_encoder --dataset fb15k237
 
 # 5. Test 1.2 — anti-symmetric signal in relation embeddings
 python -m kgsage.cli.audit_embeddings --dataset fb15k237
+
+# 6. Train the GAN (Phase 2)
+python -m kgsage.cli.train_gan \
+    --data data/dummy_kg \
+    --epochs 30 \
+    --device cpu \
+    --out experiments/kgsage/outputs/checkpoints/dummy.pt
 ```
+
+## ADKGD integration
+
+After training the GAN, point ADKGD at the checkpoint:
+
+```bash
+python experiments/run_experiment.py \
+    --dataset dummy_kg --anomaly_ratio 0.15 --max_epoch 1 \
+    --neg_source gan \
+    --gan_path experiments/kgsage/outputs/checkpoints/dummy.pt
+```
+
+ADKGD's `Reader._gan_negatives` imports `kgsage_bridge.bridge`, which calls
+`kgsage.inference.generate_negatives(...)`, which runs the loaded Generator
+in `torch.no_grad()` mode per training batch.
 
 ## Dataset extension
 
@@ -110,24 +145,23 @@ python -m kgsage.cli.audit_dataset --dataset /path/to/custom_kg
 ```
 
 The CLI accepts both short names and paths via the same `--dataset` flag.
-`resolve_dataset()` distinguishes them and falls back to generic defaults
-for paths.
 
 ## Currently supported datasets
 
 | Short name | Path | Status |
 |---|---|---|
-| `fb15k237` | `data/FB15K-237` | ✅ Test 1.3 PASSED (247 anti-sym pairs) |
-| `wn18rr` | `data/WN18RR` | Defaults present; not yet audited |
-| `nell995` | `data/NELL-995` | Defaults present; not yet audited |
-| `dummy_kg` | `data/dummy_kg` | Smoke-test fixture (no decision gates) |
+| `fb15k237` | `data/FB15K-237` | Test 1.3 PASSED (247 anti-sym pairs) |
+| `wn18rr`   | `data/WN18RR`    | Defaults present; not yet audited |
+| `nell995`  | `data/NELL-995`  | Defaults present; not yet audited |
+| `dummy_kg` | `data/dummy_kg`  | Smoke-test fixture (no decision gates) |
 
 ## What gets saved
 
 | Path template | Content |
 |---|---|
-| `experiments/kgsage/outputs/<dataset>_density_audit.json` | Test 1.3 output: anti-symmetric and symmetric predicate pairs. Consumed by Test 1.2. |
-| `experiments/kgsage/outputs/<dataset>_encoder.pt` | Trained encoder + decoder weights, vocab maps. Consumed by Phase 2 (and Test 1.1 / 1.2). |
+| `experiments/kgsage/outputs/<dataset>_density_audit.json` | Test 1.3 output. Consumed by Test 1.2. |
+| `experiments/kgsage/outputs/<dataset>_encoder.pt`         | Trained encoder + decoder weights, vocab maps. |
+| `experiments/kgsage/outputs/checkpoints/<dataset>.pt`     | Trained GAN: Generator weights + vocab + real triples. |
 
 ## Decision gates
 
@@ -138,9 +172,9 @@ exactly what Phase 1 was designed to detect cheaply.
 
 | Test | Pass | Fail action |
 |---|---|---|
-| 1.3 (dataset audit) | ≥ dataset's `antisym_min_pairs` (FB15K-237: 30) | Try a different dataset (NELL-995, YAGO-4.5), or pivot to rule-mining |
-| 1.1 (link prediction MRR) | MRR ≥ dataset's `expected_mrr` (FB15K-237: 0.30) | Debug training. Check edge_type tensor shapes, vanishing gradients, lr too high. |
-| 1.2 (anti-symmetric signal) | Mann-Whitney U test p < 0.05 + direction correct | Try ConvE decoder, longer training, or escalate to CompGCN (Plan B, +2 weeks) |
+| 1.3 (dataset audit)        | ≥ dataset's `antisym_min_pairs` (FB15K-237: 30)  | Try a different dataset or pivot to rule-mining |
+| 1.1 (link prediction MRR)  | MRR ≥ dataset's `expected_mrr` (FB15K-237: 0.30) | Debug training |
+| 1.2 (anti-symmetric signal)| Mann-Whitney U test p < 0.05 + direction correct | Try ConvE decoder, longer training, or escalate to CompGCN |
 
 ## Why RGCN + DistMult (and not CompGCN)?
 
@@ -157,14 +191,6 @@ Plan B if Test 1.2 fails on RGCN+DistMult.
 
 See [THESIS_PLAN_pairgan_contradictions.md §2.2](../docs/THESIS_PLAN_pairgan_contradictions.md)
 for the full encoder-choice rationale.
-
-## Style note
-
-This package is intentionally written in the same simple, comment-heavy
-style as `experiments/gan/`. Goal: a Master's student reading the code
-should be able to learn from it without needing prior PyG familiarity. If
-you find a comment redundant or unclear, send a note — the docstring is
-the spec.
 
 ## Going standalone someday
 

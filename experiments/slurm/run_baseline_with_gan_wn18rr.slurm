@@ -5,9 +5,9 @@
 # and a different --job-name so the .out.txt files don't collide.
 #
 # Before submitting: GAN checkpoint at $GAN_CKPT must exist. Produce it by
-# running `sbatch experiments/slurm/train_gan_wn18rr.slurm` first.
+# running `sbatch experiments/kgsage/slurm/train_gan_wn18rr.slurm` first.
 #
-# ADKGD loads the checkpoint in-process via experiments/gan/adkgd_bridge.py;
+# ADKGD loads the checkpoint in-process via experiments/kgsage_bridge/bridge.py;
 # negatives are generated per training batch — no intermediate TSV file.
 #
 #   sbatch experiments/slurm/run_baseline_with_gan_wn18rr.slurm
@@ -63,10 +63,10 @@ $PY -c "import numpy, sklearn, matplotlib; print('deps ok | numpy', numpy.__vers
 cd "$PROJECT_DIR"
 
 # Belt-and-braces: confirm the GAN checkpoint is present before we burn epoch time.
-GAN_CKPT="${GAN_CKPT:-experiments/gan/outputs/checkpoints/wn18rr.pt}"
+GAN_CKPT="${GAN_CKPT:-experiments/kgsage/outputs/checkpoints/wn18rr.pt}"
 if [[ ! -f "$GAN_CKPT" ]]; then
     echo "ERROR: $GAN_CKPT not found at $PROJECT_DIR/$GAN_CKPT" >&2
-    echo "Train GAN first: sbatch experiments/slurm/train_gan_wn18rr.slurm" >&2
+    echo "Train GAN first: sbatch experiments/kgsage/slurm/train_gan_wn18rr.slurm" >&2
     exit 1
 fi
 echo "Using GAN checkpoint: $GAN_CKPT ($(du -h "$GAN_CKPT" | cut -f1))"

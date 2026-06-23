@@ -1,7 +1,12 @@
-"""Use a trained GAN checkpoint to produce one negative per input triple.
+"""Use a trained KGSAGE GAN checkpoint to produce one negative per input triple.
 
-This is what ADKGD calls every time it builds a training batch with
-`--neg_source gan`. Everything stays in-process - no intermediate file.
+This is the public generation API for the KGSAGE package. ADKGD calls it
+(via kgsage_bridge.bridge) every time it builds a training batch with
+`--neg_source gan`. Everything stays in-process — no intermediate file.
+
+The function `generate_negatives` is also exposed as `generate_contradictions`
+for forward-compatibility with the Phase 2 pair-aware generator, which will
+replace the simple per-slot corruption below with a role-swap partner head.
 
 The 8-step pipeline (one negative per real triple):
 
@@ -27,15 +32,10 @@ The 8-step pipeline (one negative per real triple):
           for that one slot (last-resort safety net).
   STEP 8: Translate GAN integer IDs back to ADKGD integer IDs via strings.
 """
-import os
-import sys
-
 import numpy as np
 import torch
 
-# Import sibling modules.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gan_model import Generator  # noqa: E402
+from kgsage.gan.models import Generator
 
 
 def load_checkpoint(ckpt_path, device=None):
@@ -295,3 +295,11 @@ def render_stats(stats):
         f"uniform_fallbacks={stats['uniform_fallbacks']:,}  "
         f"slot_distribution: {slot_pct}"
     )
+
+
+# Public API alias — Phase 2 (pair-aware contradiction generator) will replace
+# `generate_negatives` with a role-swap implementation that produces partner
+# triples instead of single-slot corruptions. Code that consumes the public
+# API uses this name so the call site doesn't need to change at that point.
+generate_contradictions = generate_negatives
+

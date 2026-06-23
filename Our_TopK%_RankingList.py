@@ -73,16 +73,16 @@ def main():
     parser.add_argument('--num_anomaly_num', default=300, type=int, help="number of anomalies")
     # Phase B (GAN integration): source of training-time negatives.
     # 'random' = ADKGD's original generate_anomalous_triples (default; baseline).
-    # 'gan'    = in-process call to kggan via experiments/gan/adkgd_bridge.
-    #            kggan picks a slot per positive, runs masked decode, retries
+    # 'gan'    = in-process call to the KGSAGE GAN via experiments/kgsage_bridge/bridge.
+    #            The GAN picks a slot per positive, runs masked decode, retries
     #            on real-graph collision, falls back to uniform random as a
     #            last resort. Same logic applied to real positives AND injected
-    #            eval anomalies. --gan_path points at the kggan .pt checkpoint.
+    #            eval anomalies. --gan_path points at the GAN .pt checkpoint.
     # Only `Reader.get_data()` consults these; everything downstream is unchanged.
     parser.add_argument('--neg_source', default='random', choices=['random', 'gan'],
                         help="source of training-time negatives (set C); default 'random' = baseline behaviour")
-    parser.add_argument('--gan_path', default='experiments/gan/outputs/checkpoints/dummy.pt',
-                        help="path to kggan's .pt checkpoint (only used when --neg_source=gan; missing file is a hard error)")
+    parser.add_argument('--gan_path', default='experiments/kgsage/outputs/checkpoints/dummy.pt',
+                        help="path to the KGSAGE GAN .pt checkpoint (only used when --neg_source=gan; missing file is a hard error)")
     args = parser.parse_args()
 
     # data_name = args.dataset

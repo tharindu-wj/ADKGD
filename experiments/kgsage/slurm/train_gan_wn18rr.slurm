@@ -1,16 +1,16 @@
 #!/bin/bash
-# Train the simple GAN on WN18RR — one V100 allocation.
+# Train the KGSAGE GAN on WN18RR — one V100 allocation.
 # Writes the checkpoint that ADKGD's --neg_source=gan path consumes via
-# experiments/gan/adkgd_bridge.py (in-process, no intermediate TSV).
+# experiments/kgsage_bridge/bridge.py (in-process, no intermediate TSV).
 #
-#   sbatch experiments/slurm/train_gan_wn18rr.slurm
+#   sbatch experiments/kgsage/slurm/train_gan_wn18rr.slurm
 #
 # Prerequisites (run ONCE on the login node):
 #   1. Conda env with torch+CUDA wheel (see RUNNING_ON_DEEPTHOUGHT.md).
 #   2. WN18RR TSVs at data/WN18RR/{train,valid,test}.txt.
 #
 # Override hyperparameters via env vars (no script edits required):
-#   EPOCHS=600 BATCH_SIZE=1024 sbatch experiments/slurm/train_gan_wn18rr.slurm
+#   EPOCHS=600 BATCH_SIZE=1024 sbatch experiments/kgsage/slurm/train_gan_wn18rr.slurm
 
 #SBATCH --job-name=gan_train_wn18rr
 #SBATCH --output=%x-%j.out.txt
@@ -31,7 +31,7 @@ CONDA_ENV="$HOME/envs/adkgd"
 
 # ---- Training knobs (override per submission via env vars) ----
 DATASET_DIR="${DATASET_DIR:-data/WN18RR}"
-CKPT_PATH="${CKPT_PATH:-experiments/gan/outputs/checkpoints/wn18rr.pt}"
+CKPT_PATH="${CKPT_PATH:-experiments/kgsage/outputs/checkpoints/wn18rr.pt}"
 EPOCHS="${EPOCHS:-100}"
 # 512 is a safe V100 default — fits comfortably in 32GB HBM2 and gives much
 # better GPU utilisation than train.py's CPU-friendly default of 256. Bump
@@ -71,10 +71,13 @@ $PY -c "import torch; assert torch.cuda.is_available(), 'torch cannot see a GPU:
 
 cd "$PROJECT_DIR"
 
+# Put experiments/ on PYTHONPATH so `python -m kgsage.cli.train_gan` resolves.
+export PYTHONPATH="$PROJECT_DIR/experiments:$PYTHONPATH"
+
 mkdir -p "$(dirname "$CKPT_PATH")"
 
 echo "[$(date)] Training GAN -> $CKPT_PATH"
-$PY experiments/gan/train.py \
+$PY -m kgsage.cli.train_gan \
     --data       "$DATASET_DIR" \
     --out        "$CKPT_PATH" \
     --epochs     "$EPOCHS" \

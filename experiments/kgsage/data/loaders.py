@@ -14,11 +14,9 @@ Two output formats from the same data:
   2. Python triples (h, r, t) — used by everything else (dataset audit,
      link prediction evaluation, etc.).
 
-We deliberately keep this loader separate from the simple GAN's `experiments/gan/data.py`
-because the KGSAGE pipeline has different needs:
-  - PyG needs tensors built up front, not per-batch
-  - We need head/tail counts per relation for the dataset-level audit
-  - We need a clean train/valid/test split (the simple GAN merges all splits)
+This loader serves both the encoder (which needs PyG tensors) AND the GAN
+(which just needs the Python triples + vocab maps) — it returns both formats
+from a single pass so the two consumers can share preprocessing.
 
 Vocab strategy: first-seen ordering. Train.txt is loaded first, so its entities
 and relations get the lowest IDs. This matches the standard KGE convention and

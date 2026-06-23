@@ -1,87 +1,97 @@
-# KGSAGE ↔ ADKGD bridge
+# KGSAGE <-> ADKGD bridge
 
-This folder is the **integration layer** between the standalone KGSAGE package
-(in `experiments/kgsage/`) and ADKGD's anomaly detection training pipeline
+The **integration layer** between the KGSAGE generation package
+(`experiments/kgsage/`) and ADKGD's anomaly-detection training pipeline
 (`dataset.py`, `model.py`, etc. at the repo root).
+
+This is the **single source** of GAN-generated negatives for ADKGD —
+both the current simple-MLP GAN and the future Phase 2 pair-aware KGSAGE
+generator route through here.
 
 ## Why this folder exists
 
-KGSAGE is designed to ship as a standalone package — `pip install kgsage`
-someday. A standalone package cannot import from ADKGD or know about ADKGD's
-internal types. But ADKGD's training pipeline needs to *call* KGSAGE to get
-contradiction negatives during training.
+KGSAGE is a self-contained generation library. ADKGD's training pipeline
+needs to *call* it at every training batch to obtain plausible-but-wrong
+triples, but the library doesn't know anything about ADKGD's specific
+ID convention, batch shape, or logging format.
 
-The bridge resolves this: it is the **only** Python file that knows about
-both worlds. ADKGD's `dataset.py` imports the three-function API from here;
-KGSAGE knows nothing about ADKGD.
-
-## Architecture (in one diagram)
+This bridge is the **only** Python file that knows about both worlds.
+ADKGD's `dataset.py` imports the three-function API from here; the KGSAGE
+package knows nothing about ADKGD.
 
 ```
-ADKGD side (dataset.py)                       KGSAGE side (kgsage/)
-  Reader._gan_negatives                       KGSAGE.generate_contradictions
-      |                                            ^
-      | uses ADKGD vocab IDs                       | uses KGSAGE vocab IDs
-      v                                            |
-  experiments/kgsage_bridge/bridge.py  ────────────┘
-      - load_gan(ckpt_path)        → loads KGSAGE checkpoint
-      - generate(model, batch)     → translates IDs, calls KGSAGE, returns
-                                     ADKGD-typed negatives
-      - render_stats(stats)        → formats KGSAGE stats for ADKGD's log
+ADKGD side (dataset.py)                        KGSAGE side (kgsage/)
+  Reader._gan_negatives                        kgsage.inference.generate_negatives
+      |                                              ^
+      | uses ADKGD vocab IDs                         | uses KGSAGE vocab IDs
+      v                                              |
+  experiments/kgsage_bridge/bridge.py    -----------+
+      - load_gan(ckpt_path)               -> kgsage.inference.load_checkpoint
+      - generate(triples, ...)            -> translates IDs, calls KGSAGE,
+                                             returns ADKGD-typed negatives
+      - render_stats(stats)               -> kgsage.inference.render_stats
 ```
 
 ## Current status
 
-**STUB.** The three functions are placeholders that raise
-`NotImplementedError` with a pointer to the thesis plan. They will be
-implemented in **Phase 4** of the thesis pipeline, once:
+**ACTIVE** — used by every ADKGD run with `--neg_source gan`.
 
-- Phase 1 (KGSAGE encoder) is trained and validated ✅ (in progress)
-- Phase 2 (KGSAGE Generator + Discriminator) is implemented
-- Phase 3 (generation quality evaluation) is complete
+The bridge currently wraps the simple 3-layer MLP GAN at `kgsage.gan`. When
+Phase 2 of the thesis upgrades that GAN to a pair-aware contradiction
+generator, the bridge contract stays the same — only the underlying model
+changes. `dataset.py` doesn't need to be touched.
 
-Until then, ADKGD continues to use:
-- `--neg_source random` (paper baseline) — works
-- `--neg_source gan` → `experiments/gan/adkgd_bridge.py` (simple GAN) — works
-- `--neg_source kgsage` → raises NotImplementedError pointing here
-
-## Contract (when implemented)
-
-The bridge implements the **same three-function contract** as
-`experiments/gan/adkgd_bridge.py` for the simple GAN, so swapping between
-the two requires only the `--neg_source` flag:
+## Contract
 
 ```python
-def load_gan(ckpt_path, device=None, **kwargs):
-    """Load a KGSAGE checkpoint and return (model, ent2id, rel2id)."""
+def load_gan(ckpt_path, device=None):
+    """Load a KGSAGE GAN checkpoint and return a payload dict.
 
-def generate(model, batch, adkgd_ent2id, adkgd_rel2id, n_per_anchor=1):
-    """Generate role-swap partner triples for a batch of anchors.
-    Returns a tensor of shape (B*n_per_anchor, 3) in ADKGD's vocab."""
+    Returns:
+      dict with keys:
+        generator        - the trained Generator (torch.nn.Module)
+        device           - torch.device the model is on
+        ent2id, rel2id   - GAN's string -> int vocab maps
+        id2ent, id2rel   - inverse maps
+        real_triple_set  - set of (h, r, t) tuples (for collision filtering)
+        n_ent, n_rel     - vocabulary sizes
+        z_dim            - noise dimension
+    """
+
+def generate(adkgd_triples, *,
+             payload,
+             adkgd_id2ent, adkgd_id2rel,
+             adkgd_ent2id, adkgd_rel2id,
+             rng=None):
+    """Generate one negative per positive in ADKGD's vocabulary.
+
+    Returns:
+      (negatives, stats) where:
+        negatives is list of (h, r, t) tuples in ADKGD's IDs
+        stats is a dict with keys 'processed', 'retries', 'uniform_fallbacks',
+                                  'slot_h', 'slot_r', 'slot_t'
+    """
 
 def render_stats(stats):
-    """Format a stats dict from generate() for ADKGD's training log."""
+    """Format a stats dict into a single human-readable log line.
+
+    Returns:
+      A string like 'processed=100,000 retries=50,000 uniform_fallbacks=0 ...'
+    """
 ```
 
 ## File layout
 
 ```
 experiments/kgsage_bridge/
-├── README.md      ← this file
-├── __init__.py    ← re-exports the three bridge functions
-└── bridge.py      ← the implementation (currently stub)
+├── README.md      <- this file
+├── __init__.py    <- re-exports the three bridge functions
+└── bridge.py      <- the actual implementation (wraps kgsage.inference.*)
 ```
-
-## Future SLURM script
-
-`experiments/slurm/run_adkgd_with_kgsage_fb15k237.slurm` will invoke ADKGD's
-training with `--neg_source kgsage` and the appropriate KGSAGE checkpoint
-path. It lives in `experiments/slurm/` (with the ADKGD-side launchers), not
-in `kgsage/slurm/`, because it's running ADKGD — not KGSAGE — even though
-KGSAGE supplies the negatives.
 
 ## See also
 
-- `experiments/docs/THESIS_PLAN_pairgan_contradictions.md` — full thesis plan
-- `experiments/gan/adkgd_bridge.py` — the same contract for the simple GAN
 - `experiments/kgsage/` — the standalone KGSAGE package
+- `experiments/kgsage/gan/` — the Generator + Discriminator
+- `experiments/kgsage/inference.py` — `load_checkpoint`, `generate_negatives`, `render_stats`
+- `dataset.py` (repo root) — `Reader._gan_negatives` is the caller

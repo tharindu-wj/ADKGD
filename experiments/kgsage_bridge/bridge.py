@@ -1,75 +1,76 @@
-"""KGSAGE ↔ ADKGD bridge — placeholder for Phase 4 integration.
+"""KGSAGE <-> ADKGD bridge.
 
-PURPOSE:
-  Provides the three-function ADKGD-side API (load_gan, generate,
-  render_stats) that `dataset.py:Reader._gan_negatives` already calls
-  when invoked with `--neg_source kgsage`. Same contract as
-  `experiments/gan/adkgd_bridge.py` for the simple GAN.
+The single integration layer between the KGSAGE package and ADKGD's training
+pipeline. ADKGD's `dataset.py` imports the three-function API from here:
 
-IMPLEMENTATION STATUS:
-  STUB. Phase 4 will fill these in once the Phase 2 KGSAGE Generator
-  exists. Until then:
-    - ADKGD with `--neg_source random` (the paper baseline) works.
-    - ADKGD with `--neg_source gan`    (simple conditional GAN) works.
-    - ADKGD with `--neg_source kgsage` (this file) ImportErrors with a
-      clear message pointing to the thesis plan.
+  - load_gan(checkpoint_path)        -> payload dict (model + vocab + reals)
+  - generate(triples, payload, ...)  -> list of negative triples + stats
+  - render_stats(stats)              -> human-readable log line
 
-WHAT load_gan / generate / render_stats WILL DO (Phase 4):
+This is the only module in the repo that knows about BOTH the standalone
+KGSAGE package (`kgsage.*`) and ADKGD's vocabulary/ID conventions.
 
-  load_gan(ckpt_path, device) → loaded KGSAGE model + ent2id + rel2id
-    Loads the joint encoder+GAN checkpoint produced by Phase 2 training.
-    Returns the model in eval mode, plus its STRING vocab so the caller
-    can translate between ADKGD's IDs and KGSAGE's IDs.
+Why this lives outside `experiments/kgsage/`:
+  We want `kgsage/` to be a self-contained generation library that doesn't
+  import or assume ADKGD. The bridge here is application glue, not library
+  code, so it stays out of the package.
 
-  generate(model, batch, adkgd_ent2id, adkgd_rel2id, n_per_anchor=1) → negatives
-    For each anchor (h, r, t) in batch, the KGSAGE Generator emits the
-    role-swapped partner (t, r', h) where r' is a contradicting relation
-    sampled from the learned distribution. Vocab translation happens at
-    the boundary so ADKGD only ever sees its own IDs.
-    Returns a tensor of shape (B*n_per_anchor, 3) in ADKGD's vocab.
-
-  render_stats(stats_dict) → multi-line string
-    Formats KGSAGE generation stats (mode-collapse score, structural
-    correctness, OOV rate) for ADKGD's training log.
-
-WHY THIS FILE IS OUTSIDE kgsage/:
-  We want kgsage/ to be a standalone package that doesn't know about
-  ADKGD. Application code that knows about both worlds lives here instead.
-
-NEXT TASKS (when Phase 2 of KGSAGE is built):
-  1. Decide on KGSAGE checkpoint format (consensus with kgsage.gan.train).
-  2. Implement load_gan() by calling kgsage.KGSAGE.load_pretrained().
-  3. Implement generate() with vocab translation.
-  4. Implement render_stats() with the metrics from Phase 3.
-  5. Wire up SLURM script: experiments/slurm/run_adkgd_with_kgsage_fb15k237.slurm.
+WHY NOT JUST CALL kgsage DIRECTLY FROM dataset.py:
+  ADKGD's dataset.py has hard-coded sys.path manipulation around an import.
+  Keeping that import pointed at a small bridge (with a stable contract) lets
+  the KGSAGE internals evolve — including the future Phase 2 pair-aware
+  generator — without touching dataset.py again.
 """
+import os
+import sys
+
+import numpy as np
+
+# Put `experiments/` on sys.path so `from kgsage.inference import ...` resolves
+# when dataset.py imports this bridge. dataset.py already adds
+# `experiments/kgsage_bridge` to sys.path; we add `experiments/` here so the
+# absolute `kgsage.*` imports below work without further fuss.
+_EXPERIMENTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _EXPERIMENTS_DIR not in sys.path:
+    sys.path.insert(0, _EXPERIMENTS_DIR)
+
+# Re-export render_stats unchanged - it's a string formatter that already
+# matches dataset.py's expectation.
+from kgsage.inference import load_checkpoint, generate_negatives, render_stats  # noqa: E402,F401
+
+__all__ = ["load_gan", "generate", "render_stats"]
 
 
-def load_gan(ckpt_path, device=None, **kwargs):
-    """Load a KGSAGE checkpoint for ADKGD bridge use.
+def load_gan(ckpt_path, device=None):
+    """Load a trained KGSAGE GAN checkpoint once; returns a payload to reuse.
 
-    Phase 4 implementation. See module docstring for the planned signature.
+    Returns a dict with keys:
+      generator        - the trained Generator (torch.nn.Module)
+      device           - torch.device the model is on
+      ent2id, rel2id   - GAN's string -> int vocab maps
+      id2ent, id2rel   - inverse maps
+      real_triple_set  - set of (h, r, t) tuples (for collision filtering)
+      n_ent, n_rel     - vocabulary sizes
+      z_dim            - noise dimension
     """
-    raise NotImplementedError(
-        "KGSAGE bridge not yet implemented — Phase 2 (KGSAGE Generator) must "
-        "exist first. See experiments/docs/THESIS_PLAN_pairgan_contradictions.md."
-    )
+    return load_checkpoint(ckpt_path, device=device)
 
 
-def generate(model, batch, adkgd_ent2id, adkgd_rel2id, n_per_anchor=1, **kwargs):
-    """Generate role-swap contradiction partners for an ADKGD training batch.
+def generate(adkgd_triples, *,
+             payload,
+             adkgd_id2ent, adkgd_id2rel,
+             adkgd_ent2id, adkgd_rel2id,
+             rng=None):
+    """Produce one ADKGD-ID negative per input ADKGD-ID positive.
 
-    Phase 4 implementation. See module docstring for the planned signature.
+    Returns (negatives, stats_dict).
     """
-    raise NotImplementedError(
-        "KGSAGE bridge not yet implemented — Phase 2 (KGSAGE Generator) must "
-        "exist first. See experiments/docs/THESIS_PLAN_pairgan_contradictions.md."
-    )
-
-
-def render_stats(stats):
-    """Format generation statistics for ADKGD's log output.
-
-    Phase 4 implementation. See module docstring for the planned signature.
-    """
-    return "  (KGSAGE bridge: stats reporting not yet implemented)"
+    if rng is None:
+        rng = np.random.default_rng(0)
+    adkgd_maps = {
+        "id2ent": adkgd_id2ent,
+        "id2rel": adkgd_id2rel,
+        "ent2id": adkgd_ent2id,
+        "rel2id": adkgd_rel2id,
+    }
+    return generate_negatives(list(adkgd_triples), payload, adkgd_maps, rng=rng)

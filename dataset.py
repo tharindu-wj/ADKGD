@@ -308,7 +308,7 @@ class Reader:
         if not hasattr(self, '_gan_payload') or self._gan_payload is None:
             self._load_gan_model()
 
-        from adkgd_bridge import generate, render_stats
+        from kgsage_bridge.bridge import generate, render_stats
 
         negatives, stats = generate(
             pos_triples,
@@ -354,16 +354,17 @@ class Reader:
         import sys as _sys
         from pathlib import Path as _Path
 
-        # Put experiments/gan/ on sys.path so `from adkgd_bridge import ...` works.
-        _gan_dir = _Path(__file__).resolve().parent / 'experiments' / 'gan'
-        if str(_gan_dir) not in _sys.path:
-            _sys.path.insert(0, str(_gan_dir))
+        # Put experiments/ on sys.path so `from kgsage_bridge.bridge import ...` works.
+        # See experiments/README.md for the bridge architecture rationale.
+        _experiments_dir = _Path(__file__).resolve().parent / 'experiments'
+        if str(_experiments_dir) not in _sys.path:
+            _sys.path.insert(0, str(_experiments_dir))
 
-        from adkgd_bridge import load_gan
+        from kgsage_bridge.bridge import load_gan
         import numpy as _np
 
         ckpt_path = getattr(self.args, 'gan_path',
-                            'experiments/gan/outputs/checkpoints/dummy.pt')
+                            'experiments/kgsage/outputs/checkpoints/dummy.pt')
         self._gan_payload = load_gan(ckpt_path)
         seed = getattr(self.args, 'seed', 0)
         self._gan_rng = _np.random.default_rng(seed)

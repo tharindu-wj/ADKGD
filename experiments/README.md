@@ -19,8 +19,8 @@ Three codebases coexist in this repo:
 | Codebase | Location | Status |
 |---|---|---|
 | **ADKGD** (anomaly detector) | repo root — `Our_TopK%_RankingList.py`, `model.py`, `dataset.py`, `create_batch.py`, `score.py` | upstream — untouched except for the `--neg_source gan` dispatch in `dataset.py` |
-| **Simple GAN** (negative generator) | `experiments/gan/` — teaching-grade rewrite (~600 lines) | ours |
-| **Orchestration glue** | `experiments/run_experiment.py`, `experiments/slurm/`, `experiments/gan/adkgd_bridge.py` | ours |
+| **KGSAGE** (encoder + GAN package) | `experiments/kgsage/` — encoder (Phase 1) + GAN (Phase 2 placeholder) + inference | ours |
+| **Orchestration glue** | `experiments/run_experiment.py`, `experiments/slurm/`, `experiments/kgsage_bridge/bridge.py` | ours |
 
 ---
 
@@ -32,29 +32,54 @@ experiments/
 ├── RUNNING_ON_DEEPTHOUGHT.md              ← HPC operator guide
 ├── run_experiment.py                      ← ADKGD orchestrator (train+test+RESULTS)
 │
-├── slurm/                                 ← ALL HPC launchers (one trio per dataset)
-│   ├── train_gan_fb15k237.slurm              ← FB15K-237 — train the GAN
+├── slurm/                                 ← ADKGD-side launchers
 │   ├── run_baseline_fb15k237.slurm           ← FB15K-237 — ADKGD baseline (random negatives, B0)
-│   ├── run_baseline_with_gan_fb15k237.slurm  ← FB15K-237 — ADKGD baseline + trained GAN negatives (B1)
-│   ├── train_gan_wn18rr.slurm             ← WN18RR    — train the GAN
-│   ├── run_baseline_wn18rr.slurm          ← WN18RR    — ADKGD baseline (random negatives, B0)
-│   ├── run_baseline_with_gan_wn18rr.slurm ← WN18RR    — ADKGD baseline + trained GAN negatives (B1)
-│   ├── train_gan_kinship.slurm            ← Kinship   — train the GAN
-│   ├── run_baseline_kinship.slurm         ← Kinship   — ADKGD baseline (random negatives, B0)
-│   ├── run_baseline_with_gan_kinship.slurm ← Kinship  — ADKGD baseline + trained GAN negatives (B1)
-│   ├── train_gan_kg20c.slurm              ← KG20C     — train the GAN
-│   ├── run_baseline_kg20c.slurm           ← KG20C     — ADKGD baseline (random negatives, B0)
-│   └── run_baseline_with_gan_kg20c.slurm  ← KG20C     — ADKGD baseline + trained GAN negatives (B1)
+│   ├── run_baseline_with_gan_fb15k237.slurm  ← FB15K-237 — ADKGD + KGSAGE GAN negatives (B1)
+│   ├── run_baseline_wn18rr.slurm             ← WN18RR    — ADKGD baseline (B0)
+│   └── run_baseline_with_gan_wn18rr.slurm    ← WN18RR    — ADKGD + KGSAGE GAN negatives (B1)
 │
-└── gan/                                   ← simple GAN (teaching version)
-    ├── README.md                          ← per-codebase quickstart + diagram
-    ├── data.py                            ← KG loader (~70 lines)
-    ├── gan_model.py                       ← Generator + Discriminator (plain MLPs, ~140 lines) — `gan_` prefix avoids colliding with ADKGD's root-level `model.py`
-    ├── train.py                           ← training CLI used by train_gan_fb15k237.slurm
-    ├── corrupt_triples.py                 ← in-process negative generation (8-step pipeline)
-    ├── adkgd_bridge.py                    ← OUR boundary file (GAN ↔ ADKGD adapter)
-    └── outputs/checkpoints/               ← .pt drop zone
-        └── dummy.pt                       ← bundled fixture (dummy_kg, 30 epochs)
+├── kgsage/                                ← standalone-ready package (encoder + GAN)
+│   ├── README.md                          ← package overview, run order, datasets
+│   ├── __init__.py                        ← public API
+│   │
+│   ├── data/                              ← KG loading + dataset registry + dataset audit
+│   │   ├── loaders.py                     ← load_kg(path)
+│   │   ├── datasets.py                    ← KNOWN_DATASETS + resolve_dataset()
+│   │   └── audit_dataset.py               ← Test 1.3 (anti-symmetric pair density)
+│   │
+│   ├── encoder/                           ← Phase 1: RGCN + DistMult
+│   │   ├── models.py                      ← KGSAGEEncoder / DistMultDecoder / LinkPredictor
+│   │   ├── train.py                       ← Phase 1 training loop
+│   │   ├── evaluate.py                    ← Test 1.1 (link prediction MRR)
+│   │   └── audit_embeddings.py            ← Test 1.2 (anti-symmetric signal)
+│   │
+│   ├── gan/                               ← Phase 2: Generator + Discriminator (flat)
+│   │   ├── models.py                      ← Generator + Discriminator + helpers
+│   │   ├── train.py                       ← adversarial training loop
+│   │   └── evaluate.py                    ← Phase 3 generation-quality metrics (placeholder)
+│   │
+│   ├── inference.py                       ← public generation API (8-step negative pipeline)
+│   │
+│   ├── cli/                               ← command-line entry points (thin shims)
+│   │   ├── audit_dataset.py
+│   │   ├── train_encoder.py
+│   │   ├── evaluate_encoder.py
+│   │   ├── audit_embeddings.py
+│   │   └── train_gan.py
+│   │
+│   ├── slurm/                             ← KGSAGE-only HPC launchers
+│   │   ├── README.md
+│   │   ├── train_encoder_fb15k237.slurm
+│   │   ├── train_gan_fb15k237.slurm
+│   │   └── train_gan_wn18rr.slurm
+│   │
+│   └── outputs/checkpoints/               ← .pt drop zone
+│       └── dummy.pt                       ← bundled fixture (dummy_kg, 30 epochs)
+│
+└── kgsage_bridge/                         ← OUR boundary file (KGSAGE ↔ ADKGD adapter)
+    ├── README.md                          ← integration rationale + contract
+    ├── __init__.py                        ← re-exports load_gan/generate/render_stats
+    └── bridge.py                          ← implementation
 ```
 
 ---
@@ -83,57 +108,44 @@ All commands below run from the **repo root**.
 The GAN is trained once per dataset; the resulting checkpoint feeds every
 subsequent ADKGD-with-GAN run. **Skip this step entirely** if you already
 have a checkpoint at the expected path (e.g.
-`experiments/gan/outputs/checkpoints/dummy.pt` ships bundled).
+`experiments/kgsage/outputs/checkpoints/dummy.pt` ships bundled).
 
 Local (dummy KG, CPU, ~minutes):
 
 ```powershell
-python experiments/gan/train.py `
+$env:PYTHONPATH = "experiments"
+python -m kgsage.cli.train_gan `
     --data data/dummy_kg `
     --epochs 30 `
     --device cpu `
-    --out experiments/gan/outputs/checkpoints/dummy.pt
+    --out experiments/kgsage/outputs/checkpoints/dummy.pt
 ```
 
 HPC (FB15K-237, V100):
 
 ```bash
-sbatch experiments/slurm/train_gan_fb15k237.slurm
-# → experiments/gan/outputs/checkpoints/fb15k237.pt
+sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm
+# → experiments/kgsage/outputs/checkpoints/fb15k237.pt
 ```
 
 HPC (WN18RR, V100):
 
 ```bash
-sbatch experiments/slurm/train_gan_wn18rr.slurm
-# → experiments/gan/outputs/checkpoints/wn18rr.pt
-```
-
-HPC (Kinship, V100):
-
-```bash
-sbatch experiments/slurm/train_gan_kinship.slurm
-# → experiments/gan/outputs/checkpoints/kinship.pt
-```
-
-HPC (KG20C, V100):
-
-```bash
-sbatch experiments/slurm/train_gan_kg20c.slurm
-# → experiments/gan/outputs/checkpoints/kg20c.pt
+sbatch experiments/kgsage/slurm/train_gan_wn18rr.slurm
+# → experiments/kgsage/outputs/checkpoints/wn18rr.pt
 ```
 
 Override hyperparameters via env vars (works on any of the train slurms):
 
 ```bash
-EPOCHS=200 BATCH_SIZE=256 sbatch experiments/slurm/train_gan_fb15k237.slurm
+EPOCHS=200 BATCH_SIZE=256 sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm
 DATASET_DIR=data/other_kg \
-    CKPT_PATH=experiments/gan/outputs/checkpoints/other.pt \
-    sbatch experiments/slurm/train_gan_fb15k237.slurm
+    CKPT_PATH=experiments/kgsage/outputs/checkpoints/other.pt \
+    sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm
 ```
 
-See [gan/README.md](gan/README.md) for the GAN architecture diagram, loss
-functions, and the per-file walkthrough.
+See [kgsage/README.md](kgsage/README.md) for the package architecture,
+training command surface, and dataset extension story.
 
 ---
 
@@ -162,18 +174,6 @@ HPC (WN18RR):
 sbatch experiments/slurm/run_baseline_wn18rr.slurm
 ```
 
-HPC (Kinship):
-
-```bash
-sbatch experiments/slurm/run_baseline_kinship.slurm
-```
-
-HPC (KG20C):
-
-```bash
-sbatch experiments/slurm/run_baseline_kg20c.slurm
-```
-
 ### 3b. Variant (B1) — the GAN negatives (in-process)
 
 Local (uses the bundled dummy checkpoint):
@@ -181,7 +181,7 @@ Local (uses the bundled dummy checkpoint):
 ```powershell
 python experiments/run_experiment.py --dataset dummy_kg --anomaly_ratio 0.15 --max_epoch 1 `
     --neg_source gan `
-    --gan_path experiments/gan/outputs/checkpoints/dummy.pt
+    --gan_path experiments/kgsage/outputs/checkpoints/dummy.pt
 ```
 
 HPC FB15K-237 (after step 2 produced `fb15k237.pt`):
@@ -196,22 +196,10 @@ HPC WN18RR (after step 2 produced `wn18rr.pt`):
 sbatch experiments/slurm/run_baseline_with_gan_wn18rr.slurm
 ```
 
-HPC Kinship (after step 2 produced `kinship.pt`):
-
-```bash
-sbatch experiments/slurm/run_baseline_with_gan_kinship.slurm
-```
-
-HPC KG20C (after step 2 produced `kg20c.pt`):
-
-```bash
-sbatch experiments/slurm/run_baseline_with_gan_kg20c.slurm
-```
-
 ### What B1 prints (diagnostic)
 
 ```
-[GAN] loaded checkpoint from experiments/gan/outputs/checkpoints/dummy.pt (device=cpu)
+[GAN] loaded checkpoint from experiments/kgsage/outputs/checkpoints/dummy.pt (device=cpu)
 [GAN] processed=1,242  retries=374  uniform_fallbacks=0
        slot_distribution: head=399/1242(32.1%) rel=395/1242(31.8%) tail=448/1242(36.1%)
 ```
@@ -249,11 +237,12 @@ populates the final research-paper table.
 
 ```
 Step 1 — GAN training (one-time)
-  experiments/slurm/train_gan_fb15k237.slurm
-        └─ experiments/gan/train.py
-                ├─ data.py     (load KG)
-                ├─ gan_model.py (Generator + Discriminator)
-                └─ writes experiments/gan/outputs/checkpoints/<name>.pt
+  experiments/kgsage/slurm/train_gan_fb15k237.slurm
+        └─ python -m kgsage.cli.train_gan
+                └─ kgsage.gan.train.main()
+                        ├─ kgsage.data.loaders.load_kg
+                        ├─ kgsage.gan.models.{Generator,Discriminator}
+                        └─ writes experiments/kgsage/outputs/checkpoints/<name>.pt
 
 Step 2 — ADKGD run (per experiment, B0 or B1)
   experiments/slurm/run_baseline{,_with_gan}_fb15k237.slurm
@@ -262,16 +251,16 @@ Step 2 — ADKGD run (per experiment, B0 or B1)
                 │       └─ dataset.py:Reader.get_data()
                 │               ├─ neg_source=random → generate_anomalous_triples()
                 │               └─ neg_source=gan    → Reader._gan_negatives()
-                │                       └─ experiments/gan/adkgd_bridge.py
-                │                               ├─ corrupt_triples.py:load_checkpoint() the .pt
-                │                               └─ corrupt_triples.py:generate_negatives() — batched forward pass
+                │                       └─ experiments/kgsage_bridge/bridge.py
+                │                               ├─ kgsage.inference.load_checkpoint() the .pt
+                │                               └─ kgsage.inference.generate_negatives() — batched forward pass
                 ├─ subprocess: Our_TopK%_RankingList.py --mode test    (ADKGD upstream)
                 └─ parses logs → prints RESULTS table
 ```
 
 ### Why this boundary
 
-- **The GAN is invoked only via `experiments/gan/adkgd_bridge.py`**. ADKGD's `dataset.py` knows nothing about the GAN's internals — it calls `generate(...)` and gets ADKGD-ID negatives back. The bridge handles `sys.path` setup and vocab string round-trips.
+- **The GAN is invoked only via `experiments/kgsage_bridge/bridge.py`**. ADKGD's `dataset.py` knows nothing about the GAN's internals — it calls `generate(...)` and gets ADKGD-ID negatives back. The bridge handles `sys.path` setup and vocab string round-trips.
 - **B0 and B1 share the orchestrator, RESULTS parser, and comparison table** — any metric delta is unambiguously attributable to the negative source.
 - **The GAN and ADKGD evolve independently**. Retrain the GAN without touching ADKGD; change ADKGD without touching the GAN.
 
@@ -284,8 +273,6 @@ Step 2 — ADKGD run (per experiment, B0 or B1)
 | `dummy_kg` | `data/dummy_kg/{train,valid,test}.txt` | **18 unique × 60 = 1,080** | Smoke-test fixture (6 people, 3 relations, 4 countries). Replication forces `K=0.1%` math to produce ≥ 1. |
 | `FB15K-237` | `data/FB15K-237/{train,valid,test}.txt` | 310,116 | Paper benchmark — Freebase 15K with 237 relations (inverse relations removed to prevent test leakage). Real research runs. |
 | `WN18RR` | `data/WN18RR/{train,valid,test}.txt` | 93,003 | Paper benchmark (WordNet 18 with restricted relations: 40,943 entities, 11 relations). Real research runs. |
-| `Kinship` | `data/Kinship/{train,valid,test}.txt` | 10,686 | Family-relations benchmark: 104 entities, 25 relations. **NOTE:** this variant differs from Wu et al. (2024) Table 1 (which reports 46 relations, 6,529 triples); B0 numbers will not directly reproduce their Kinship row but B1 vs B0 comparison remains valid on this variant. |
-| `KG20C` | `data/KG20C/{train,valid,test}.txt` | 55,607 | Scholarly knowledge graph: 16,362 entities, 5 relations (papers, authors, affiliations and their citation relationships). Matches Wu et al. (2024) Table 1 exactly. |
 
 ---
 
@@ -302,18 +289,12 @@ and `%j` is the slurm job id.
 
 | Slurm script | `--job-name` | Log filename |
 |---|---|---|
-| `train_gan_fb15k237.slurm` | `gan_train_fb15k237` | `gan_train_fb15k237-<jobid>.out.txt` |
-| `run_baseline_fb15k237.slurm` | `adkgd_fb15k237` | `adkgd_fb15k237-<jobid>.out.txt` |
-| `run_baseline_with_gan_fb15k237.slurm` | `adkgd_baseline_with_gan_fb15k237` | `adkgd_baseline_with_gan_fb15k237-<jobid>.out.txt` |
-| `train_gan_wn18rr.slurm` | `gan_train_wn18rr` | `gan_train_wn18rr-<jobid>.out.txt` |
-| `run_baseline_wn18rr.slurm` | `adkgd_wn18rr` | `adkgd_wn18rr-<jobid>.out.txt` |
-| `run_baseline_with_gan_wn18rr.slurm` | `adkgd_baseline_with_gan_wn18rr` | `adkgd_baseline_with_gan_wn18rr-<jobid>.out.txt` |
-| `train_gan_kinship.slurm` | `gan_train_kinship` | `gan_train_kinship-<jobid>.out.txt` |
-| `run_baseline_kinship.slurm` | `adkgd_kinship` | `adkgd_kinship-<jobid>.out.txt` |
-| `run_baseline_with_gan_kinship.slurm` | `adkgd_baseline_with_gan_kinship` | `adkgd_baseline_with_gan_kinship-<jobid>.out.txt` |
-| `train_gan_kg20c.slurm` | `gan_train_kg20c` | `gan_train_kg20c-<jobid>.out.txt` |
-| `run_baseline_kg20c.slurm` | `adkgd_kg20c` | `adkgd_kg20c-<jobid>.out.txt` |
-| `run_baseline_with_gan_kg20c.slurm` | `adkgd_baseline_with_gan_kg20c` | `adkgd_baseline_with_gan_kg20c-<jobid>.out.txt` |
+| `kgsage/slurm/train_gan_fb15k237.slurm` | `gan_train_fb15k237` | `gan_train_fb15k237-<jobid>.out.txt` |
+| `slurm/run_baseline_fb15k237.slurm` | `adkgd_fb15k237` | `adkgd_fb15k237-<jobid>.out.txt` |
+| `slurm/run_baseline_with_gan_fb15k237.slurm` | `adkgd_baseline_with_gan_fb15k237` | `adkgd_baseline_with_gan_fb15k237-<jobid>.out.txt` |
+| `kgsage/slurm/train_gan_wn18rr.slurm` | `gan_train_wn18rr` | `gan_train_wn18rr-<jobid>.out.txt` |
+| `slurm/run_baseline_wn18rr.slurm` | `adkgd_wn18rr` | `adkgd_wn18rr-<jobid>.out.txt` |
+| `slurm/run_baseline_with_gan_wn18rr.slurm` | `adkgd_baseline_with_gan_wn18rr` | `adkgd_baseline_with_gan_wn18rr-<jobid>.out.txt` |
 
 ### Three useful commands
 
@@ -377,5 +358,6 @@ slot distribution near 1/3 each.
 
 - [RUNNING_ON_DEEPTHOUGHT.md](RUNNING_ON_DEEPTHOUGHT.md) — HPC setup, env creation, troubleshooting.
 - ADKGD upstream — repo root: `Our_TopK%_RankingList.py` (entry), `dataset.py` (Reader + `_gan_negatives` dispatch), `model.py` (BiLSTM_Attention).
-- Simple GAN — [experiments/gan/](gan/) (data.py, gan_model.py, train.py, corrupt_triples.py).
-- Bridge — [experiments/gan/adkgd_bridge.py](gan/adkgd_bridge.py) (the only file that knows about both worlds).
+- KGSAGE package — [experiments/kgsage/](kgsage/) — encoder, GAN, inference, all in one.
+- Bridge — [experiments/kgsage_bridge/bridge.py](kgsage_bridge/bridge.py) — the only file that knows about both worlds.
+- KGSAGE (future) — [experiments/kgsage/](kgsage/), bridge at [experiments/kgsage_bridge/](kgsage_bridge/).

@@ -1,18 +1,21 @@
-"""KGSAGE ↔ ADKGD bridge.
+"""KGSAGE <-> ADKGD bridge.
 
-The only Python module in this repo that knows about BOTH the standalone
-KGSAGE package and the ADKGD detector. Its job is to translate between
-KGSAGE's library API and the three-function bridge contract that ADKGD's
-dataset.py expects (load_gan, generate, render_stats — same as
-experiments/gan/adkgd_bridge.py for the simple GAN).
+The single Python module in this repo that knows about BOTH the standalone
+KGSAGE package and the ADKGD detector. ADKGD's `dataset.py` imports the
+three-function contract from here:
+
+  - load_gan(ckpt_path)
+  - generate(triples, *, payload, adkgd_id2ent, ..., rng=None)
+  - render_stats(stats)
+
+Both Phase 1 (simple GAN, current) and Phase 2 (pair-aware KGSAGE generator,
+future) implement the same contract, so the same call site in `dataset.py`
+keeps working across the upgrade.
 
 WHY THIS IS A SEPARATE FOLDER (not inside experiments/kgsage/):
-  KGSAGE is meant to ship as a standalone package — `pip install kgsage`
-  someday. A standalone package can't know about ADKGD. So integration code
-  lives here instead, sibling to `kgsage/` rather than nested inside it.
-
-Currently empty — populated in Phase 4 of the thesis plan, once the KGSAGE
-GAN exists. Until then, ADKGD continues to use `experiments/gan/adkgd_bridge.py`
-(the simple conditional GAN bridge).
+  We want `kgsage/` to ship as a standalone library. A standalone library
+  can't know about ADKGD's specific types. So integration glue lives here.
 """
-__all__ = []
+from kgsage_bridge.bridge import load_gan, generate, render_stats
+
+__all__ = ["load_gan", "generate", "render_stats"]

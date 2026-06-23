@@ -1,16 +1,18 @@
-"""Local smoke test for the KGSAGE package refactor.
+"""Local smoke test for the KGSAGE package + bridge.
 
 Verifies that the package structure is correct on a developer machine that
-has torch installed but NOT torch_geometric (which is HPC-only here).
+has torch installed (PyG is HPC-only here — encoder access is lazy).
 
 Run from repo root:
     PYTHONPATH=experiments python experiments/kgsage/smoke_test.py
 
 Sections:
   1. Imports that don't require torch_geometric
-  2. Behaviour checks (resolve_dataset, bridge stub)
+  2. Behaviour checks (resolve_dataset)
   3. Lazy encoder access — verifies PyG import is deferred
-  4. load_kg works on dummy_kg
+  4. GAN imports (require torch but not PyG)
+  5. load_kg works on dummy_kg
+  6. Bridge end-to-end if a smoke checkpoint exists
 """
 import os
 import sys
@@ -27,29 +29,28 @@ def main():
     print("Python:", sys.version.split()[0])
     print("Platform:", sys.platform)
 
-    # ─── SECTION 1: Imports ────────────────────────────────────────────
-    section("SECTION 1: Imports that don't need torch_geometric")
+    # ---- SECTION 1: Imports ----
+    section("SECTION 1: kgsage.* + bridge imports")
 
     import kgsage
     print(f"OK: import kgsage  (version={kgsage.__version__})")
 
     from kgsage import load_kg, resolve_dataset, KNOWN_DATASETS
-    print("OK: eager public API symbols (load_kg, resolve_dataset, KNOWN_DATASETS)")
-    print(f"    KNOWN_DATASETS keys: {sorted(KNOWN_DATASETS.keys())}")
+    print("OK: eager public API (load_kg, resolve_dataset, KNOWN_DATASETS)")
+    print(f"    KNOWN_DATASETS: {sorted(KNOWN_DATASETS.keys())}")
 
     from kgsage.data.loaders import load_kg as _load_kg2
     from kgsage.data.datasets import resolve_dataset as _resolve2
     from kgsage.data import audit_dataset as _audit_dataset
     print("OK: kgsage.data.* sub-package imports")
 
-    # audit_dataset CLI shim doesn't touch encoder → no PyG needed
     from kgsage.cli import audit_dataset as _cli_audit_dataset
-    print("OK: kgsage.cli.audit_dataset shim imports (PyG-free)")
+    print("OK: kgsage.cli.audit_dataset shim imports (no torch needed)")
 
     from kgsage_bridge.bridge import load_gan, generate, render_stats
-    print("OK: kgsage_bridge.bridge imports")
+    print("OK: kgsage_bridge.bridge imports (full implementation, no stubs)")
 
-    # ─── SECTION 2: Behaviour ──────────────────────────────────────────
+    # ---- SECTION 2: Behaviour ----
     section("SECTION 2: Behaviour checks")
 
     print("Known dataset configs:")
@@ -59,7 +60,6 @@ def main():
               f"dim={cfg['dim']}  bases={cfg['num_bases']}  "
               f"expected_mrr={cfg['expected_mrr']}")
 
-    # resolve_dataset rejects unknown name
     try:
         resolve_dataset("not_a_real_dataset")
         print("FAIL: resolve_dataset should have raised")
@@ -67,21 +67,11 @@ def main():
     except ValueError:
         print("OK: resolve_dataset rejects unknown name")
 
-    # resolve_dataset accepts custom paths
     if os.path.isdir("data/dummy_kg"):
         cfg = resolve_dataset("data/dummy_kg")
-        print(f"OK: resolve_dataset(path) -> name={cfg['name']}, "
-              f"path={cfg['path']}, expected_mrr={cfg['expected_mrr']}")
+        print(f"OK: resolve_dataset(path) -> name={cfg['name']}, path={cfg['path']}")
 
-    # bridge stub raises NotImplementedError
-    try:
-        load_gan("dummy_ckpt")
-        print("FAIL: load_gan should have raised NotImplementedError")
-        return 1
-    except NotImplementedError:
-        print("OK: load_gan() raises NotImplementedError as expected")
-
-    # ─── SECTION 3: Lazy encoder ───────────────────────────────────────
+    # ---- SECTION 3: Lazy encoder ----
     section("SECTION 3: Lazy encoder access")
 
     try:
@@ -90,13 +80,30 @@ def main():
         print("            (torch_geometric must be installed locally — that's fine)")
     except (ImportError, ModuleNotFoundError) as e:
         print(f"OK: encoder lazy-load defers PyG import until access ({type(e).__name__})")
-        print(f"    Got: {e}")
     except AttributeError as e:
         print(f"FAIL: lazy load mechanism broken: {e}")
         return 1
 
-    # ─── SECTION 4: load_kg ────────────────────────────────────────────
-    section("SECTION 4: load_kg on dummy_kg")
+    # ---- SECTION 4: GAN imports (torch but no PyG required) ----
+    section("SECTION 4: kgsage.gan.* + kgsage.inference imports")
+
+    from kgsage.gan.models import Generator, Discriminator, gumbel_softmax, soft_embedding
+    print("OK: kgsage.gan.models.{Generator, Discriminator, gumbel_softmax, soft_embedding}")
+
+    from kgsage.gan import train as _gan_train
+    print("OK: kgsage.gan.train (the training loop module)")
+
+    from kgsage.inference import (
+        load_checkpoint, generate_negatives, render_stats as _rs,
+        generate_contradictions,
+    )
+    print("OK: kgsage.inference.{load_checkpoint, generate_negatives, render_stats, generate_contradictions}")
+    assert generate_contradictions is generate_negatives, \
+        "generate_contradictions should alias generate_negatives"
+    print("OK: generate_contradictions is generate_negatives (alias)")
+
+    # ---- SECTION 5: load_kg on dummy_kg ----
+    section("SECTION 5: load_kg on dummy_kg")
 
     if os.path.isdir("data/dummy_kg"):
         kg = load_kg("data/dummy_kg")
@@ -104,12 +111,48 @@ def main():
         print(f"    {kg['n_ent']} entities, {kg['n_rel']} relations")
         print(f"    train={len(kg['triples_train'])}  "
               f"valid={len(kg['triples_valid'])}  test={len(kg['triples_test'])}")
-        print(f"    edge_index.shape={tuple(kg['edge_index'].shape)}  "
-              f"edge_type.shape={tuple(kg['edge_type'].shape)}")
+        print(f"    edge_index.shape={tuple(kg['edge_index'].shape)}")
     else:
         print("SKIP: data/dummy_kg not present in cwd")
 
-    # ─── DONE ──────────────────────────────────────────────────────────
+    # ---- SECTION 6: Bridge end-to-end ----
+    section("SECTION 6: kgsage_bridge.bridge end-to-end on dummy_kg")
+
+    ckpt = "experiments/kgsage/outputs/checkpoints/smoke.pt"
+    if not os.path.isfile(ckpt):
+        print(f"SKIP: {ckpt} not found.")
+        print(f"      Run `python -m kgsage.cli.train_gan --data data/dummy_kg "
+              f"--epochs 3 --device cpu --out {ckpt}` first.")
+        section("ALL CHECKS THAT COULD RUN PASSED")
+        return 0
+
+    payload = load_gan(ckpt, device=None)
+    print(f"OK: bridge loaded {ckpt}")
+    print(f"    n_ent={payload['n_ent']}  n_rel={payload['n_rel']}  device={payload['device']}")
+
+    ent2id = payload["ent2id"]
+    rel2id = payload["rel2id"]
+    id2ent = payload["id2ent"]
+    id2rel = payload["id2rel"]
+    real_triples = list(payload["real_triple_set"])[:5]
+
+    import numpy as np
+    rng = np.random.default_rng(42)
+    negatives, stats = generate(
+        real_triples,
+        payload=payload,
+        adkgd_id2ent=id2ent,
+        adkgd_id2rel=id2rel,
+        adkgd_ent2id=ent2id,
+        adkgd_rel2id=rel2id,
+        rng=rng,
+    )
+    print(f"OK: generate() returned {len(negatives)} negatives")
+    print(f"OK: render_stats: {render_stats(stats)}")
+
+    n_changed = sum(1 for p, n in zip(real_triples, negatives) if tuple(p) != tuple(n))
+    print(f"OK: {n_changed}/{len(negatives)} negatives differ from their positive")
+
     section("ALL CHECKS PASSED")
     return 0
 

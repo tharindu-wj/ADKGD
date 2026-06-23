@@ -1,20 +1,16 @@
-"""Train the simple GAN and save a checkpoint.
+"""Train the KGSAGE GAN (Generator + Discriminator) and save a checkpoint.
 
 Run from the repo root:
 
   # Local quick-test on the bundled dummy KG (~minutes on CPU)
-  python experiments/gan/train.py \
+  PYTHONPATH=experiments python -m kgsage.cli.train_gan \
       --data data/dummy_kg \
       --epochs 50 \
       --device cpu \
-      --out experiments/gan/outputs/checkpoints/dummy.pt
+      --out experiments/kgsage/outputs/checkpoints/dummy.pt
 
   # HPC on FB15K-237 (V100)
-  python experiments/gan/train.py \
-      --data data/FB15K-237 \
-      --epochs 200 \
-      --device cuda \
-      --out experiments/gan/outputs/checkpoints/fb15k237.pt
+  sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm
 
 How training works (each epoch):
   1. For every real triple, build a "training pair" (real, target):
@@ -44,22 +40,19 @@ The checkpoint at the end bundles:
   - the vocab maps (ent2id, rel2id, ...)
   - the set of real triples (for collision filtering at inference)
 
-So `corrupt_triples.py` only needs the checkpoint, no separate data files.
+So `gan/inference.py` only needs the checkpoint, no separate data files.
 """
 import argparse
 import os
 import random
-import sys
 import time
 from datetime import datetime
 
 import torch
 import torch.nn.functional as F
 
-# Import sibling modules (data.py, model.py) without needing a package layout.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from data import load_kg                                            # noqa: E402
-from gan_model import Generator, Discriminator, gumbel_softmax, soft_embedding  # noqa: E402
+from kgsage.data.loaders import load_kg
+from kgsage.gan.models import Generator, Discriminator, gumbel_softmax, soft_embedding
 
 
 def random_corrupt(h, r, t, n_ent, n_rel, rng):
@@ -192,7 +185,7 @@ def train_one_epoch(G, D, opt_G, opt_D, real_all, target_all, batch_size, device
 
 
 def save_checkpoint(G, kg, dim, z_dim, save_path):
-    """Bundle everything `corrupt_triples.py` needs into one .pt file."""
+    """Bundle everything `kgsage.inference.load_checkpoint` needs into one .pt file."""
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     torch.save({
         "generator_state": G.state_dict(),
@@ -237,10 +230,16 @@ def main():
 
     print(f"Loading KG from {args.data} ...", flush=True)
     kg = load_kg(args.data)
-    print(f"  entities = {kg['n_ent']:,}  relations = {kg['n_rel']:,}  triples = {len(kg['triples']):,}", flush=True)
+    # The simple GAN trains on all available triples (train + valid + test),
+    # not the train split alone. kgsage.data.loaders returns splits separately;
+    # combine them here. triple_set_all is the matching set form.
+    all_triples = list(kg["triples_train"]) + list(kg["triples_valid"]) + list(kg["triples_test"])
+    kg["triples"] = all_triples
+    kg["triple_set"] = kg["triple_set_all"]
+    print(f"  entities = {kg['n_ent']:,}  relations = {kg['n_rel']:,}  triples = {len(all_triples):,}", flush=True)
 
     print("Building (real, target) training pairs ...", flush=True)
-    pairs = build_training_pairs(kg["triples"], kg["n_ent"], kg["n_rel"], rng)
+    pairs = build_training_pairs(all_triples, kg["n_ent"], kg["n_rel"], rng)
     print(f"  pairs = {len(pairs):,}", flush=True)
 
     # Pack pairs into two tensors once. From here on, no Python lists in the

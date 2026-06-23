@@ -81,13 +81,13 @@ the script — never inside the `#SBATCH` header.
 
 ## 3. Submit, monitor, collect
 
-There are three slurm launchers in `experiments/slurm/`. Submit them in this order:
+Three slurm launchers per dataset. Submit them in this order:
 
-| # | Launcher | When |
-|---|---|---|
-| 1 | `train_gan_fb15k237.slurm` | **One-time** per dataset — produces the GAN checkpoint used by B1. Skip if a checkpoint already exists. |
-| 2 | `run_baseline_fb15k237.slurm` | **B0** — ADKGD baseline with random negatives (reproduces Wu et al. 2024 Table 2). |
-| 3 | `run_baseline_with_gan_fb15k237.slurm` | **B1** — ADKGD baseline, but with the trained GAN supplying training negatives in-process. Requires step 1 to have produced `experiments/gan/outputs/checkpoints/fb15k237.pt`. |
+| # | Launcher | Location | When |
+|---|---|---|---|
+| 1 | `train_gan_fb15k237.slurm` | `experiments/kgsage/slurm/` | **One-time** per dataset — produces the GAN checkpoint used by B1. Skip if a checkpoint already exists. |
+| 2 | `run_baseline_fb15k237.slurm` | `experiments/slurm/` | **B0** — ADKGD baseline with random negatives (reproduces Wu et al. 2024 Table 2). |
+| 3 | `run_baseline_with_gan_fb15k237.slurm` | `experiments/slurm/` | **B1** — ADKGD baseline, but with the trained GAN supplying training negatives in-process. Requires step 1 to have produced `experiments/kgsage/outputs/checkpoints/fb15k237.pt`. |
 
 Step 2 (B0) and step 3 (B1) are independent — submit them in either order.
 Step 1 must happen before step 3.
@@ -97,7 +97,7 @@ cd $HOME/ADKGD
 git pull                                              # get latest run_experiment.py / slurm
 
 # (one-time, only if no checkpoint yet) Train the GAN:
-sbatch experiments/slurm/train_gan_fb15k237.slurm
+sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm
 
 # B0 baseline
 sbatch --test-only experiments/slurm/run_baseline_fb15k237.slurm     # dry-run: validate the script
