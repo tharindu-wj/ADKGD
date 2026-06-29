@@ -14,9 +14,8 @@ Available commands:
                                             (ADKGD --neg_source gan baseline)
   python -m kgsage.cli.train_kgsage_gan   - train Phase 2 PAIR-AWARE role-swap GAN
                                             (KGSAGEGenerator + KGSAGEDiscriminator)
-
-Phase 3 will add:
-  python -m kgsage.cli.evaluate_gan       - generation quality metrics (precision, recall, diversity)
+  python -m kgsage.cli.evaluate_gan       - Phase 3 generation quality vs rule-only
+                                            (precision, recall, diversity, GAN-vs-rule)
 """
 import sys
 
