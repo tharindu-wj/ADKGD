@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import random
 import torch
 import math
@@ -321,11 +322,15 @@ class Reader:
         )
         print('[GAN] ' + render_stats(stats))
 
-        # Print every (positive, negative) pair so the user can verify what the
-        # GAN produced. WARNING: on FB15K-237 (~325k pairs) this is a lot of output;
-        # cap or switch back to a sample if the slurm log gets too noisy.
-        print('[GAN] %d (positive -> negative) pairs:' % len(pos_triples))
-        for i in range(len(pos_triples)):
+        # Print a PREVIEW of (positive, negative) pairs so the user can verify
+        # what the generator produced. Capped at _preview pairs: on FB15K-237
+        # (~325k pairs) printing every pair floods the slurm log (and is emitted
+        # once per get_data() call). Raise GAN_PAIR_PREVIEW to see more.
+        _preview = int(os.environ.get('GAN_PAIR_PREVIEW', '20'))
+        n = len(pos_triples)
+        print('[GAN] %d (positive -> negative) pairs (showing first %d):'
+              % (n, min(_preview, n)))
+        for i in range(min(_preview, n)):
             ph, pr, pt = pos_triples[i]
             nh, nr, nt = negatives[i]
             moved = []
@@ -340,6 +345,9 @@ class Reader:
                   % (self.id2ent[ph], self.id2rel[pr], self.id2ent[pt]))
             print('  neg: (%s, %s, %s)  [moved: %s]'
                   % (self.id2ent[nh], self.id2rel[nr], self.id2ent[nt], moved_str))
+        if n > _preview:
+            print('  ... (%d more pairs suppressed; set GAN_PAIR_PREVIEW to raise)'
+                  % (n - _preview))
         return negatives
 
     def _load_gan_model(self):

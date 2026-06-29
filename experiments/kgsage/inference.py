@@ -352,7 +352,8 @@ def _uniform_partner(t, h, n_rel, real_set, rng, max_tries=200):
 
 
 def generate_kgsage_partners(anchor_triples, payload, adkgd_maps=None, rng=None,
-                             batch_size=256, tau=0.5, max_retries=10):
+                             batch_size=256, tau=0.5, max_retries=10,
+                             pad_selfloops=False):
     """For each anchor (h, r, t), emit the role-swap contradiction (t, r', h).
 
     anchor_triples : list of (h, r, t).
@@ -361,6 +362,11 @@ def generate_kgsage_partners(anchor_triples, payload, adkgd_maps=None, rng=None,
                      round-trip (string-bridged, exactly like generate_negatives).
                      If None, triples are taken in the GAN's own id space — the
                      mode the smoke test and standalone generation use.
+    pad_selfloops  : if False (default), self-loop anchors (h == t) are SKIPPED,
+                     so the output may be shorter than the input. If True, each
+                     self-loop anchor gets a uniform-random fallback negative
+                     instead, keeping the output 1:1 and in input order — which
+                     is what the ADKGD bridge needs (one negative per positive).
 
     Returns (partners_list, stats_dict). Each partner is a (t, r', h) triple.
     """
@@ -399,17 +405,22 @@ def generate_kgsage_partners(anchor_triples, payload, adkgd_maps=None, rng=None,
         for i, (h, r, t) in enumerate(batch):
             if h == t:
                 stats["skipped_selfloop"] += 1
-                continue
-            partner = None
-            for _ in range(max_retries):
-                rp = _gumbel_argmax(logits[i], tau)
-                cand = (t, rp, h)
-                if cand not in real_set:   # absent => contradiction (symmetric auto-rejected)
-                    partner = cand
-                    break
-            if partner is None:
+                if not pad_selfloops:
+                    continue
+                # ADKGD wants exactly one negative per positive; emit a uniform
+                # fallback for self-loop anchors so the output stays 1:1.
                 partner = _uniform_partner(t, h, n_rel, real_set, rng)
-                stats["fallbacks"] += 1
+            else:
+                partner = None
+                for _ in range(max_retries):
+                    rp = _gumbel_argmax(logits[i], tau)
+                    cand = (t, rp, h)
+                    if cand not in real_set:   # absent => contradiction (symmetric auto-rejected)
+                        partner = cand
+                        break
+                if partner is None:
+                    partner = _uniform_partner(t, h, n_rel, real_set, rng)
+                    stats["fallbacks"] += 1
 
             if partner[1] == r:
                 stats["self_swap"] += 1
