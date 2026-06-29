@@ -180,6 +180,196 @@ rsync -avz wick0167@deepthought.flinders.edu.au:/home/wick0167/ADKGD/checkpoints
 > `--num_neighbor=39` (its default subgraph size: 39 head + 39 tail neighbors
 > per triple). We never vary it, so that name is constant across all our runs.
 
+## Why is my GPU job stuck PENDING? (diagnose + fix)
+
+DeepThought has only ~5 Tesla V100s cluster-wide and weights **Fairshare**
+heavily on the `gpu` partition, so a pending KGSAGE/ADKGD GPU job is almost
+always one of: (a) your priority is low, (b) the partition is full, (c) you hit
+a QOS/association limit, (d) a reservation is holding the nodes, or (e) your
+`--time` exceeds the partition cap. Work through the five angles below.
+
+First, get the one-word **reason** SLURM attaches to your pending job — it tells
+you which angle to chase:
+
+```bash
+squeue -u $USER -t PD -o "%.10i %.9P %.30j %.8T %.10M %.10l %.6D %R"
+#                                                                    └ REASON in parens, e.g.
+#  (Priority)        → other jobs outrank you            → angle A
+#  (Resources)       → you're next, but no free V100 yet → angle B
+#  (QOSMaxJobsPerUserLimit / QOSMax... / AssocMax...)     → angle C
+#  (ReqNodeNotAvail, Reserved...)                         → angle D
+#  (PartitionTimeLimit)  → your --time > partition MaxTime→ angle E
+```
+
+The `%R` field prints the reason for pending jobs in parentheses; map it to the
+matching angle.
+
+For the **authoritative, full picture of one job** — the reason plus its
+priority, state, scheduling timestamps, and the exact resources it requested —
+use `scontrol show job`:
+
+```bash
+scontrol show job <jobid>
+#  JobState=PENDING  Reason=<code>      ← the definitive reason (matches %R above)
+#  Priority=<int>                       ← compare against the running jobs
+#  TRES=...,gres/gpu=1  Partition=gpu   ← confirm it really asked for a V100 on the gpu partition
+#  EligibleTime in the FUTURE           ← a --begin hold ;  StartTime = estimate while pending
+```
+
+A silent trap this catches: a typo'd `--gres`/`--partition` so the job never
+actually requests a V100 and pends forever for the wrong reason.
+
+### A. "My priority is low" (reason: `Priority`)
+
+See the weighted breakdown of your job's priority, then check whether your own
+recent GPU usage is what's dragging the Fairshare component down:
+
+```bash
+sprio -j <jobid>           # this job's PRIORITY split into AGE / FAIRSHARE / QOS / JOBSIZE / PARTITION
+sprio -l -u $USER          # all your pending jobs, long form, same breakdown
+sprio -w                   # the cluster's weight for each factor (which factor dominates here)
+
+sshare -U                  # YOUR fairshare line: RawShares, RawUsage, EffectvUsage, FairShare (0..1)
+sshare -u $USER -a         # your account + siblings, to see if the account (not just you) is over-used
+```
+
+**What it reveals.** `sprio` shows whether the FAIRSHARE column (not AGE) is the
+thing holding you down. In `sshare`, the **FairShare** factor runs 0..1: ~0.5 =
+your fair share, **<0.5 = you have over-consumed** your GPU share recently (it
+decays over ~30 days via `PriorityDecayHalfLife`), >0.5 = you're under your
+share and should be favored. A high `RawUsage`/`EffectvUsage` after a burst of
+V100 jobs is the classic cause of a low-priority pend.
+
+**Remedy.** You can't out-argue Fairshare directly — but (1) **let AGE
+accumulate**: don't cancel/resubmit, since requeuing resets the AGE factor that
+would otherwise lift you over time; (2) **stop burning share** — move
+non-GPU steps to the `general` partition (see Backfill tips) so they don't
+charge against your GPU usage; (3) **space out** large V100 submissions so your
+RawUsage decays back toward your fair share before the next batch.
+
+### B. "The partition is full" (reason: `Resources`)
+
+```bash
+sinfo -p gpu -N -o "%.18N %.6t %.8O %.20G %.10e/%.10m"   # per-V100-node: state, CPU load, GRES, free/total mem
+sinfo -p gpu -t idle,mix -o "%.18N %.6t %G"              # are ANY V100s actually free right now?
+squeue -p gpu -t R -o "%.10i %.9u %.8a %.12L %.10l %.6D %R"  # who's RUNNING, their TIME-LEFT (%L) and TIME-LIMIT (%l)
+```
+
+**What it reveals.** `sinfo` node states: `idle`=free, `mix`=partly used,
+`alloc`=full, `drain`/`down`=unavailable (so the effective V100 count is below
+5). The `squeue -p gpu -t R` listing shows the *other* jobs sitting on the
+V100s and — crucially — their `%L` **time-left** and `%l` **time-limit**: a
+couple of multi-day jobs can wall off the whole partition.
+
+**Remedy.** If every V100 is `alloc`/`drain`, the only fast lever you control is
+making your job **fit a backfill gap before those running jobs end** — drop your
+own `--time` (see Backfill tips). If nodes show `drain`/`down`, that's an admin
+issue worth flagging; there's nothing you can submit your way around.
+
+### C. "I hit a QOS / association limit" (reason: `QOSMax...` / `AssocMax...`)
+
+```bash
+sacctmgr show qos format=Name,Priority,MaxWall,MaxTRESPU,MaxJobsPU,MaxSubmitPU   # per-QOS caps
+sacctmgr show assoc user=$USER format=Account,User,QOS,MaxJobs,GrpTRES           # what YOU are capped at
+```
+
+**What it reveals.** `MaxJobsPU` (max running jobs per user), `MaxSubmitPU` (max
+running+pending per user), `MaxTRESPU` (e.g. a cap of `gres/gpu=1` per user),
+and `MaxWall` (per-job walltime ceiling for that QOS). If `squeue` said
+`QOSMaxJobsPerUserLimit` or `AssocMaxJobsLimit`, you've already hit one of these
+— a second GPU job won't start until your first finishes.
+
+**Remedy.** Respect the cap: run GPU jobs **one at a time** (don't queue B0 and
+B1 to fight for the same single-GPU slot — chain them, or submit B1 only after
+B0 starts). If `MaxWall` is below your `--time`, lower `--time` to comply. These
+limits are policy; raising them needs an admin request.
+
+### D. "A reservation is blocking the nodes" (reason: `ReqNodeNotAvail`/`Reserved`)
+
+```bash
+scontrol show reservation                       # any active/upcoming reservation, and which Nodes/Users it covers
+scontrol show res -o | grep -i v100             # quick check whether a reservation grabs the V100 nodes
+```
+
+**What it reveals.** Maintenance or course/project reservations can lock the
+V100 nodes to specific `Users=`/`Accounts=` during a window. If a reservation
+covers the GPU nodes and your user isn't in its `Users=` list, your job waits
+until `EndTime`, even though the hardware looks idle.
+
+**Remedy.** Read the reservation's `EndTime` and either wait it out, or — if your
+work is short — set `--time` small enough to **backfill before the reservation
+StartTime**. If you were *supposed* to be granted that reservation, ask the
+admins to add your user/account to it.
+
+### E. "The partition rejects my --time" (reason: `PartitionTimeLimit`)
+
+```bash
+scontrol show partition gpu                     # MaxTime (hard cap) and DefaultTime for the gpu partition
+```
+
+**What it reveals.** `MaxTime` is the partition's hard walltime ceiling. If your
+`#SBATCH --time` exceeds it, the job is rejected/held with
+`PartitionTimeLimit` and will never start as-is.
+
+**Remedy.** Lower `#SBATCH --time` to at or below `MaxTime`. A single ADKGD
+FB15K-237 epoch is ~13 min on a V100, so a generous `--time=01:00:00` is plenty
+and sits far under any sane partition cap — over-requesting walltime only hurts
+your backfill chances anyway (next section).
+
+### Backfill tips: get a contended GPU job to start sooner
+
+SLURM's backfill scheduler will start a **lower-priority job early** if it fits
+in the gap before a higher-priority job is due to start — but only if its
+`--time` is short enough to finish within that gap. On a partition with ~5
+V100s and long-running neighbors, your walltime estimate is your main lever.
+
+1. **Cut `#SBATCH --time` to what the job actually needs.** One FB15K-237 epoch
+   ≈ 13 min on a V100; `--time=00:30:00` (or `01:00:00` with margin) makes your
+   job eligible for far more backfill windows than a default multi-hour request.
+   This is the single biggest mover.
+
+2. **Check whether a shorter walltime actually pulls the estimate earlier:**
+
+   ```bash
+   squeue -u $USER --start -o "%.10i %.9P %.20S %.10l %R"   # predicted StartTime (%S) for your pending job
+   ```
+
+   Lower `--time`, resubmit, and re-run this — if `%S` jumps earlier, backfill
+   is rewarding you. (The estimate is a guideline, not a guarantee.)
+
+3. **Request fewer resources.** Ask for exactly `--gres=gpu:tesla_v100:1`, one
+   task, and only the memory/CPUs you need (`--mem=16G` is enough for ADKGD at
+   batch 256). A smaller footprint fits more gaps; the JOBSIZE priority factor
+   also gives small jobs a slight backfill boost.
+
+4. **Run the non-GPU steps on `general`, not `gpu`.** The pipeline's CPU-only
+   steps — e.g. the YAGO→TSV conversion / template verification (Test 1.1 /
+   Test 1.2 need no GPU) and any `dummy_kg` smoke test — should go to the much
+   more available `general` partition (`#SBATCH --partition=general`, drop the
+   `--gres` line; see the "Running on CPU" section). This both starts those
+   steps immediately **and** keeps them from charging against your GPU Fairshare
+   usage, which protects your priority for the runs that genuinely need a V100.
+
+5. **One GPU job at a time.** With a likely 1-GPU-per-user cap (angle C), a
+   second pending GPU job just waits anyway — submit B1 after B0 has started so
+   you're not self-blocking, and don't cancel/resubmit (it resets your AGE
+   priority).
+
+### After the fact: how long did a late job actually wait?
+
+Once the job has started or finished, quantify the queue wait so you know whether
+it's worth optimising:
+
+```bash
+sacct -j <jobid> -X --format=JobID,Partition,Submit,Eligible,Start,End,Elapsed,Planned,State,ExitCode
+#  Submit -> Start  = the real queue wait      |  -X = job allocation only (hides .batch/.extern steps)
+#  Eligible later than Submit = a hold/dependency delayed eligibility, not the scheduler
+```
+
+> On older Slurm the eligible-wait column is named `Reserved`, not `Planned`. If
+> you get `invalid field name`, run `sacct --helpformat` and swap
+> `Planned` → `Reserved`.
+
 ## 4. Picking the right CUDA wheel
 
 `cu121` is the safe default for the current V100 nodes. If the pre-flight
@@ -212,7 +402,7 @@ sbatch experiments/slurm/run_baseline_fb15k237.slurm
 | Pre-flight assert: `torch cannot see a GPU` | CPU-only torch wheel got installed. Reinstall per step 4 above. |
 | `ModuleNotFoundError` for torch / numpy / sklearn / matplotlib | The env wasn't built or wasn't activated — redo step 1; confirm `CONDA_ENV` path in the slurm script. |
 | Job killed, `oom-kill` in log | Raise `--mem` in the script (e.g. 16G → 32G). FB15K-237 at batch 256 should fit in 16G; only an issue if you bump batch size. |
-| Job pending forever | GPU partition is busy (only 5 V100s cluster-wide, heavy Fairshare weight). `squeue -u $USER --start` shows the predicted start time; lowering `--time` helps backfill. |
+| Job pending forever | GPU partition is busy (only 5 V100s cluster-wide, heavy Fairshare weight). Read the `%R` reason with `squeue -u $USER -t PD -o "%.10i %.8T %R"`, then follow the matching angle in **Why is my GPU job stuck PENDING?**; lowering `--time` helps backfill, and `squeue -u $USER --start` shows the predicted start time. |
 | RESULTS block missing from `.out.txt` | The Python script crashed before printing. Check `adkgd_fb15k237-<jobid>.err.txt` for the traceback; also scroll up in the `.out.txt`. Usually a missing dep or `PROJECT_DIR` mismatch. |
 | K columns are 2/4/6/8/10% instead of 1/2/3/4/5% | You set `--anomaly_ratio 0.10`. The K cutoffs scale to `anomaly_ratio · i/5` for `i ∈ 1..5`: at 10% they're 2..10%, at 15% they're 3..15%. (Paper convention; reflected in `run_experiment.py`.) |
 | Segfault very early in training (rare on GPU) | If torch fell back to CPU silently, an OMP/MKL conflict can crash it. `run_experiment.py` already sets defensive defaults via `os.environ.setdefault`; if it still bites, explicitly `export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` before the python line. |

@@ -9,6 +9,7 @@ Available commands:
   python -m kgsage.cli.train_encoder      - train Phase 1 encoder (RGCN + DistMult)
   python -m kgsage.cli.evaluate_encoder   - Test 1.1 (link prediction MRR)
   python -m kgsage.cli.audit_embeddings   - Test 1.2 (anti-symmetric signal in embeddings)
+  python -m kgsage.cli.verify_templates   - v2-A gate (rule miner reproduces Test 1.3)
 
 Phase 2 will add:
   python -m kgsage.cli.train_gan          - train Phase 2 KGSAGE Generator + Discriminator
