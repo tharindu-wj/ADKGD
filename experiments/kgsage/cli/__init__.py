@@ -10,9 +10,12 @@ Available commands:
   python -m kgsage.cli.evaluate_encoder   - Test 1.1 (link prediction MRR)
   python -m kgsage.cli.audit_embeddings   - Test 1.2 (anti-symmetric signal in embeddings)
   python -m kgsage.cli.verify_templates   - v2-A gate (rule miner reproduces Test 1.3)
+  python -m kgsage.cli.train_gan          - train the SIMPLE single-slot-corruption GAN
+                                            (ADKGD --neg_source gan baseline)
+  python -m kgsage.cli.train_kgsage_gan   - train Phase 2 PAIR-AWARE role-swap GAN
+                                            (KGSAGEGenerator + KGSAGEDiscriminator)
 
-Phase 2 will add:
-  python -m kgsage.cli.train_gan          - train Phase 2 KGSAGE Generator + Discriminator
+Phase 3 will add:
   python -m kgsage.cli.evaluate_gan       - generation quality metrics (precision, recall, diversity)
 """
 import sys
