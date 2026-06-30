@@ -1,18 +1,14 @@
-"""Partner-template providers for the Phase 2 discriminator.
+"""Partner-template provider for the KGSAGE discriminator.
 
 A "partner template" answers: given an anchor triple (h, r, t), which relation
-r' makes the role-swapped triple (t, r', h) a CONTRADICTION?
+r' makes the role-swapped triple (t, r', h) a CONTRADICTION? This is the
+generator's recon-prior supervision (Phase B of training).
 
-Both providers in this module return the SAME structure:
+Returned structure:
 
     { anchor_rel_id : [ (partner_rel_id, confidence), ... ] }
 
-so the Phase 2 GAN training loop can swap between them with a single flag. This
-is the v2-A change: the discriminator's positive supervision stops depending on
-observed 2-cycles (v1 -- breaks on inverse-removed KGs like YAGO 4.5) and starts
-depending on length-1 rule confidences (v2-A -- KG-agnostic).
-
-Both providers derive everything from two length-1 rule confidences:
+The miner derives everything from two length-1 rule confidences:
 
     sym_conf(r)     = P( r(t,h)  | r(h,t) )    symmetry confidence
     inv_conf(r, r') = P( r'(t,h) | r(h,t) )    inverse confidence
@@ -25,16 +21,12 @@ which are exactly the AMIE/AnyBURL standard-confidence values for the rules
 computed by pure counting -- no Java, no rule file, no external tool. This is
 the same co-occurrence counting that data/audit_dataset.py (Test 1.3) performs;
 the thresholds are imported from there so the two stay locked in step.
-
-See verify_partner_templates.py for the regression test that confirms the v2-A
-miner reproduces audit_dataset.py's anti-symmetric classification on FB15K-237.
 """
 from collections import defaultdict
 
 # Import the thresholds from the audit so the rule miner and Test 1.3 can never
-# drift apart -- the whole point of verify_partner_templates.py is that the two
-# produce a consistent classification.
-from kgsage.data.audit_dataset import MIN_SUPPORT, ANTISYM_RATIO, SYM_RATIO
+# drift apart -- they share the same anti-symmetric classification.
+from kgsage.data.audit_dataset import MIN_SUPPORT, SYM_RATIO
 
 
 def _count_cooccurrence(kg):
@@ -44,8 +36,8 @@ def _count_cooccurrence(kg):
         support : {r: number of (h, r, t) anchors}
         coocur  : {(r, r'): number of anchors (h, r, t) that also have (t, r', h)}
 
-    Both providers below derive their templates from these two dicts. Relation
-    filtering by min_support happens in the callers, not here.
+    mine_partner_templates derives its templates from these two dicts. Relation
+    filtering by min_support happens in the caller, not here.
     """
     triples = kg["triples_train"]
 
@@ -63,26 +55,6 @@ def _count_cooccurrence(kg):
     return support, coocur
 
 
-def observed_2cycle_templates(kg, min_support=MIN_SUPPORT,
-                              antisym_ratio=ANTISYM_RATIO):
-    """v1 provider -- contradiction templates from OBSERVED reverse edges.
-
-    For each anchor relation r, a partner r' is a contradiction template iff
-    (h, r, t) and (t, r', h) co-occur rarely (ratio < antisym_ratio). This is the
-    original KGSAGE-v1 mechanism. It returns {} on KGs that store only one
-    direction (YAGO 4.5), because no reverse edge is ever observed.
-
-    Returns: { anchor_rel: [(partner_rel, confidence), ...] }
-    """
-    support, coocur = _count_cooccurrence(kg)
-    templates = defaultdict(list)
-    for (r, r_prime), c in coocur.items():
-        if support[r] < min_support:
-            continue
-        ratio = c / support[r]
-        if ratio < antisym_ratio:            # anti-symmetric -> contradiction
-            templates[r].append((r_prime, 1.0 - ratio))
-    return {r: ts for r, ts in templates.items() if ts}
 
 
 def mine_partner_templates(kg, min_support=MIN_SUPPORT,

@@ -21,25 +21,25 @@ package knows nothing about ADKGD.
 
 ```
 ADKGD side (dataset.py)                        KGSAGE side (kgsage/)
-  Reader._gan_negatives                        kgsage.inference.generate_negatives
+  Reader._gan_negatives                        kgsage.inference.generate_kgsage_partners
       |                                              ^
       | uses ADKGD vocab IDs                         | uses KGSAGE vocab IDs
       v                                              |
   experiments/kgsage_bridge/bridge.py    -----------+
-      - load_gan(ckpt_path)               -> kgsage.inference.load_checkpoint
+      - load_gan(ckpt_path)               -> kgsage.inference.load_kgsage_checkpoint
       - generate(triples, ...)            -> translates IDs, calls KGSAGE,
-                                             returns ADKGD-typed negatives
-      - render_stats(stats)               -> kgsage.inference.render_stats
+                                             returns ADKGD-typed role-swap negatives
+      - render_stats(stats)               -> kgsage.inference.render_partner_stats
 ```
 
 ## Current status
 
 **ACTIVE** — used by every ADKGD run with `--neg_source gan`.
 
-The bridge currently wraps the simple 3-layer MLP GAN at `kgsage.gan`. When
-Phase 2 of the thesis upgrades that GAN to a pair-aware contradiction
-generator, the bridge contract stays the same — only the underlying model
-changes. `dataset.py` doesn't need to be touched.
+The bridge wraps the pair-aware KGSAGE role-swap generator at `kgsage.gan`. For
+each positive `(h, r, t)` it returns the contradiction partner `(t, r', h)`
+(self-loops padded so the output stays 1:1). `dataset.py` only ever calls the
+three functions below, so the model can evolve without touching it.
 
 ## Contract
 
@@ -49,7 +49,7 @@ def load_gan(ckpt_path, device=None):
 
     Returns:
       dict with keys:
-        generator        - the trained Generator (torch.nn.Module)
+        generator        - the trained KGSAGEGenerator (torch.nn.Module)
         device           - torch.device the model is on
         ent2id, rel2id   - GAN's string -> int vocab maps
         id2ent, id2rel   - inverse maps
@@ -63,20 +63,21 @@ def generate(adkgd_triples, *,
              adkgd_id2ent, adkgd_id2rel,
              adkgd_ent2id, adkgd_rel2id,
              rng=None):
-    """Generate one negative per positive in ADKGD's vocabulary.
+    """Generate one role-swap negative (t, r', h) per positive (h, r, t),
+    in ADKGD's vocabulary (self-loops padded so the output stays 1:1).
 
     Returns:
       (negatives, stats) where:
         negatives is list of (h, r, t) tuples in ADKGD's IDs
-        stats is a dict with keys 'processed', 'retries', 'uniform_fallbacks',
-                                  'slot_h', 'slot_r', 'slot_t'
+        stats is a dict with keys 'processed', 'generated', 'fallbacks',
+                                  'self_swap', 'skipped_selfloop', 'rel_counts'
     """
 
 def render_stats(stats):
     """Format a stats dict into a single human-readable log line.
 
     Returns:
-      A string like 'processed=100,000 retries=50,000 uniform_fallbacks=0 ...'
+      A string like 'kgsage role-swap | processed=100,000 generated=100,000 ...'
     """
 ```
 
@@ -92,6 +93,6 @@ experiments/kgsage_bridge/
 ## See also
 
 - `experiments/kgsage/` — the standalone KGSAGE package
-- `experiments/kgsage/gan/` — the Generator + Discriminator
-- `experiments/kgsage/inference.py` — `load_checkpoint`, `generate_negatives`, `render_stats`
+- `experiments/kgsage/gan/` — the KGSAGEGenerator + KGSAGEDiscriminator
+- `experiments/kgsage/inference.py` — `load_kgsage_checkpoint`, `generate_kgsage_partners`, `render_partner_stats`
 - `dataset.py` (repo root) — `Reader._gan_negatives` is the caller

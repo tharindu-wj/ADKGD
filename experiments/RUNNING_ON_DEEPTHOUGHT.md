@@ -87,7 +87,7 @@ Three slurm launchers per dataset. Submit them in this order:
 |---|---|---|---|
 | 1 | `train_gan_fb15k237.slurm` | `experiments/kgsage/slurm/` | **One-time** per dataset — produces the GAN checkpoint used by B1. Skip if a checkpoint already exists. |
 | 2 | `run_baseline_fb15k237.slurm` | `experiments/slurm/` | **B0** — ADKGD baseline with random negatives (reproduces Wu et al. 2024 Table 2). |
-| 3 | `run_baseline_with_gan_fb15k237.slurm` | `experiments/slurm/` | **B1** — ADKGD baseline, but with the trained GAN supplying training negatives in-process. Requires step 1 to have produced `experiments/kgsage/outputs/checkpoints/fb15k237.pt`. |
+| 3 | `run_baseline_with_kgsage_fb15k237.slurm` | `experiments/slurm/` | **B1** — ADKGD baseline, but with the trained KGSAGE GAN supplying role-swap contradiction negatives in-process. Requires step 1 to have produced `experiments/kgsage/outputs/checkpoints/kgsage_fb15k237.pt`. |
 
 Step 2 (B0) and step 3 (B1) are independent — submit them in either order.
 Step 1 must happen before step 3.
@@ -103,8 +103,8 @@ sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm
 sbatch --test-only experiments/slurm/run_baseline_fb15k237.slurm     # dry-run: validate the script
 sbatch experiments/slurm/run_baseline_fb15k237.slurm                 # real submit → prints a job id
 
-# B1 baseline + the GAN negatives (after step 1 has finished)
-sbatch experiments/slurm/run_baseline_with_gan_fb15k237.slurm
+# B1 baseline + the KGSAGE GAN negatives (after step 1 has finished)
+sbatch experiments/slurm/run_baseline_with_kgsage_fb15k237.slurm
 
 squeue -u $USER                                       # PD = pending, R = running
 tail -f adkgd_fb15k237-<jobid>.out.txt                   # live log (training progress)

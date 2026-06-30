@@ -10,7 +10,7 @@
 # the pair-aware checkpoint format and emits role-swap (t, r', h) negatives.
 #
 # Before submitting: train the Phase 2 GAN first ->
-#   sbatch experiments/kgsage/slurm/train_kgsage_gan_fb15k237.slurm
+#   sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm
 #
 #   sbatch experiments/slurm/run_baseline_with_kgsage_fb15k237.slurm
 #
@@ -65,7 +65,7 @@ cd "$PROJECT_DIR"
 GAN_CKPT="${GAN_CKPT:-experiments/kgsage/outputs/checkpoints/kgsage_fb15k237.pt}"
 if [[ ! -f "$GAN_CKPT" ]]; then
     echo "ERROR: $GAN_CKPT not found at $PROJECT_DIR/$GAN_CKPT" >&2
-    echo "Train it first: sbatch experiments/kgsage/slurm/train_kgsage_gan_fb15k237.slurm" >&2
+    echo "Train it first: sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm" >&2
     exit 1
 fi
 echo "Using KGSAGE checkpoint: $GAN_CKPT ($(du -h "$GAN_CKPT" | cut -f1))"

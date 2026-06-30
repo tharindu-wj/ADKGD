@@ -6,10 +6,8 @@ anomalies in knowledge graphs, designed to extend per-triple anomaly detectors
 
 Two phases:
   Phase 1 - encoder pretraining (RGCN + DistMult).  In `kgsage.encoder`.
-  Phase 2 - adversarial Generator + Discriminator.  In `kgsage.gan`.
-            Current implementation is the simple 3-layer MLP GAN; Phase 2
-            of the thesis upgrades it to a pair-aware contradiction generator
-            conditioned on the Phase 1 encoder embeddings.
+  Phase 2 - the pair-aware role-swap contradiction GAN, conditioned on the
+            Phase 1 encoder embeddings.  In `kgsage.gan`.
 
 The package is structurally standalone — nothing here imports from outside
 the `kgsage.*` namespace. ADKGD integration (the bridge that calls KGSAGE
@@ -23,9 +21,10 @@ Public API (stable across versions; suitable for the future pip release):
   KGSAGEEncoder                - RGCN encoder (Phase 1) - requires torch_geometric
   KGSAGEDistMultDecoder        - DistMult decoder (Phase 1)
   KGSAGELinkPredictor          - combined encoder + decoder (Phase 1)
-  Generator                    - GAN Generator (Phase 2 - simple MLP placeholder)
-  Discriminator                - GAN Discriminator (Phase 2)
-  generate_contradictions      - inference API: produce negatives for an anchor batch
+  KGSAGEGenerator              - pair-aware role-swap generator (Phase 2)
+  KGSAGEDiscriminator          - pair-aware discriminator (Phase 2)
+  generate_partners            - inference API: role-swap contradictions for an anchor batch
+  load_kgsage_checkpoint       - load a trained GAN checkpoint for inference
 
 The encoder + GAN symbols are lazy-loaded: `import kgsage` works without
 torch installed (so dataset registry lookups + path resolution still run on
@@ -48,12 +47,14 @@ _LAZY_ATTRS = {
     "KGSAGEEncoder":           "kgsage.encoder.models",
     "KGSAGEDistMultDecoder":   "kgsage.encoder.models",
     "KGSAGELinkPredictor":     "kgsage.encoder.models",
-    # Phase 2 GAN (needs torch)
-    "Generator":               "kgsage.gan.models",
-    "Discriminator":           "kgsage.gan.models",
+    # Phase 2 pair-aware GAN (needs torch)
+    "KGSAGEGenerator":         "kgsage.gan.models",
+    "KGSAGEDiscriminator":     "kgsage.gan.models",
+    "load_encoder_embeddings": "kgsage.gan.models",
     # Inference (needs torch + the GAN models)
-    "generate_contradictions": "kgsage.inference",
-    "load_checkpoint":         "kgsage.inference",
+    "generate_partners":       "kgsage.inference",
+    "generate_kgsage_partners": "kgsage.inference",
+    "load_kgsage_checkpoint":  "kgsage.inference",
 }
 
 
@@ -81,8 +82,10 @@ __all__ = [
     "KGSAGEDistMultDecoder",
     "KGSAGELinkPredictor",
     # GAN (Phase 2) - lazy-loaded; requires torch at access time
-    "Generator",
-    "Discriminator",
-    "generate_contradictions",
-    "load_checkpoint",
+    "KGSAGEGenerator",
+    "KGSAGEDiscriminator",
+    "load_encoder_embeddings",
+    "generate_partners",
+    "generate_kgsage_partners",
+    "load_kgsage_checkpoint",
 ]

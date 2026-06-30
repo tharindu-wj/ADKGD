@@ -33,10 +33,9 @@ experiments/
 ├── run_experiment.py                      ← ADKGD orchestrator (train+test+RESULTS)
 │
 ├── slurm/                                 ← ADKGD-side launchers
-│   ├── run_baseline_fb15k237.slurm           ← FB15K-237 — ADKGD baseline (random negatives, B0)
-│   ├── run_baseline_with_gan_fb15k237.slurm  ← FB15K-237 — ADKGD + KGSAGE GAN negatives (B1)
-│   ├── run_baseline_wn18rr.slurm             ← WN18RR    — ADKGD baseline (B0)
-│   └── run_baseline_with_gan_wn18rr.slurm    ← WN18RR    — ADKGD + KGSAGE GAN negatives (B1)
+│   ├── run_baseline_fb15k237.slurm              ← FB15K-237 — ADKGD baseline (random negatives, B0)
+│   ├── run_baseline_with_kgsage_fb15k237.slurm  ← FB15K-237 — ADKGD + KGSAGE negatives (B1)
+│   └── run_baseline_wn18rr.slurm                ← WN18RR    — ADKGD baseline (B0)
 │
 ├── kgsage/                                ← standalone-ready package (encoder + GAN)
 │   ├── README.md                          ← package overview, run order, datasets
@@ -53,12 +52,12 @@ experiments/
 │   │   ├── evaluate.py                    ← Test 1.1 (link prediction MRR)
 │   │   └── audit_embeddings.py            ← Test 1.2 (anti-symmetric signal)
 │   │
-│   ├── gan/                               ← Phase 2: Generator + Discriminator (flat)
-│   │   ├── models.py                      ← Generator + Discriminator + helpers
+│   ├── gan/                               ← Phase 2: the pair-aware role-swap GAN
+│   │   ├── models.py                      ← KGSAGEGenerator + KGSAGEDiscriminator + helpers
 │   │   ├── train.py                       ← adversarial training loop
-│   │   └── evaluate.py                    ← Phase 3 generation-quality metrics (placeholder)
+│   │   └── partner_templates.py           ← mine_partner_templates (discriminator supervision)
 │   │
-│   ├── inference.py                       ← public generation API (8-step negative pipeline)
+│   ├── inference.py                       ← public generation API (role-swap (t,r',h) partners)
 │   │
 │   ├── cli/                               ← command-line entry points (thin shims)
 │   │   ├── audit_dataset.py
@@ -70,11 +69,10 @@ experiments/
 │   ├── slurm/                             ← KGSAGE-only HPC launchers
 │   │   ├── README.md
 │   │   ├── train_encoder_fb15k237.slurm
-│   │   ├── train_gan_fb15k237.slurm
-│   │   └── train_gan_wn18rr.slurm
+│   │   └── train_gan_fb15k237.slurm
 │   │
 │   └── outputs/checkpoints/               ← .pt drop zone
-│       └── dummy.pt                       ← bundled fixture (dummy_kg, 30 epochs)
+│       └── kgsage_dummy.pt                ← bundled fixture (dummy_kg smoke)
 │
 └── kgsage_bridge/                         ← OUR boundary file (KGSAGE ↔ ADKGD adapter)
     ├── README.md                          ← integration rationale + contract
@@ -108,7 +106,7 @@ All commands below run from the **repo root**.
 The GAN is trained once per dataset; the resulting checkpoint feeds every
 subsequent ADKGD-with-GAN run. **Skip this step entirely** if you already
 have a checkpoint at the expected path (e.g.
-`experiments/kgsage/outputs/checkpoints/dummy.pt` ships bundled).
+`experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt` ships bundled).
 
 Local (dummy KG, CPU, ~minutes):
 
@@ -118,24 +116,17 @@ python -m kgsage.cli.train_gan `
     --data data/dummy_kg `
     --epochs 30 `
     --device cpu `
-    --out experiments/kgsage/outputs/checkpoints/dummy.pt
+    --out experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt
 ```
 
 HPC (FB15K-237, V100):
 
 ```bash
 sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm
-# → experiments/kgsage/outputs/checkpoints/fb15k237.pt
+# → experiments/kgsage/outputs/checkpoints/kgsage_fb15k237.pt
 ```
 
-HPC (WN18RR, V100):
-
-```bash
-sbatch experiments/kgsage/slurm/train_gan_wn18rr.slurm
-# → experiments/kgsage/outputs/checkpoints/wn18rr.pt
-```
-
-Override hyperparameters via env vars (works on any of the train slurms):
+Override run knobs via env vars (EPOCHS, SEED, ENCODER_CKPT, CKPT_PATH):
 
 ```bash
 EPOCHS=200 BATCH_SIZE=256 sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm
@@ -181,37 +172,35 @@ Local (uses the bundled dummy checkpoint):
 ```powershell
 python experiments/run_experiment.py --dataset dummy_kg --anomaly_ratio 0.15 --max_epoch 1 `
     --neg_source gan `
-    --gan_path experiments/kgsage/outputs/checkpoints/dummy.pt
+    --gan_path experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt
 ```
 
-HPC FB15K-237 (after step 2 produced `fb15k237.pt`):
+HPC FB15K-237 (after step 2 produced `kgsage_fb15k237.pt`):
 
 ```bash
-sbatch experiments/slurm/run_baseline_with_gan_fb15k237.slurm
+sbatch experiments/slurm/run_baseline_with_kgsage_fb15k237.slurm
 ```
 
-HPC WN18RR (after step 2 produced `wn18rr.pt`):
-
-```bash
-sbatch experiments/slurm/run_baseline_with_gan_wn18rr.slurm
-```
+(A WN18RR `+KGSAGE` launcher is not wired yet — copy the FB15K-237 one and
+point `GAN_CKPT` at a WN18RR checkpoint when needed.)
 
 ### What B1 prints (diagnostic)
 
 ```
-[GAN] loaded checkpoint from experiments/kgsage/outputs/checkpoints/dummy.pt (device=cpu)
-[GAN] processed=1,242  retries=374  uniform_fallbacks=0
-       slot_distribution: head=399/1242(32.1%) rel=395/1242(31.8%) tail=448/1242(36.1%)
+[GAN] loaded checkpoint from experiments/kgsage/outputs/checkpoints/kgsage_fb15k237.pt (device=cuda)
+[GAN] kgsage role-swap | processed=325,239  generated=325,239  fallbacks=0  self_swap=316,701  skipped_selfloop=0  distinct_partner_rels=168
 ```
 
 | Field | Meaning |
 |---|---|
-| `processed` | Every entry in `bp_triples` got a the GAN negative — real positives AND injected eval anomalies, treated uniformly |
-| `retries` | the GAN's masked decode hit a real-graph collision and was re-rolled with fresh Gumbel noise |
-| `uniform_fallbacks` | Retries exhausted → fell back to uniform-random replacement for that one slot |
-| `slot_distribution` | Slot pick is uniform random per-positive (≈ 1/3 each, matches baseline) |
+| `processed` | Every entry in `bp_triples` got a role-swap negative — real positives AND injected eval anomalies, treated uniformly |
+| `generated` | Negatives returned (== `processed`; 1:1 with the positives) |
+| `self_swap` | Partner `r'` equals the anchor relation `r` — the self-asymmetric contradiction `(t, r, h)` |
+| `fallbacks` | The generator's sample collided with the real graph on every retry → fell back to a uniform absent `r'` |
+| `skipped_selfloop` | Anchors with `h == t` (no meaningful role-swap); padded with a uniform fallback to keep 1:1 |
+| `distinct_partner_rels` | How many distinct partner relations appeared (diversity sanity check) |
 
-A healthy run has `uniform_fallbacks` near zero and slot distribution close to uniform.
+A healthy run has `fallbacks` near zero and `distinct_partner_rels` well above 1 (not mode-collapsed).
 
 ---
 
@@ -220,7 +209,7 @@ A healthy run has `uniform_fallbacks` near zero and slot distribution close to u
 Each `run_experiment.py` invocation prints a 5-row RESULTS table. Drop B0
 and B1 side by side:
 
-| K | B0 (random) | B1 (the GAN) | Δ |
+| K | B0 (random) | B1 (KGSAGE) | Δ |
 |---|---|---|---|
 | 1% | 0.9581 (paper 0.951) | _from B1 .out.txt_ | _to fill_ |
 | 2% | 0.8836 | _from B1 .out.txt_ | _to fill_ |
@@ -241,19 +230,19 @@ Step 1 — GAN training (one-time)
         └─ python -m kgsage.cli.train_gan
                 └─ kgsage.gan.train.main()
                         ├─ kgsage.data.loaders.load_kg
-                        ├─ kgsage.gan.models.{Generator,Discriminator}
-                        └─ writes experiments/kgsage/outputs/checkpoints/<name>.pt
+                        ├─ kgsage.gan.models.{KGSAGEGenerator,KGSAGEDiscriminator}
+                        └─ writes experiments/kgsage/outputs/checkpoints/kgsage_<name>.pt
 
 Step 2 — ADKGD run (per experiment, B0 or B1)
-  experiments/slurm/run_baseline{,_with_gan}_fb15k237.slurm
+  experiments/slurm/run_baseline{,_with_kgsage}_fb15k237.slurm
         └─ experiments/run_experiment.py            ← orchestrator (ours)
                 ├─ subprocess: Our_TopK%_RankingList.py --mode train   (ADKGD upstream)
                 │       └─ dataset.py:Reader.get_data()
                 │               ├─ neg_source=random → generate_anomalous_triples()
                 │               └─ neg_source=gan    → Reader._gan_negatives()
                 │                       └─ experiments/kgsage_bridge/bridge.py
-                │                               ├─ kgsage.inference.load_checkpoint() the .pt
-                │                               └─ kgsage.inference.generate_negatives() — batched forward pass
+                │                               ├─ kgsage.inference.load_kgsage_checkpoint() the .pt
+                │                               └─ kgsage.inference.generate_kgsage_partners() — role-swap (t,r',h) per positive
                 ├─ subprocess: Our_TopK%_RankingList.py --mode test    (ADKGD upstream)
                 └─ parses logs → prints RESULTS table
 ```
@@ -289,12 +278,10 @@ and `%j` is the slurm job id.
 
 | Slurm script | `--job-name` | Log filename |
 |---|---|---|
-| `kgsage/slurm/train_gan_fb15k237.slurm` | `gan_train_fb15k237` | `gan_train_fb15k237-<jobid>.out.txt` |
+| `kgsage/slurm/train_gan_fb15k237.slurm` | `kgsage_train_gan_fb15k237` | `kgsage_train_gan_fb15k237-<jobid>.out.txt` |
 | `slurm/run_baseline_fb15k237.slurm` | `adkgd_fb15k237` | `adkgd_fb15k237-<jobid>.out.txt` |
-| `slurm/run_baseline_with_gan_fb15k237.slurm` | `adkgd_baseline_with_gan_fb15k237` | `adkgd_baseline_with_gan_fb15k237-<jobid>.out.txt` |
-| `kgsage/slurm/train_gan_wn18rr.slurm` | `gan_train_wn18rr` | `gan_train_wn18rr-<jobid>.out.txt` |
+| `slurm/run_baseline_with_kgsage_fb15k237.slurm` | `adkgd_baseline_with_kgsage_fb15k237` | `adkgd_baseline_with_kgsage_fb15k237-<jobid>.out.txt` |
 | `slurm/run_baseline_wn18rr.slurm` | `adkgd_wn18rr` | `adkgd_wn18rr-<jobid>.out.txt` |
-| `slurm/run_baseline_with_gan_wn18rr.slurm` | `adkgd_baseline_with_gan_wn18rr` | `adkgd_baseline_with_gan_wn18rr-<jobid>.out.txt` |
 
 ### Three useful commands
 

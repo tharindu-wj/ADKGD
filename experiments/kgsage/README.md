@@ -14,12 +14,10 @@ KGSAGE has two phases:
 - **Phase 1 — Encoder pretraining**. An RGCN backbone + DistMult decoder
   learn entity and relation embeddings that capture anti-symmetric predicate
   structure. Implemented in `kgsage.encoder`.
-- **Phase 2 — Adversarial generation**. A Generator + Discriminator pair
-  learns to produce plausible-but-wrong triples that ADKGD trains against.
-  Lives in `kgsage.gan`. Current implementation is the simple 3-layer MLP
-  GAN (single-slot corruption); Phase 2 of the thesis upgrades it to a
-  pair-aware contradiction generator conditioned on the Phase 1 encoder
-  embeddings.
+- **Phase 2 — Adversarial generation**. The pair-aware `KGSAGEGenerator` +
+  `KGSAGEDiscriminator`, conditioned on the Phase 1 encoder embeddings, learn
+  to emit role-swap contradiction partners `(t, r', h)` that ADKGD trains
+  against. Lives in `kgsage.gan`.
 
 ADKGD integration (Phase 4 — using KGSAGE-generated negatives in the ADKGD
 detector) lives in the sibling folder `experiments/kgsage_bridge/`, not in
@@ -29,7 +27,7 @@ this package — keeping `kgsage/` ADKGD-agnostic and standalone-extractable.
 
 ```
 kgsage/
-├── __init__.py             <- public API (load_kg, KGSAGE*, Generator, ...)
+├── __init__.py             <- public API (load_kg, KGSAGE*, generate_partners, ...)
 ├── README.md               <- this file
 │
 ├── data/                   <- KG loading + dataset registry + dataset-level audit
@@ -43,14 +41,14 @@ kgsage/
 │   ├── evaluate.py         <- Test 1.1 (link prediction MRR)
 │   └── audit_embeddings.py <- Test 1.2 (anti-symmetric signal in trained embeddings)
 │
-├── gan/                    <- Phase 2: Generator + Discriminator (flat)
-│   ├── models.py           <- Generator + Discriminator + helpers
+├── gan/                    <- Phase 2: the pair-aware role-swap GAN
+│   ├── models.py           <- KGSAGEGenerator + KGSAGEDiscriminator + helpers
 │   ├── train.py            <- adversarial training loop
-│   └── evaluate.py         <- Phase 3 generation-quality metrics (placeholder)
+│   └── partner_templates.py<- mine_partner_templates (discriminator supervision)
 │
 ├── inference.py            <- public generation API:
-│                              load_checkpoint / generate_negatives /
-│                              generate_contradictions / render_stats
+│                              load_kgsage_checkpoint / generate_partners /
+│                              render_partner_stats
 │
 ├── cli/                    <- command-line entry points (thin wrappers)
 │   ├── audit_dataset.py
@@ -62,8 +60,7 @@ kgsage/
 └── slurm/                  <- HPC job launchers
     ├── README.md
     ├── train_encoder_fb15k237.slurm
-    ├── train_gan_fb15k237.slurm
-    └── train_gan_wn18rr.slurm
+    └── train_gan_fb15k237.slurm
 ```
 
 ## Quick start
@@ -87,12 +84,12 @@ python -m kgsage.cli.evaluate_encoder --dataset fb15k237
 # 5. Test 1.2 — anti-symmetric signal in relation embeddings
 python -m kgsage.cli.audit_embeddings --dataset fb15k237
 
-# 6. Train the GAN (Phase 2)
+# 6. Train the GAN (Phase 2) — add --encoder_ckpt <fb15k237_encoder.pt> for the real run
 python -m kgsage.cli.train_gan \
     --data data/dummy_kg \
     --epochs 30 \
     --device cpu \
-    --out experiments/kgsage/outputs/checkpoints/dummy.pt
+    --out experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt
 ```
 
 ## ADKGD integration
@@ -103,12 +100,13 @@ After training the GAN, point ADKGD at the checkpoint:
 python experiments/run_experiment.py \
     --dataset dummy_kg --anomaly_ratio 0.15 --max_epoch 1 \
     --neg_source gan \
-    --gan_path experiments/kgsage/outputs/checkpoints/dummy.pt
+    --gan_path experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt
 ```
 
 ADKGD's `Reader._gan_negatives` imports `kgsage_bridge.bridge`, which calls
-`kgsage.inference.generate_negatives(...)`, which runs the loaded Generator
-in `torch.no_grad()` mode per training batch.
+`kgsage.inference.generate_kgsage_partners(...)`, running the loaded generator
+in `torch.no_grad()` mode per training batch to emit one role-swap
+contradiction `(t, r', h)` per positive.
 
 ## Dataset extension
 
@@ -161,7 +159,7 @@ The CLI accepts both short names and paths via the same `--dataset` flag.
 |---|---|
 | `experiments/kgsage/outputs/<dataset>_density_audit.json` | Test 1.3 output. Consumed by Test 1.2. |
 | `experiments/kgsage/outputs/<dataset>_encoder.pt`         | Trained encoder + decoder weights, vocab maps. |
-| `experiments/kgsage/outputs/checkpoints/<dataset>.pt`     | Trained GAN: Generator weights + vocab + real triples. |
+| `experiments/kgsage/outputs/checkpoints/kgsage_<dataset>.pt` | Trained GAN: KGSAGEGenerator weights + vocab + real triples. |
 
 ## Decision gates
 

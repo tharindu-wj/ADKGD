@@ -1,7 +1,7 @@
 """Local smoke test for the KGSAGE package + bridge.
 
-Verifies that the package structure is correct on a developer machine that
-has torch installed (PyG is HPC-only here — encoder access is lazy).
+Verifies the package structure on a developer machine that has torch installed
+(PyG is HPC-only here — encoder access is lazy).
 
 Run from repo root:
     PYTHONPATH=experiments python experiments/kgsage/smoke_test.py
@@ -12,7 +12,7 @@ Sections:
   3. Lazy encoder access — verifies PyG import is deferred
   4. GAN imports (require torch but not PyG)
   5. load_kg works on dummy_kg
-  6. Bridge end-to-end if a smoke checkpoint exists
+  6. Bridge end-to-end if the dummy KGSAGE checkpoint exists
 """
 import os
 import sys
@@ -87,20 +87,25 @@ def main():
     # ---- SECTION 4: GAN imports (torch but no PyG required) ----
     section("SECTION 4: kgsage.gan.* + kgsage.inference imports")
 
-    from kgsage.gan.models import Generator, Discriminator, gumbel_softmax, soft_embedding
-    print("OK: kgsage.gan.models.{Generator, Discriminator, gumbel_softmax, soft_embedding}")
+    from kgsage.gan.models import (
+        KGSAGEGenerator, KGSAGEDiscriminator, load_encoder_embeddings, gumbel_softmax,
+    )
+    print("OK: kgsage.gan.models.{KGSAGEGenerator, KGSAGEDiscriminator, "
+          "load_encoder_embeddings, gumbel_softmax}")
 
     from kgsage.gan import train as _gan_train
-    print("OK: kgsage.gan.train (the training loop module)")
+    from kgsage.gan import mine_partner_templates
+    print("OK: kgsage.gan.train (the training loop) + mine_partner_templates")
 
     from kgsage.inference import (
-        load_checkpoint, generate_negatives, render_stats as _rs,
-        generate_contradictions,
+        load_kgsage_checkpoint, generate_kgsage_partners,
+        generate_partners, render_partner_stats,
     )
-    print("OK: kgsage.inference.{load_checkpoint, generate_negatives, render_stats, generate_contradictions}")
-    assert generate_contradictions is generate_negatives, \
-        "generate_contradictions should alias generate_negatives"
-    print("OK: generate_contradictions is generate_negatives (alias)")
+    print("OK: kgsage.inference.{load_kgsage_checkpoint, generate_kgsage_partners, "
+          "generate_partners, render_partner_stats}")
+    assert generate_partners is generate_kgsage_partners, \
+        "generate_partners should alias generate_kgsage_partners"
+    print("OK: generate_partners is generate_kgsage_partners (alias)")
 
     # ---- SECTION 5: load_kg on dummy_kg ----
     section("SECTION 5: load_kg on dummy_kg")
@@ -118,11 +123,11 @@ def main():
     # ---- SECTION 6: Bridge end-to-end ----
     section("SECTION 6: kgsage_bridge.bridge end-to-end on dummy_kg")
 
-    ckpt = "experiments/kgsage/outputs/checkpoints/smoke.pt"
+    ckpt = "experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt"
     if not os.path.isfile(ckpt):
         print(f"SKIP: {ckpt} not found.")
         print(f"      Run `python -m kgsage.cli.train_gan --data data/dummy_kg "
-              f"--epochs 3 --device cpu --out {ckpt}` first.")
+              f"--epochs 5 --device cpu --out {ckpt}` first.")
         section("ALL CHECKS THAT COULD RUN PASSED")
         return 0
 
@@ -130,28 +135,32 @@ def main():
     print(f"OK: bridge loaded {ckpt}")
     print(f"    n_ent={payload['n_ent']}  n_rel={payload['n_rel']}  device={payload['device']}")
 
-    ent2id = payload["ent2id"]
-    rel2id = payload["rel2id"]
-    id2ent = payload["id2ent"]
-    id2rel = payload["id2rel"]
-    real_triples = list(payload["real_triple_set"])[:5]
+    kg = load_kg("data/dummy_kg")
+    positives = kg["triples_train"][:8]
 
     import numpy as np
     rng = np.random.default_rng(42)
     negatives, stats = generate(
-        real_triples,
+        positives,
         payload=payload,
-        adkgd_id2ent=id2ent,
-        adkgd_id2rel=id2rel,
-        adkgd_ent2id=ent2id,
-        adkgd_rel2id=rel2id,
+        adkgd_id2ent=kg["id2ent"],
+        adkgd_id2rel=kg["id2rel"],
+        adkgd_ent2id=kg["ent2id"],
+        adkgd_rel2id=kg["rel2id"],
         rng=rng,
     )
     print(f"OK: generate() returned {len(negatives)} negatives")
     print(f"OK: render_stats: {render_stats(stats)}")
 
-    n_changed = sum(1 for p, n in zip(real_triples, negatives) if tuple(p) != tuple(n))
-    print(f"OK: {n_changed}/{len(negatives)} negatives differ from their positive")
+    assert len(negatives) == len(positives), \
+        f"1:1 contract broken: {len(negatives)} negatives for {len(positives)} positives"
+    print(f"OK: 1:1 contract holds ({len(negatives)} == {len(positives)})")
+
+    # role-swap shape: for a non-self-loop positive (h,r,t), the negative is (t,r',h)
+    (ph, pr, pt), (nh, nr, nt) = positives[0], negatives[0]
+    if ph != pt:
+        assert nh == pt and nt == ph, "negative is not a role-swap of the positive"
+        print(f"OK: role-swap shape — (h,r,t) -> (t,r',h)")
 
     section("ALL CHECKS PASSED")
     return 0

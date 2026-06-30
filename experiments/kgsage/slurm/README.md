@@ -11,7 +11,6 @@ eventually released as a standalone library, this folder ships with it.
 |---|---|---|---|
 | `train_encoder_fb15k237.slurm` | Phase 1 — encoder pretraining | FB15K-237 | `sbatch experiments/kgsage/slurm/train_encoder_fb15k237.slurm` |
 | `train_gan_fb15k237.slurm`     | Phase 2 — GAN training        | FB15K-237 | `sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm` |
-| `train_gan_wn18rr.slurm`       | Phase 2 — GAN training        | WN18RR    | `sbatch experiments/kgsage/slurm/train_gan_wn18rr.slurm` |
 
 ## SLURM scripts NOT in this folder
 
@@ -20,10 +19,9 @@ ADKGD-side jobs (which use KGSAGE only indirectly, via the bridge in
 
 | Script | Purpose |
 |---|---|
-| `run_baseline_fb15k237.slurm`          | ADKGD baseline (random negatives) on FB15K-237 |
-| `run_baseline_wn18rr.slurm`            | ADKGD baseline on WN18RR |
-| `run_baseline_with_gan_fb15k237.slurm` | ADKGD + KGSAGE GAN negatives on FB15K-237 |
-| `run_baseline_with_gan_wn18rr.slurm`   | ADKGD + KGSAGE GAN negatives on WN18RR |
+| `run_baseline_fb15k237.slurm`             | ADKGD baseline (random negatives) on FB15K-237 |
+| `run_baseline_wn18rr.slurm`               | ADKGD baseline on WN18RR |
+| `run_baseline_with_kgsage_fb15k237.slurm` | ADKGD + KGSAGE GAN negatives on FB15K-237 |
 
 Why the split:
 - `kgsage/slurm/` jobs only touch the KGSAGE package; portable.
