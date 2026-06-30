@@ -8,10 +8,8 @@ This file is the ONE place to extend KGSAGE to new datasets. The pattern:
     2. Add an entry to KNOWN_DATASETS below with that dataset's recommended
        hyperparameters and decision-gate thresholds.
 
-    3. Use the dataset by its short name everywhere:
-          python -m kgsage.cli.audit_dataset --dataset <name>
-          python -m kgsage.cli.train_encoder --dataset <name>
-          python -m kgsage.cli.audit_embeddings --dataset <name> --ckpt ...
+    3. Use the dataset directory with the GAN trainer / ADKGD run, e.g.:
+          python -m kgsage.cli.train_gan --data data/<NAME> --out <ckpt>.pt
 
 For one-off datasets that don't need a registry entry, pass a filesystem path
 directly. `resolve_dataset()` distinguishes names from paths and returns a

@@ -1,18 +1,16 @@
 """Local smoke test for the KGSAGE package + bridge.
 
-Verifies the package structure on a developer machine that has torch installed
-(PyG is HPC-only here — encoder access is lazy).
+Verifies the package structure on a developer machine that has torch installed.
 
 Run from repo root:
     PYTHONPATH=experiments python experiments/kgsage/smoke_test.py
 
 Sections:
-  1. Imports that don't require torch_geometric
+  1. Imports
   2. Behaviour checks (resolve_dataset)
-  3. Lazy encoder access — verifies PyG import is deferred
-  4. GAN imports (require torch but not PyG)
-  5. load_kg works on dummy_kg
-  6. Bridge end-to-end if the dummy KGSAGE checkpoint exists
+  3. GAN + inference imports
+  4. load_kg works on dummy_kg
+  5. Bridge end-to-end if the dummy GAN checkpoint exists
 """
 import os
 import sys
@@ -41,11 +39,7 @@ def main():
 
     from kgsage.data.loaders import load_kg as _load_kg2
     from kgsage.data.datasets import resolve_dataset as _resolve2
-    from kgsage.data import audit_dataset as _audit_dataset
     print("OK: kgsage.data.* sub-package imports")
-
-    from kgsage.cli import audit_dataset as _cli_audit_dataset
-    print("OK: kgsage.cli.audit_dataset shim imports (no torch needed)")
 
     from kgsage_bridge.bridge import load_gan, generate, render_stats
     print("OK: kgsage_bridge.bridge imports (full implementation, no stubs)")
@@ -56,9 +50,7 @@ def main():
     print("Known dataset configs:")
     for name in sorted(KNOWN_DATASETS.keys()):
         cfg = resolve_dataset(name)
-        print(f"  {name:10s}  path={cfg['path']:20s}  epochs={cfg['epochs']:>4}  "
-              f"dim={cfg['dim']}  bases={cfg['num_bases']}  "
-              f"expected_mrr={cfg['expected_mrr']}")
+        print(f"  {name:10s}  path={cfg['path']}")
 
     try:
         resolve_dataset("not_a_real_dataset")
@@ -71,44 +63,29 @@ def main():
         cfg = resolve_dataset("data/dummy_kg")
         print(f"OK: resolve_dataset(path) -> name={cfg['name']}, path={cfg['path']}")
 
-    # ---- SECTION 3: Lazy encoder ----
-    section("SECTION 3: Lazy encoder access")
-
-    try:
-        _ = kgsage.KGSAGEEncoder
-        print("UNEXPECTED: encoder accessed without error")
-        print("            (torch_geometric must be installed locally — that's fine)")
-    except (ImportError, ModuleNotFoundError) as e:
-        print(f"OK: encoder lazy-load defers PyG import until access ({type(e).__name__})")
-    except AttributeError as e:
-        print(f"FAIL: lazy load mechanism broken: {e}")
-        return 1
-
-    # ---- SECTION 4: GAN imports (torch but no PyG required) ----
-    section("SECTION 4: kgsage.gan.* + kgsage.inference imports")
+    # ---- SECTION 3: GAN + inference imports ----
+    section("SECTION 3: kgsage.gan.* + kgsage.inference imports")
 
     from kgsage.gan.models import (
-        KGSAGEGenerator, KGSAGEDiscriminator, load_encoder_embeddings, gumbel_softmax,
+        KGSAGEGenerator, KGSAGEDiscriminator, gumbel_softmax, soft_embedding,
     )
     print("OK: kgsage.gan.models.{KGSAGEGenerator, KGSAGEDiscriminator, "
-          "load_encoder_embeddings, gumbel_softmax}")
+          "gumbel_softmax, soft_embedding}")
 
     from kgsage.gan import train as _gan_train
-    from kgsage.gan import mine_partner_templates
-    print("OK: kgsage.gan.train (the training loop) + mine_partner_templates")
+    print("OK: kgsage.gan.train (the training loop module)")
 
     from kgsage.inference import (
-        load_kgsage_checkpoint, generate_kgsage_partners,
-        generate_partners, render_partner_stats,
+        load_checkpoint, generate_negatives, render_stats as _rs, generate_partners,
     )
-    print("OK: kgsage.inference.{load_kgsage_checkpoint, generate_kgsage_partners, "
-          "generate_partners, render_partner_stats}")
-    assert generate_partners is generate_kgsage_partners, \
-        "generate_partners should alias generate_kgsage_partners"
-    print("OK: generate_partners is generate_kgsage_partners (alias)")
+    print("OK: kgsage.inference.{load_checkpoint, generate_negatives, render_stats, "
+          "generate_partners}")
+    assert generate_partners is generate_negatives, \
+        "generate_partners should alias generate_negatives"
+    print("OK: generate_partners is generate_negatives (alias)")
 
-    # ---- SECTION 5: load_kg on dummy_kg ----
-    section("SECTION 5: load_kg on dummy_kg")
+    # ---- SECTION 4: load_kg on dummy_kg ----
+    section("SECTION 4: load_kg on dummy_kg")
 
     if os.path.isdir("data/dummy_kg"):
         kg = load_kg("data/dummy_kg")
@@ -116,12 +93,11 @@ def main():
         print(f"    {kg['n_ent']} entities, {kg['n_rel']} relations")
         print(f"    train={len(kg['triples_train'])}  "
               f"valid={len(kg['triples_valid'])}  test={len(kg['triples_test'])}")
-        print(f"    edge_index.shape={tuple(kg['edge_index'].shape)}")
     else:
         print("SKIP: data/dummy_kg not present in cwd")
 
-    # ---- SECTION 6: Bridge end-to-end ----
-    section("SECTION 6: kgsage_bridge.bridge end-to-end on dummy_kg")
+    # ---- SECTION 5: Bridge end-to-end ----
+    section("SECTION 5: kgsage_bridge.bridge end-to-end on dummy_kg")
 
     ckpt = "experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt"
     if not os.path.isfile(ckpt):
@@ -156,11 +132,8 @@ def main():
         f"1:1 contract broken: {len(negatives)} negatives for {len(positives)} positives"
     print(f"OK: 1:1 contract holds ({len(negatives)} == {len(positives)})")
 
-    # role-swap shape: for a non-self-loop positive (h,r,t), the negative is (t,r',h)
-    (ph, pr, pt), (nh, nr, nt) = positives[0], negatives[0]
-    if ph != pt:
-        assert nh == pt and nt == ph, "negative is not a role-swap of the positive"
-        print(f"OK: role-swap shape — (h,r,t) -> (t,r',h)")
+    n_changed = sum(1 for p, n in zip(positives, negatives) if tuple(p) != tuple(n))
+    print(f"OK: {n_changed}/{len(negatives)} negatives differ from their positive")
 
     section("ALL CHECKS PASSED")
     return 0

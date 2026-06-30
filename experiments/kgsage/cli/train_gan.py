@@ -1,7 +1,7 @@
 """CLI entry point: python -m kgsage.cli.train_gan
 
-Trains the pair-aware KGSAGE Generator + Discriminator (the role-swap
-contradiction generator). Heavy lifting lives in kgsage.gan.train.
+Trains the KGSAGE GAN (KGSAGEGenerator + KGSAGEDiscriminator) that generates
+single-slot-corruption negatives. Heavy lifting lives in kgsage.gan.train.
 """
 import sys
 from pathlib import Path

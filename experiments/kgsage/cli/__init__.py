@@ -1,15 +1,11 @@
 """KGSAGE command-line entry points.
 
 Each CLI shim is a thin (5-line) wrapper around a function in the underlying
-module. Library users call the modules directly (e.g. `kgsage.encoder.train`);
-shell users call the CLI shims (e.g. `python -m kgsage.cli.train_encoder`).
+module. Library users call the modules directly (e.g. `kgsage.gan.train`);
+shell users call the CLI shims (e.g. `python -m kgsage.cli.train_gan`).
 
 Available commands:
-  python -m kgsage.cli.audit_dataset      - Test 1.3 (dataset-level anti-symmetric audit)
-  python -m kgsage.cli.train_encoder      - train Phase 1 encoder (RGCN + DistMult)
-  python -m kgsage.cli.evaluate_encoder   - Test 1.1 (link prediction MRR)
-  python -m kgsage.cli.audit_embeddings   - Test 1.2 (anti-symmetric signal in embeddings)
-  python -m kgsage.cli.train_gan          - train the pair-aware KGSAGE role-swap GAN
+  python -m kgsage.cli.train_gan          - train the KGSAGE GAN
                                             (KGSAGEGenerator + KGSAGEDiscriminator)
 """
 import sys

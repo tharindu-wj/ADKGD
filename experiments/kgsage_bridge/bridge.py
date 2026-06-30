@@ -12,14 +12,7 @@ KGSAGE package (`kgsage.*`) and ADKGD's vocabulary/ID conventions.
 
 Why this lives outside `experiments/kgsage/`:
   We want `kgsage/` to be a self-contained generation library that doesn't
-  import or assume ADKGD. The bridge here is application glue, not library
-  code, so it stays out of the package.
-
-WHY NOT JUST CALL kgsage DIRECTLY FROM dataset.py:
-  ADKGD's dataset.py has hard-coded sys.path manipulation around an import.
-  Keeping that import pointed at a small bridge (with a stable contract) lets
-  the KGSAGE internals evolve — including the future Phase 2 pair-aware
-  generator — without touching dataset.py again.
+  import or assume ADKGD. The bridge here is application glue, not library code.
 """
 import os
 import sys
@@ -27,18 +20,14 @@ import sys
 import numpy as np
 
 # Put `experiments/` on sys.path so `from kgsage.inference import ...` resolves
-# when dataset.py imports this bridge. dataset.py already adds
-# `experiments/kgsage_bridge` to sys.path; we add `experiments/` here so the
-# absolute `kgsage.*` imports below work without further fuss.
+# when dataset.py imports this bridge.
 _EXPERIMENTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _EXPERIMENTS_DIR not in sys.path:
     sys.path.insert(0, _EXPERIMENTS_DIR)
 
-# The KGSAGE pair-aware generator is the only generator. dataset.py calls
-# load_gan / generate / render_stats; all three are KGSAGE role-swap here.
-from kgsage.inference import (  # noqa: E402
-    load_kgsage_checkpoint, generate_kgsage_partners, render_partner_stats,
-)
+# Re-export render_stats unchanged - it's a string formatter that already
+# matches dataset.py's expectation.
+from kgsage.inference import load_checkpoint, generate_negatives, render_stats  # noqa: E402,F401
 
 __all__ = ["load_gan", "generate", "render_stats"]
 
@@ -46,20 +35,16 @@ __all__ = ["load_gan", "generate", "render_stats"]
 def load_gan(ckpt_path, device=None):
     """Load a trained KGSAGE GAN checkpoint once; returns a payload to reuse.
 
-    Returns a payload with: generator, device, ent2id, rel2id, id2ent, id2rel,
-    real_triple_set, n_ent, n_rel. Raises if the checkpoint is not a KGSAGE
-    pair-aware checkpoint (e.g. an old simple-GAN .pt), so a wrong --gan_path
-    fails loudly instead of mis-loading.
+    Returns a dict with keys:
+      generator        - the trained KGSAGEGenerator (torch.nn.Module)
+      device           - torch.device the model is on
+      ent2id, rel2id   - GAN's string -> int vocab maps
+      id2ent, id2rel   - inverse maps
+      real_triple_set  - set of (h, r, t) tuples (for collision filtering)
+      n_ent, n_rel     - vocabulary sizes
+      z_dim            - noise dimension
     """
-    import torch  # local import: keep module import cheap for non-torch callers
-
-    head = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    if not (isinstance(head, dict) and head.get("kind") == "kgsage_pairgan"):
-        raise ValueError(
-            f"{ckpt_path} is not a KGSAGE pair-aware checkpoint "
-            "(kind != 'kgsage_pairgan'). Train one with "
-            "`python -m kgsage.cli.train_gan`.")
-    return load_kgsage_checkpoint(ckpt_path, device=device)
+    return load_checkpoint(ckpt_path, device=device)
 
 
 def generate(adkgd_triples, *,
@@ -67,11 +52,10 @@ def generate(adkgd_triples, *,
              adkgd_id2ent, adkgd_id2rel,
              adkgd_ent2id, adkgd_rel2id,
              rng=None):
-    """Produce one ADKGD-ID role-swap contradiction (t, r', h) per input
-    positive. Self-loop anchors are padded so the output stays 1:1 with the
-    input (the count ADKGD's bp_triples + bn_triples construction expects).
+    """Produce one ADKGD-ID negative per input ADKGD-ID positive.
 
-    Returns (negatives, stats_dict).
+    Each negative is a single-slot corruption (head, relation, or tail) of the
+    input triple, decoded from the trained generator. Returns (negatives, stats).
     """
     if rng is None:
         rng = np.random.default_rng(0)
@@ -81,10 +65,4 @@ def generate(adkgd_triples, *,
         "ent2id": adkgd_ent2id,
         "rel2id": adkgd_rel2id,
     }
-    return generate_kgsage_partners(
-        list(adkgd_triples), payload, adkgd_maps, rng=rng, pad_selfloops=True)
-
-
-def render_stats(stats):
-    """Human-readable one-line summary of a generation batch."""
-    return "kgsage role-swap | " + render_partner_stats(stats)
+    return generate_negatives(list(adkgd_triples), payload, adkgd_maps, rng=rng)
