@@ -87,7 +87,7 @@ Three slurm launchers per dataset. Submit them in this order:
 |---|---|---|---|
 | 1 | `train_gan_fb15k237.slurm` | `experiments/kgsage/slurm/` | **One-time** per dataset — produces the GAN checkpoint used by B1. Skip if a checkpoint already exists. |
 | 2 | `run_baseline_fb15k237.slurm` | `experiments/slurm/` | **B0** — ADKGD baseline with random negatives (reproduces Wu et al. 2024 Table 2). |
-| 3 | `run_baseline_with_kgsage_fb15k237.slurm` | `experiments/slurm/` | **B1** — ADKGD baseline, but with the trained KGSAGE GAN supplying role-swap contradiction negatives in-process. Requires step 1 to have produced `experiments/kgsage/outputs/checkpoints/kgsage_fb15k237.pt`. |
+| 3 | `run_baseline_with_kgsage_fb15k237.slurm` | `experiments/slurm/` | **B1** — ADKGD baseline, but with the trained KGSAGE GAN supplying single-slot-corruption negatives in-process. Requires step 1 to have produced `experiments/kgsage/outputs/checkpoints/kgsage_fb15k237.pt`. |
 
 Step 2 (B0) and step 3 (B1) are independent — submit them in either order.
 Step 1 must happen before step 3.
@@ -343,8 +343,7 @@ V100s and long-running neighbors, your walltime estimate is your main lever.
    also gives small jobs a slight backfill boost.
 
 4. **Run the non-GPU steps on `general`, not `gpu`.** The pipeline's CPU-only
-   steps — e.g. the YAGO→TSV conversion / template verification (Test 1.1 /
-   Test 1.2 need no GPU) and any `dummy_kg` smoke test — should go to the much
+   steps — e.g. any `dummy_kg` smoke test or a small-dataset GAN run — should go to the much
    more available `general` partition (`#SBATCH --partition=general`, drop the
    `--gres` line; see the "Running on CPU" section). This both starts those
    steps immediately **and** keeps them from charging against your GPU Fairshare

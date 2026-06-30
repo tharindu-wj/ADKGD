@@ -41,7 +41,6 @@ _LAZY_ATTRS = {
     "soft_embedding":       "kgsage.gan.models",
     # Inference (needs torch + the GAN models)
     "generate_negatives":   "kgsage.inference",
-    "generate_partners":    "kgsage.inference",
     "load_checkpoint":      "kgsage.inference",
 }
 
@@ -71,6 +70,5 @@ __all__ = [
     "gumbel_softmax",
     "soft_embedding",
     "generate_negatives",
-    "generate_partners",
     "load_checkpoint",
 ]

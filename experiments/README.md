@@ -19,7 +19,7 @@ Three codebases coexist in this repo:
 | Codebase | Location | Status |
 |---|---|---|
 | **ADKGD** (anomaly detector) | repo root — `Our_TopK%_RankingList.py`, `model.py`, `dataset.py`, `create_batch.py`, `score.py` | upstream — untouched except for the `--neg_source gan` dispatch in `dataset.py` |
-| **KGSAGE** (encoder + GAN package) | `experiments/kgsage/` — encoder (Phase 1) + GAN (Phase 2 placeholder) + inference | ours |
+| **KGSAGE** (GAN package) | `experiments/kgsage/` — conditional GAN + inference | ours |
 | **Orchestration glue** | `experiments/run_experiment.py`, `experiments/slurm/`, `experiments/kgsage_bridge/bridge.py` | ours |
 
 ---
@@ -37,38 +37,25 @@ experiments/
 │   ├── run_baseline_with_kgsage_fb15k237.slurm  ← FB15K-237 — ADKGD + KGSAGE negatives (B1)
 │   └── run_baseline_wn18rr.slurm                ← WN18RR    — ADKGD baseline (B0)
 │
-├── kgsage/                                ← standalone-ready package (encoder + GAN)
+├── kgsage/                                ← standalone-ready GAN package
 │   ├── README.md                          ← package overview, run order, datasets
 │   ├── __init__.py                        ← public API
 │   │
-│   ├── data/                              ← KG loading + dataset registry + dataset audit
-│   │   ├── loaders.py                     ← load_kg(path)
-│   │   ├── datasets.py                    ← KNOWN_DATASETS + resolve_dataset()
-│   │   └── audit_dataset.py               ← Test 1.3 (anti-symmetric pair density)
+│   ├── data/                              ← KG loading + dataset registry
+│   │   ├── loaders.py                     ← load_kg(path) -> integer triples + vocab
+│   │   └── datasets.py                    ← KNOWN_DATASETS + resolve_dataset()
 │   │
-│   ├── encoder/                           ← Phase 1: RGCN + DistMult
-│   │   ├── models.py                      ← KGSAGEEncoder / DistMultDecoder / LinkPredictor
-│   │   ├── train.py                       ← Phase 1 training loop
-│   │   ├── evaluate.py                    ← Test 1.1 (link prediction MRR)
-│   │   └── audit_embeddings.py            ← Test 1.2 (anti-symmetric signal)
+│   ├── gan/                               ← the conditional GAN
+│   │   ├── models.py                      ← KGSAGEGenerator (3-head) + KGSAGEDiscriminator + helpers
+│   │   └── train.py                       ← adversarial training loop (BCE + reconstruction)
 │   │
-│   ├── gan/                               ← Phase 2: the pair-aware role-swap GAN
-│   │   ├── models.py                      ← KGSAGEGenerator + KGSAGEDiscriminator + helpers
-│   │   ├── train.py                       ← adversarial training loop
-│   │   └── partner_templates.py           ← mine_partner_templates (discriminator supervision)
-│   │
-│   ├── inference.py                       ← public generation API (role-swap (t,r',h) partners)
+│   ├── inference.py                       ← public generation API (generate_negatives)
 │   │
 │   ├── cli/                               ← command-line entry points (thin shims)
-│   │   ├── audit_dataset.py
-│   │   ├── train_encoder.py
-│   │   ├── evaluate_encoder.py
-│   │   ├── audit_embeddings.py
 │   │   └── train_gan.py
 │   │
 │   ├── slurm/                             ← KGSAGE-only HPC launchers
 │   │   ├── README.md
-│   │   ├── train_encoder_fb15k237.slurm
 │   │   └── train_gan_fb15k237.slurm
 │   │
 │   └── outputs/checkpoints/               ← .pt drop zone
@@ -188,19 +175,17 @@ point `GAN_CKPT` at a WN18RR checkpoint when needed.)
 
 ```
 [GAN] loaded checkpoint from experiments/kgsage/outputs/checkpoints/kgsage_fb15k237.pt (device=cuda)
-[GAN] kgsage role-swap | processed=325,239  generated=325,239  fallbacks=0  self_swap=316,701  skipped_selfloop=0  distinct_partner_rels=168
+[GAN] processed=325,620  retries=30,587  uniform_fallbacks=2,177  slot_distribution: head=108116/325620(33.2%) rel=108940/325620(33.5%) tail=108564/325620(33.3%)
 ```
 
 | Field | Meaning |
 |---|---|
-| `processed` | Every entry in `bp_triples` got a role-swap negative — real positives AND injected eval anomalies, treated uniformly |
-| `generated` | Negatives returned (== `processed`; 1:1 with the positives) |
-| `self_swap` | Partner `r'` equals the anchor relation `r` — the self-asymmetric contradiction `(t, r, h)` |
-| `fallbacks` | The generator's sample collided with the real graph on every retry → fell back to a uniform absent `r'` |
-| `skipped_selfloop` | Anchors with `h == t` (no meaningful role-swap); padded with a uniform fallback to keep 1:1 |
-| `distinct_partner_rels` | How many distinct partner relations appeared (diversity sanity check) |
+| `processed` | Every entry in `bp_triples` got a GAN negative — real positives AND injected eval anomalies, treated uniformly |
+| `retries` | The generator's masked decode hit a real-graph collision and was re-rolled with fresh Gumbel noise |
+| `uniform_fallbacks` | Retries exhausted → fell back to uniform-random replacement for that one slot |
+| `slot_distribution` | Which slot was corrupted (head / relation / tail) — uniform random per positive (≈ 1/3 each) |
 
-A healthy run has `fallbacks` near zero and `distinct_partner_rels` well above 1 (not mode-collapsed).
+A healthy run has `uniform_fallbacks` near zero and a roughly uniform slot distribution.
 
 ---
 
@@ -241,8 +226,8 @@ Step 2 — ADKGD run (per experiment, B0 or B1)
                 │               ├─ neg_source=random → generate_anomalous_triples()
                 │               └─ neg_source=gan    → Reader._gan_negatives()
                 │                       └─ experiments/kgsage_bridge/bridge.py
-                │                               ├─ kgsage.inference.load_kgsage_checkpoint() the .pt
-                │                               └─ kgsage.inference.generate_kgsage_partners() — role-swap (t,r',h) per positive
+                │                               ├─ kgsage.inference.load_checkpoint() the .pt
+                │                               └─ kgsage.inference.generate_negatives() — one single-slot corruption per positive
                 ├─ subprocess: Our_TopK%_RankingList.py --mode test    (ADKGD upstream)
                 └─ parses logs → prints RESULTS table
 ```
@@ -345,6 +330,6 @@ slot distribution near 1/3 each.
 
 - [RUNNING_ON_DEEPTHOUGHT.md](RUNNING_ON_DEEPTHOUGHT.md) — HPC setup, env creation, troubleshooting.
 - ADKGD upstream — repo root: `Our_TopK%_RankingList.py` (entry), `dataset.py` (Reader + `_gan_negatives` dispatch), `model.py` (BiLSTM_Attention).
-- KGSAGE package — [experiments/kgsage/](kgsage/) — encoder, GAN, inference, all in one.
+- KGSAGE package — [experiments/kgsage/](kgsage/) — GAN + inference, all in one.
 - Bridge — [experiments/kgsage_bridge/bridge.py](kgsage_bridge/bridge.py) — the only file that knows about both worlds.
 - KGSAGE (future) — [experiments/kgsage/](kgsage/), bridge at [experiments/kgsage_bridge/](kgsage_bridge/).

@@ -241,7 +241,3 @@ def render_stats(stats):
         f"uniform_fallbacks={stats['uniform_fallbacks']:,}  "
         f"slot_distribution: {slot_pct}"
     )
-
-
-# Public API alias — code that consumes the generation API uses this name.
-generate_partners = generate_negatives

@@ -8,9 +8,8 @@ three-function contract from here:
   - generate(triples, *, payload, adkgd_id2ent, ..., rng=None)
   - render_stats(stats)
 
-Both Phase 1 (simple GAN, current) and Phase 2 (pair-aware KGSAGE generator,
-future) implement the same contract, so the same call site in `dataset.py`
-keeps working across the upgrade.
+The KGSAGE conditional GAN implements this contract, so the call site in
+`dataset.py` never needs to change as the generator evolves.
 
 WHY THIS IS A SEPARATE FOLDER (not inside experiments/kgsage/):
   We want `kgsage/` to ship as a standalone library. A standalone library

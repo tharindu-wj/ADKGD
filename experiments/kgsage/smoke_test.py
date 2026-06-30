@@ -75,14 +75,8 @@ def main():
     from kgsage.gan import train as _gan_train
     print("OK: kgsage.gan.train (the training loop module)")
 
-    from kgsage.inference import (
-        load_checkpoint, generate_negatives, render_stats as _rs, generate_partners,
-    )
-    print("OK: kgsage.inference.{load_checkpoint, generate_negatives, render_stats, "
-          "generate_partners}")
-    assert generate_partners is generate_negatives, \
-        "generate_partners should alias generate_negatives"
-    print("OK: generate_partners is generate_negatives (alias)")
+    from kgsage.inference import load_checkpoint, generate_negatives, render_stats as _rs
+    print("OK: kgsage.inference.{load_checkpoint, generate_negatives, render_stats}")
 
     # ---- SECTION 4: load_kg on dummy_kg ----
     section("SECTION 4: load_kg on dummy_kg")

@@ -7,10 +7,9 @@ eventually released as a standalone library, this folder ships with it.
 
 ## Available scripts
 
-| Script | Phase | Dataset | Submit with |
-|---|---|---|---|
-| `train_encoder_fb15k237.slurm` | Phase 1 — encoder pretraining | FB15K-237 | `sbatch experiments/kgsage/slurm/train_encoder_fb15k237.slurm` |
-| `train_gan_fb15k237.slurm`     | Phase 2 — GAN training        | FB15K-237 | `sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm` |
+| Script | Dataset | Submit with |
+|---|---|---|
+| `train_gan_fb15k237.slurm` | FB15K-237 | `sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm` |
 
 ## SLURM scripts NOT in this folder
 
@@ -47,7 +46,7 @@ Each script has two paths at the top you'll need to set once:
 
 ```bash
 PROJECT_DIR="$HOME/ADKGD"           # repo checkout location
-CONDA_ENV="$HOME/envs/adkgd"        # conda env with torch (+CUDA, +PyG for encoder)
+CONDA_ENV="$HOME/envs/adkgd"        # conda env with torch (+CUDA wheel)
 ```
 
 See `../../RUNNING_ON_DEEPTHOUGHT.md` for HPC setup details.

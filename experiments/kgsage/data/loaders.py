@@ -4,27 +4,14 @@ Loads any TSV-format KG that has train.txt / valid.txt / test.txt in a single
 directory. The loader is format-agnostic — works for FB15K-237, WN18RR,
 NELL-995, and any custom dataset in the same format.
 
-Two output formats from the same data:
-
-  1. PyTorch tensors (edge_index, edge_type) — used by RGCN message passing.
-     edge_index has shape (2, num_edges): row 0 = head IDs, row 1 = tail IDs.
-     edge_type has shape (num_edges,)    : relation ID per edge.
-     This is the format `torch_geometric.nn.RGCNConv` expects.
-
-  2. Python triples (h, r, t) — used by everything else (dataset audit,
-     link prediction evaluation, etc.).
-
-This loader serves both the encoder (which needs PyG tensors) AND the GAN
-(which just needs the Python triples + vocab maps) — it returns both formats
-from a single pass so the two consumers can share preprocessing.
+It returns integer (h, r, t) triples plus the string<->int vocabulary maps,
+which is everything the GAN trainer and inference need.
 
 Vocab strategy: first-seen ordering. Train.txt is loaded first, so its entities
 and relations get the lowest IDs. This matches the standard KGE convention and
 means valid/test only-entities (if any) get higher IDs.
 """
 import os
-
-import torch
 
 
 def load_kg(data_dir):
@@ -33,25 +20,15 @@ def load_kg(data_dir):
     Each line in those files is three tab-separated strings:
         head_string<TAB>relation_string<TAB>tail_string
 
-    Returns a dict with everything Phase 1 needs:
+    Returns a dict:
       ent2id, rel2id     : string -> int (vocab; train-first ordering)
       id2ent, id2rel     : int -> string (inverse maps)
-      triples_train      : list of (h, r, t) integer tuples — used by RGCN
-      triples_valid      : list of (h, r, t) integer tuples — used by validation MRR
-      triples_test       : list of (h, r, t) integer tuples — used by Test 1.1
-      triple_set_train   : set of train triples (for negative sampling collision check)
-      triple_set_all     : set of train+valid+test triples (for filtered MRR)
-      edge_index         : (2, num_train_edges) torch.LongTensor — for RGCN
-      edge_type          : (num_train_edges,)   torch.LongTensor — for RGCN
+      triples_train      : list of (h, r, t) integer tuples
+      triples_valid      : list of (h, r, t) integer tuples
+      triples_test       : list of (h, r, t) integer tuples
+      triple_set_train   : set of train triples (collision check)
+      triple_set_all     : set of train+valid+test triples (collision filter)
       n_ent, n_rel       : vocabulary sizes
-
-    Notes:
-      - Only TRAIN triples go into edge_index/edge_type. Valid/test triples
-        must never leak into the encoder's message-passing graph.
-      - We add no inverse edges. RGCN treats r as a directed edge type.
-        Adding inverse edges would defeat the whole point of Phase 1 — we
-        WANT to test whether the model learns anti-symmetric structure
-        from a directed graph.
     """
     # ─── Step 1: parse train.txt first to lock in the vocab order ──────
     ent2id = {}
@@ -87,17 +64,6 @@ def load_kg(data_dir):
     triple_set_train = set(triples_train)
     triple_set_all = set(triples_train) | set(triples_valid) | set(triples_test)
 
-    # ─── Step 4: build edge_index / edge_type for RGCN ─────────────────
-    # PyG convention: edge_index is a (2, E) LongTensor; row 0 is source
-    # node, row 1 is destination node. edge_type is (E,) telling RGCN
-    # which relation each edge represents.
-    heads = [h for (h, r, t) in triples_train]
-    tails = [t for (h, r, t) in triples_train]
-    rels = [r for (h, r, t) in triples_train]
-
-    edge_index = torch.tensor([heads, tails], dtype=torch.long)
-    edge_type = torch.tensor(rels, dtype=torch.long)
-
     return {
         "ent2id": ent2id,
         "rel2id": rel2id,
@@ -108,8 +74,6 @@ def load_kg(data_dir):
         "triples_test": triples_test,
         "triple_set_train": triple_set_train,
         "triple_set_all": triple_set_all,
-        "edge_index": edge_index,
-        "edge_type": edge_type,
         "n_ent": len(ent2id),
         "n_rel": len(rel2id),
     }
@@ -130,8 +94,6 @@ def _parse_split(file_path, ent2id, rel2id, add_to_vocab):
             h_str, r_str, t_str = parts
 
             # First-seen ordering: each new string gets the next free ID.
-            # add_to_vocab is always True in current usage, but the flag
-            # is here for a future strict-vocab variant if we ever need it.
             if add_to_vocab:
                 if h_str not in ent2id:
                     ent2id[h_str] = len(ent2id)

@@ -10,9 +10,9 @@ Two networks:
   KGSAGEDiscriminator — sees a pair (real, candidate) and scores whether the
                         candidate looks real. The generator tries to fool it.
 
-Both are plain MLPs that learn their OWN entity/relation embedding tables
-(no external encoder). One slot (head, relation, or tail) is corrupted per
-generated negative — the convention used by the ADKGD baseline.
+Both are plain MLPs that learn their OWN entity/relation embedding tables from
+scratch during GAN training. One slot (head, relation, or tail) is corrupted
+per generated negative — the convention used by the ADKGD baseline.
 """
 import torch
 import torch.nn as nn
