@@ -24,13 +24,11 @@ WHAT TRAINS (B1a)
 HOW ONE EPOCH WORKS
   1. For every real triple, build a "training pair" (real, target):
        real   = the actual triple
-       target = the real triple with ONE slot corrupted.
-     By default (--target_mode contradiction) the target is a TYPE-VALID but
-     CONTEXT-DISTANT filler (kgsage.gan.targets.ContradictionTargetSampler), so
-     the generator is trained to reach for the converging-context near-miss —
-     this is what makes conditioning on E' actually matter. --target_mode random
-     restores the simple random single-slot corruption as an ablation arm (E'
-     stays inert because the target no longer depends on it).
+       target = the real triple with ONE slot corrupted to a TYPE-VALID but
+                CONTEXT-DISTANT filler (kgsage.gan.targets.ContradictionTargetSampler).
+     The target depends on the context table E', so the generator is trained to
+     reach for the converging-context near-miss — this is what makes conditioning
+     on E' actually matter.
 
   2. For each batch, recompute the context table E' once, then alternate:
      Discriminator step (E' detached):
@@ -48,7 +46,6 @@ table E'. Inference (kgsage.inference) replays E' and never touches PyG.
 """
 import argparse
 import os
-import random
 import time
 from datetime import datetime
 
@@ -61,21 +58,6 @@ from kgsage.gan.models import (
     KGSAGEGenerator, KGSAGEDiscriminator, gumbel_softmax, soft_embedding,
 )
 from kgsage.gan.targets import ContradictionTargetSampler
-
-
-def random_corrupt(head, relation, tail, n_ent, n_rel, rng):
-    """Replace ONE slot of (head, relation, tail) with a random in-vocab value.
-
-    This is the simplest possible "negative" training signal: pick a slot
-    uniformly, swap in a random entity (or relation). The generator's job is to
-    learn the conditional distribution of plausible corruptions.
-    """
-    slot = rng.randint(0, 2)  # 0 = head, 1 = relation, 2 = tail
-    if slot == 0:
-        return (rng.randint(0, n_ent - 1), relation, tail)
-    if slot == 1:
-        return (head, rng.randint(0, n_rel - 1), tail)
-    return (head, relation, rng.randint(0, n_ent - 1))
 
 
 def train_one_epoch(encoder, generator, discriminator,
@@ -241,19 +223,14 @@ def main():
     ap.add_argument("--no_inverse", action="store_true",
                     help="Do NOT add inverse edges to the message-passing graph")
     # --- contradiction-bias target selection (B1a) ---
-    ap.add_argument("--target_mode", choices=["contradiction", "random"],
-                    default="contradiction",
-                    help="contradiction = type-valid, context-distant targets (makes E' "
-                         "matter); random = simple random single-slot corruption (ablation)")
     ap.add_argument("--k_candidates", type=int, default=20,
-                    help="Type-valid fillers considered per triple (contradiction mode)")
+                    help="Type-valid fillers considered per triple when picking the "
+                         "context-distant target")
     ap.add_argument("--device", default=None)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
-    random.seed(args.seed)
     torch.manual_seed(args.seed)
-    rng = random.Random(args.seed)
 
     device_str = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device(device_str)
@@ -279,23 +256,13 @@ def main():
     # loop from here on — only tensor indexing).
     real_all = torch.tensor(all_triples, dtype=torch.long, device=device)
 
-    # Target selection. `contradiction` (default) rebuilds context-distant,
-    # type-valid targets each epoch from the CURRENT encoder — this is what makes
-    # E' earn its place. `random` fixes simple random-corrupt targets once (the
-    # ablation arm where E' stays inert because the target ignores it).
-    if args.target_mode == "contradiction":
-        target_sampler = ContradictionTargetSampler(
-            real_all, kg["n_ent"], kg["n_rel"],
-            k_candidates=args.k_candidates, seed=args.seed, device=device)
-        fixed_targets = None
-        print(f"Targets: contradiction bias (type-valid, context-distant), "
-              f"k_candidates = {args.k_candidates}", flush=True)
-    else:
-        target_sampler = None
-        fixed_targets = torch.tensor(
-            [random_corrupt(h, r, t, kg["n_ent"], kg["n_rel"], rng) for (h, r, t) in all_triples],
-            dtype=torch.long, device=device)
-        print("Targets: random single-slot corruption (ablation)", flush=True)
+    # Context-distant, type-valid targets, rebuilt each epoch from the CURRENT
+    # encoder — this is what makes E' earn its place (the target depends on E').
+    target_sampler = ContradictionTargetSampler(
+        real_all, kg["n_ent"], kg["n_rel"],
+        k_candidates=args.k_candidates, seed=args.seed, device=device)
+    print(f"Targets: contradiction bias (type-valid, context-distant), "
+          f"k_candidates = {args.k_candidates}", flush=True)
 
     encoder = KGSAGEEncoder(
         kg["n_ent"], kg["n_rel"], dim=args.dim,
@@ -328,14 +295,11 @@ def main():
     print(f"Training started at: {train_start_wall:%Y-%m-%d %H:%M:%S}", flush=True)
 
     for epoch in range(1, args.epochs + 1):
-        # Contradiction mode: refresh targets against the CURRENT context table so
-        # they track the improving encoder. Random mode: reuse the fixed targets.
-        if target_sampler is not None:
-            with torch.no_grad():
-                context_snapshot = encoder(edge_index, edge_type)
-            target_all = target_sampler.build_targets(context_snapshot)
-        else:
-            target_all = fixed_targets
+        # Refresh the context-distant targets against the CURRENT context table
+        # each epoch, so they track the improving encoder.
+        with torch.no_grad():
+            context_snapshot = encoder(edge_index, edge_type)
+        target_all = target_sampler.build_targets(context_snapshot)
 
         discriminator_loss, generator_loss = train_one_epoch(
             encoder, generator, discriminator,
