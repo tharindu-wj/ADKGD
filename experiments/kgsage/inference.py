@@ -14,20 +14,26 @@ The 8-step pipeline (one negative per real triple):
           (one over entities for the new head, one over relations for the new
            rel, one over entities for the new tail. These are PROBABILITIES,
            not picks yet.)
-  STEP 3: Pick which slot to corrupt uniformly at random {head, rel, tail}.
-          (Matches the baseline's `random.randint(0, 2)` distribution exactly.)
+  STEP 3: GAN-CHOSEN slot. Score how confidently the generator can corrupt each
+          slot (softmax mass on its best WRONG value). The RELATION slot is
+          SKIPPED — a fixed head+tail rarely admits a coherent alternative
+          relation, so relation corruptions are the weak, type-incoherent ones
+          (confirmed in ADKGD logs). Among the two ENTITY slots the GAN picks
+          head vs tail, sampled proportional to the score — so the GAN, not a
+          coin flip, decides WHERE to corrupt. (Deliberately no longer matches
+          the random baseline's uniform 3-slot distribution.)
   STEP 4: Mask the original index in the chosen slot to -inf, then sample
           the new value via argmax + Gumbel noise.
           (Mask = "force the slot to move". Gumbel noise = "vary across calls"
            so we don't return the same negative every time.)
-  STEP 5: Build the candidate triple by gluing the new value into the slot
-          we picked, keeping the other 2 slots from the original.
-  STEP 6: Validate the candidate. If it's a self-loop (h == t) or already in
-          the real graph, RETRY up to `max_retries` times with fresh Gumbel
-          noise on the same logits.
-  STEP 7: If all retries exhaust, fall back to uniform-random replacement
-          for that one slot (last-resort safety net).
-  STEP 8: Translate GAN integer IDs back to ADKGD integer IDs via strings.
+  STEP 5: Build the candidate triple by gluing the new value into the slot we
+          picked. SINGLE shot — no retry loop.
+  STEP 6: Keep the candidate only if it is a VALID negative (not a self-loop and
+          not an existing real triple). If it FAILS, use the ORIGINAL triple (a
+          null corruption) and count it in `used_original`. There is NO random
+          fallback: we measure the generator's real failure rate rather than
+          papering over it, so training reflects the model, not a safety net.
+  STEP 7: Translate GAN integer IDs back to ADKGD integer IDs via strings.
 """
 import numpy as np
 import torch
@@ -104,27 +110,32 @@ def _pick_new_index_with_noise(logits, clean_index, rng):
     return int((masked + gumbel * 0.5).argmax().item())
 
 
-def _uniform_fallback(h, r, t, slot, n_ent, n_rel, real_triple_set, rng, max_tries=200):
-    """Implements STEP 7: last-resort uniform-random replacement.
+def _corruptibility_scores(head_logits, rel_logits, tail_logits, h_in, r_in, t_in):
+    """Implements STEP 3's per-slot score: the generator's confidence in its best
+    WRONG value for each slot.
 
-    Only called when the GAN's retry loop in STEP 6 exhausts its budget
-    (every Gumbel-sampled candidate kept colliding with the real graph).
-    Guarantees ADKGD always gets a valid negative back.
+    For each triple and slot, this is the softmax mass the generator puts on its
+    top NON-true value. High = the generator confidently prefers a wrong value
+    (a good slot to corrupt); low = it believes the true value, or is unsure
+    (e.g. no coherent relation exists) — so that slot is rarely chosen. Trained
+    on random relation targets, the relation head stays comparatively flat, which
+    is exactly what steers corruption away from the weak relation slot.
+
+    Returns a [n, 3] tensor, columns = (head, relation, tail).
     """
-    for _ in range(max_tries):
-        if slot == 0:
-            candidate = (int(rng.integers(n_ent)), r, t)
-        elif slot == 1:
-            candidate = (h, int(rng.integers(n_rel)), t)
-        else:
-            candidate = (h, r, int(rng.integers(n_ent)))
-        if candidate[0] != candidate[2] and candidate not in real_triple_set:
-            return candidate
-    return candidate
+    def best_wrong(logits, true_idx):
+        probs = torch.softmax(logits, dim=1)
+        probs.scatter_(1, true_idx.unsqueeze(1), 0.0)   # drop the true value's mass
+        return probs.max(dim=1).values                  # top remaining (wrong) value
+    return torch.stack([
+        best_wrong(head_logits, h_in),
+        best_wrong(rel_logits, r_in),
+        best_wrong(tail_logits, t_in),
+    ], dim=1)
 
 
 def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
-                       batch_size=256, max_retries=10):
+                       batch_size=256):
     """Generate one negative per input triple. Main entry point.
 
     adkgd_triples : list of (h, r, t) in ADKGD's integer ID space
@@ -146,8 +157,6 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
     id2ent_gan = payload["id2ent"]
     id2rel_gan = payload["id2rel"]
     real_triple_set = payload["real_triple_set"]
-    n_ent = payload["n_ent"]
-    n_rel = payload["n_rel"]
     z_dim = payload["z_dim"]
 
     # STEP 1: Translate ADKGD IDs -> strings -> GAN IDs (once, up front).
@@ -161,8 +170,7 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
     out = []
     stats = {
         "processed": 0,
-        "retries": 0,
-        "uniform_fallbacks": 0,
+        "used_original": 0,   # generation failed (self-loop/collision) -> kept original
         "slot_h": 0,
         "slot_r": 0,
         "slot_t": 0,
@@ -182,8 +190,18 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
             # Condition on the cached context table E' (STEP 2).
             head_logits, rel_logits, tail_logits = G(h_in, r_in, t_in, z, entity_context)
 
-        # STEP 3: Pick which slot to corrupt - uniform random per triple.
-        slots = rng.integers(3, size=n)
+        # STEP 3: GAN-chosen slot. Score how confidently the generator can corrupt
+        # each slot (its best wrong value; see _corruptibility_scores), then choose
+        # WHERE to corrupt. The relation slot is skipped: a fixed head+tail rarely
+        # admits a coherent alternative relation, so those are the weak, type-
+        # incoherent corruptions. The GAN picks which ENTITY slot (head or tail),
+        # weighted by its confidence there.
+        with torch.no_grad():
+            scores = _corruptibility_scores(
+                head_logits, rel_logits, tail_logits, h_in, r_in, t_in).cpu().numpy()
+        entity_scores = scores[:, [0, 2]] + 1e-9        # columns: head, tail
+        p_tail = entity_scores[:, 1] / entity_scores.sum(axis=1)
+        slots = np.where(rng.random(n) < p_tail, 2, 0)  # 2 = tail, 0 = head (never 1 = rel)
 
         for i in range(n):
             h_gan, r_gan, t_gan = batch[i]
@@ -200,28 +218,25 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
                 logits_for_slot = tail_logits[i]
                 clean_value = t_gan
 
-            # STEPS 5 + 6: build candidate, validate, retry on collision.
-            neg_h, neg_r, neg_t = h_gan, r_gan, t_gan
-            num_tries = 0
-            for _ in range(max_retries):
-                new_idx = _pick_new_index_with_noise(logits_for_slot, clean_value, rng)
-                if slot == 0:
-                    candidate = (new_idx, r_gan, t_gan)
-                elif slot == 1:
-                    candidate = (h_gan, new_idx, t_gan)
-                else:
-                    candidate = (h_gan, r_gan, new_idx)
-                num_tries += 1
-                if candidate[0] != candidate[2] and candidate not in real_triple_set:
-                    neg_h, neg_r, neg_t = candidate
-                    break
+            # STEP 5: single-shot pick (mask the true value, Gumbel-argmax). No
+            # retry loop, no random fallback.
+            new_idx = _pick_new_index_with_noise(logits_for_slot, clean_value, rng)
+            if slot == 0:
+                candidate = (new_idx, r_gan, t_gan)
+            elif slot == 1:
+                candidate = (h_gan, new_idx, t_gan)
             else:
-                # STEP 7: Uniform fallback (retries exhausted).
-                neg_h, neg_r, neg_t = _uniform_fallback(
-                    h_gan, r_gan, t_gan, slot, n_ent, n_rel, real_triple_set, rng,
-                )
-                stats["uniform_fallbacks"] += 1
-            stats["retries"] += num_tries - 1
+                candidate = (h_gan, r_gan, new_idx)
+
+            # STEP 6: keep it only if it is a valid negative (not a self-loop and
+            # not an existing real triple). If it FAILS, use the ORIGINAL triple
+            # (a null corruption) and record it, so the generator's real failure
+            # rate is visible instead of hidden by a random fallback.
+            if candidate[0] != candidate[2] and candidate not in real_triple_set:
+                neg_h, neg_r, neg_t = candidate
+            else:
+                neg_h, neg_r, neg_t = h_gan, r_gan, t_gan
+                stats["used_original"] += 1
 
             if slot == 0:
                 stats["slot_h"] += 1
@@ -230,7 +245,7 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
             else:
                 stats["slot_t"] += 1
 
-            # STEP 8: Translate GAN IDs -> strings -> ADKGD IDs.
+            # STEP 7: Translate GAN IDs -> strings -> ADKGD IDs.
             out.append((
                 adkgd_maps["ent2id"][id2ent_gan[neg_h]],
                 adkgd_maps["rel2id"][id2rel_gan[neg_r]],
@@ -252,9 +267,11 @@ def render_stats(stats):
         )
     else:
         slot_pct = "no slots"
+    processed = stats["processed"]
+    used = stats["used_original"]
+    fail_pct = f"{used:,}/{processed:,}({used / processed:.1%})" if processed else "n/a"
     return (
-        f"processed={stats['processed']:,}  "
-        f"retries={stats['retries']:,}  "
-        f"uniform_fallbacks={stats['uniform_fallbacks']:,}  "
+        f"processed={processed:,}  "
+        f"used_original(gen_failed)={fail_pct}  "
         f"slot_distribution: {slot_pct}"
     )
