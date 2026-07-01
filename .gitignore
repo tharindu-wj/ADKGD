@@ -9,3 +9,4 @@ temp
 time
 data/yago*
 *.pt
+experiments/kgsage/outputs
