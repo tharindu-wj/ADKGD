@@ -257,13 +257,15 @@ def main():
 
     print(f"Loading KG from {args.data} ...", flush=True)
     kg = load_kg(args.data)
-    # The GAN trains on all available triples (train + valid + test), not the
-    # train split alone. kgsage.data.loaders returns splits separately; combine
-    # them here. triple_set_all is the matching set form.
-    all_triples = list(kg["triples_train"]) + list(kg["triples_valid"]) + list(kg["triples_test"])
-    kg["triples"] = all_triples
+    # Train on the TRAIN split ONLY, so the generator can be evaluated on held-out
+    # valid/test triples it never saw (clean train/test separation). The collision
+    # set stays ALL splits: a corruption matching ANY real fact (train/valid/test)
+    # is a false negative and must still be filtered at generation time.
+    train_triples = list(kg["triples_train"])
     kg["triple_set"] = kg["triple_set_all"]
-    print(f"  entities = {kg['n_ent']:,}  relations = {kg['n_rel']:,}  triples = {len(all_triples):,}", flush=True)
+    print(f"  entities = {kg['n_ent']:,}  relations = {kg['n_rel']:,}  "
+          f"train triples = {len(train_triples):,}  (collision set = all {len(kg['triple_set_all']):,})",
+          flush=True)
 
     # The encoder's message-passing graph is the TRAIN graph (load_kg builds
     # edge_index over train only). This is the standard no-leakage choice: the
@@ -273,7 +275,7 @@ def main():
 
     # Pack the real triples into one [N, 3] tensor (no Python lists in the epoch
     # loop from here on — only tensor indexing).
-    real_all = torch.tensor(all_triples, dtype=torch.long, device=device)
+    real_all = torch.tensor(train_triples, dtype=torch.long, device=device)
 
     # Context-distant, type-valid targets, rebuilt each epoch from the CURRENT
     # encoder — this is what makes E' earn its place (the target depends on E').

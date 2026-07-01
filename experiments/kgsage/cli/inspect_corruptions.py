@@ -46,6 +46,7 @@ import torch.nn.functional as F
 # MKL/OpenMP crash on some Windows machines. Harmless on HPC.
 torch.set_num_threads(1)
 
+from kgsage import load_kg
 from kgsage.inference import load_checkpoint
 
 HEAD, TAIL = 0, 2  # slot ids (relation slot, 1, is intentionally not inspected)
@@ -116,10 +117,11 @@ def neighbourhood_lines(entity, gi, id2ent, id2rel, cap):
 # Corruption generation                                                       #
 # --------------------------------------------------------------------------- #
 def model_corruption(payload, h, r, t, slot):
-    """One generator draw for `slot`. Returns (value, confidence).
+    """One SINGLE-SHOT generator draw for `slot` — matches kgsage.inference now
+    (no retry, no fallback). Returns (value, confidence, failed).
 
-    Mirrors kgsage.inference: fresh noise -> generator forward -> mask the true
-    value -> Gumbel-argmax -> reject collisions with the real graph.
+    failed=True if the single pick is a self-loop or collides with a real triple,
+    i.e. the case where inference keeps the ORIGINAL triple (used_original).
     """
     G, device, E = payload["generator"], payload["device"], payload["entity_context"]
     real_set, z_dim = payload["real_triple_set"], payload["z_dim"]
@@ -133,22 +135,16 @@ def model_corruption(payload, h, r, t, slot):
 
     logits = (head_logits if slot == HEAD else tail_logits)[0]
     true_idx = h if slot == HEAD else t
-    probs = torch.softmax(logits, dim=0)  # generator's raw distribution over the slot
+    probs = torch.softmax(logits, dim=0)
 
     masked = logits.clone()
-    masked[true_idx] = float("-inf")      # force the slot to actually change
-    chosen = true_idx
-    for _ in range(10):
-        u = torch.rand_like(masked).clamp_(1e-10, 1 - 1e-10)
-        gumbel = -torch.log(-torch.log(u))
-        idx = int((masked + gumbel * 0.5).argmax())
-        candidate = (idx, r, t) if slot == HEAD else (h, r, idx)
-        if candidate[0] != candidate[2] and candidate not in real_set:
-            chosen = idx
-            break
-        chosen = idx
-    confidence = float(probs[chosen])
-    return chosen, confidence
+    masked[true_idx] = float("-inf")       # never re-emit the true value
+    u = torch.rand_like(masked).clamp_(1e-10, 1 - 1e-10)
+    gumbel = -torch.log(-torch.log(u))
+    idx = int((masked + gumbel * 0.5).argmax())        # single shot, no retry
+    candidate = (idx, r, t) if slot == HEAD else (h, r, idx)
+    failed = (candidate[0] == candidate[2]) or (candidate in real_set)
+    return idx, float(probs[idx]), failed
 
 
 def random_corruption(h, r, t, slot, n_ent, real_set, rng, max_tries=200):
@@ -216,7 +212,8 @@ def render_block(idx, h, r, t, slot, anchor, original_value, diags,
         ab = "YES" if d["absent"] else "**no**"
         cd = f"{d['ctx_dist']:.2f} ({rand_avg:.2f})" if rand_avg == rand_avg else f"{d['ctx_dist']:.2f}"
         cf = f"{d['conf']:.2f}" if d["conf"] is not None else "-"
-        L.append(f"| {i} | {d['source']} | `{id2ent[d['value']]}` | {tv} | {ab} | {cd} | {cf} |")
+        src = d["source"] + (" **FAIL**" if d.get("failed") else "")
+        L.append(f"| {i} | {src} | `{id2ent[d['value']]}` | {tv} | {ab} | {cd} | {cf} |")
     L += ["", "Corrupted-value fingerprints:"]
     for d in diags:
         v = d["value"]
@@ -230,6 +227,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ckpt", default="experiments/kgsage/outputs/checkpoints/kgsage_fb15k237.pt")
+    ap.add_argument("--data", default=None,
+                    help="dataset dir (same one the checkpoint was trained on); required for --split != all")
+    ap.add_argument("--split", choices=["all", "train", "valid", "test"], default="all",
+                    help="which split's triples to corrupt. test/valid = HELD-OUT (unseen by the GAN)")
     ap.add_argument("--num", type=int, default=20, help="how many real triples to sample")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--relation", default=None, help="only sample triples with this relation string")
@@ -248,11 +249,28 @@ def main():
     payload = load_checkpoint(args.ckpt, device=device)
     id2ent, id2rel, rel2id = payload["id2ent"], payload["id2rel"], payload["rel2id"]
     n_ent, E, real_set = payload["n_ent"], payload["entity_context"], payload["real_triple_set"]
-    triples = list(real_set)
-    print(f"  {n_ent:,} entities, {payload['n_rel']:,} relations, {len(triples):,} triples", flush=True)
+    print(f"  {n_ent:,} entities, {payload['n_rel']:,} relations, {len(real_set):,} real triples", flush=True)
 
+    # Neighbourhoods come from ALL real triples (full context regardless of split).
     print("Building graph index ...", flush=True)
-    gi = build_graph_index(triples)
+    gi = build_graph_index(list(real_set))
+
+    # Sampling universe: a specific split (held-out) or all triples. Splits load
+    # via load_kg; ids match the checkpoint because the vocab is built
+    # deterministically (first-seen) from the same dataset.
+    if args.split == "all":
+        sample_universe = list(real_set)
+    else:
+        if not args.data:
+            raise SystemExit("--split requires --data (the dataset the checkpoint was trained on)")
+        kg = load_kg(args.data)
+        if kg["n_ent"] != n_ent or kg["n_rel"] != payload["n_rel"]:
+            raise SystemExit("--data does not match the checkpoint (n_ent/n_rel differ). "
+                             "Pass the same dataset the checkpoint was trained on.")
+        split_map = {"train": kg["triples_train"], "valid": kg["triples_valid"], "test": kg["triples_test"]}
+        sample_universe = [tuple(x) for x in split_map[args.split]]
+        held = " (HELD-OUT — unseen by the GAN)" if args.split in ("valid", "test") else ""
+        print(f"  sampling from '{args.split}' split: {len(sample_universe):,} triples{held}", flush=True)
 
     # ---- eligible triples (relation + head-degree filters) ----
     rel_filter = None
@@ -261,7 +279,7 @@ def main():
             examples = "\n  ".join(sorted(rel2id)[:10])
             raise SystemExit(f"relation {args.relation!r} not found. Example relations:\n  {examples}")
         rel_filter = rel2id[args.relation]
-    eligible = [trip for trip in triples
+    eligible = [trip for trip in sample_universe
                 if (rel_filter is None or trip[1] == rel_filter)
                 and gi["degree"].get(trip[0], 0) >= args.min_degree]
     if not eligible:
@@ -273,12 +291,15 @@ def main():
 
     # ---- generate, diagnose, render ----
     md = [f"# KGSAGE corruption inspection\n",
-          f"checkpoint: `{args.ckpt}`  |  {len(sampled)} triples  |  "
+          f"checkpoint: `{args.ckpt}`  |  split={args.split}  |  {len(sampled)} triples  |  "
           f"slot={args.slot}  |  min_degree={args.min_degree}  |  seed={args.seed}\n",
           "_Judge each corruption by structure: does the corrupted value's fingerprint fit "
           "the relation (type-valid), could it be real (plausible), and does it contradict the "
-          "head's neighbourhood (false)?_"]
+          "head's neighbourhood (false)?  A **FAIL** corruption is a self-loop/collision — "
+          "single-shot inference would keep the original triple._"]
     csv_rows = []
+    n_model_total = 0
+    n_model_failed = 0
 
     for idx, (h, r, t) in enumerate(sampled, 1):
         slot = choose_slot(args.slot, rng)
@@ -290,11 +311,13 @@ def main():
 
         diags = []
         for _ in range(args.corruptions):
-            val, conf = model_corruption(payload, h, r, t, slot)
-            diags.append(dict(source="model", value=val, conf=conf))
+            val, conf, failed = model_corruption(payload, h, r, t, slot)
+            diags.append(dict(source="model", value=val, conf=conf, failed=failed))
+            n_model_total += 1
+            n_model_failed += int(failed)
         diags.append(dict(source="random",
                           value=random_corruption(h, r, t, slot, n_ent, real_set, rng),
-                          conf=None))
+                          conf=None, failed=False))
         # attach diagnostics
         for d in diags:
             candidate = (h, r, d["value"]) if slot == TAIL else (d["value"], r, t)
@@ -311,15 +334,21 @@ def main():
                 "idx": idx, "head": id2ent[h], "relation": id2rel[r], "tail": id2ent[t],
                 "slot": slot_name, "source": d["source"], "corrupted_value": id2ent[d["value"]],
                 "type_valid": d["count"] > 0, "type_valid_count": d["count"],
+                "generation_failed": d.get("failed", False),
                 "absent_from_graph": d["absent"], "ctx_distance": round(d["ctx_dist"], 4),
                 "ctx_distance_random_avg": round(rand_avg, 4) if rand_avg == rand_avg else "",
                 "gen_confidence": round(d["conf"], 4) if d["conf"] is not None else "",
                 "rating_type_valid": "", "rating_plausible": "", "rating_false": "", "notes": "",
             })
 
+    fail_rate = (f"{n_model_failed}/{n_model_total} ({n_model_failed / n_model_total:.1%})"
+                 if n_model_total else "n/a")
+    md.insert(3, f"\n**Model single-shot failure rate:** {fail_rate}  "
+                 f"(self-loop / collision -> inference keeps the original triple)\n")
+
     os.makedirs(args.out_dir, exist_ok=True)
-    report_path = os.path.join(args.out_dir, f"corruptions_seed{args.seed}.md")
-    csv_path = os.path.join(args.out_dir, f"corruptions_seed{args.seed}.csv")
+    report_path = os.path.join(args.out_dir, f"corruptions_{args.split}_seed{args.seed}.md")
+    csv_path = os.path.join(args.out_dir, f"corruptions_{args.split}_seed{args.seed}.csv")
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("\n".join(md) + "\n")
     with open(csv_path, "w", encoding="utf-8", newline="") as f:
@@ -330,6 +359,8 @@ def main():
     print(f"\nWrote:\n  report : {report_path}\n  ratings: {csv_path}", flush=True)
     print(f"  {len(sampled)} triples x ({args.corruptions} model + 1 random) = "
           f"{len(csv_rows)} corruptions to review", flush=True)
+    print(f"  model single-shot failures (self-loop/collision -> would use original): {fail_rate}",
+          flush=True)
 
 
 if __name__ == "__main__":
