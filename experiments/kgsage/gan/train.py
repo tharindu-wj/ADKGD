@@ -24,11 +24,13 @@ WHAT TRAINS (B1a)
 HOW ONE EPOCH WORKS
   1. For every real triple, build a "training pair" (real, target):
        real   = the actual triple
-       target = the real triple with ONE slot replaced by a random in-vocab value
-     The target is the kind of "wrong-but-plausible" output we want the
-     generator to produce (the context-distance bias that makes the target a
-     converging-context CONTRADICTION is a planned follow-up; this step keeps
-     the simple random-corrupt target so the pipeline is runnable end to end).
+       target = the real triple with ONE slot corrupted.
+     By default (--target_mode contradiction) the target is a TYPE-VALID but
+     CONTEXT-DISTANT filler (kgsage.gan.targets.ContradictionTargetSampler), so
+     the generator is trained to reach for the converging-context near-miss —
+     this is what makes conditioning on E' actually matter. --target_mode random
+     restores the simple random single-slot corruption as an ablation arm (E'
+     stays inert because the target no longer depends on it).
 
   2. For each batch, recompute the context table E' once, then alternate:
      Discriminator step (E' detached):
@@ -58,6 +60,7 @@ from kgsage.gan.encoder import KGSAGEEncoder
 from kgsage.gan.models import (
     KGSAGEGenerator, KGSAGEDiscriminator, gumbel_softmax, soft_embedding,
 )
+from kgsage.gan.targets import ContradictionTargetSampler
 
 
 def random_corrupt(head, relation, tail, n_ent, n_rel, rng):
@@ -73,27 +76,6 @@ def random_corrupt(head, relation, tail, n_ent, n_rel, rng):
     if slot == 1:
         return (head, rng.randint(0, n_rel - 1), tail)
     return (head, relation, rng.randint(0, n_ent - 1))
-
-
-def build_training_pairs(triples, n_ent, n_rel, rng):
-    """For every real triple, generate one (real, target) pair to train on."""
-    pairs = []
-    for head, relation, tail in triples:
-        target = random_corrupt(head, relation, tail, n_ent, n_rel, rng)
-        pairs.append(((head, relation, tail), target))
-    return pairs
-
-
-def prepare_tensors(pairs, device):
-    """Pack the list of pairs into two big tensors, ONCE before the epoch loop.
-
-    Doing this here (instead of `torch.tensor(...)` per batch) is the single
-    biggest speed-up for small models: the per-batch Python list comprehension
-    used to dominate wall time. Now each epoch only does tensor indexing.
-    """
-    real_all = torch.tensor([pair[0] for pair in pairs], dtype=torch.long, device=device)
-    target_all = torch.tensor([pair[1] for pair in pairs], dtype=torch.long, device=device)
-    return real_all, target_all
 
 
 def train_one_epoch(encoder, generator, discriminator,
@@ -258,6 +240,13 @@ def main():
                     help="Number of FastRGCNConv layers (hops of context)")
     ap.add_argument("--no_inverse", action="store_true",
                     help="Do NOT add inverse edges to the message-passing graph")
+    # --- contradiction-bias target selection (B1a) ---
+    ap.add_argument("--target_mode", choices=["contradiction", "random"],
+                    default="contradiction",
+                    help="contradiction = type-valid, context-distant targets (makes E' "
+                         "matter); random = simple random single-slot corruption (ablation)")
+    ap.add_argument("--k_candidates", type=int, default=20,
+                    help="Type-valid fillers considered per triple (contradiction mode)")
     ap.add_argument("--device", default=None)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -286,13 +275,27 @@ def main():
     edge_index, edge_type = KGSAGEEncoder.to_tensors(kg["edge_index"], kg["edge_type"], device)
     print(f"  message-passing edges = {edge_index.size(1):,} (train graph)", flush=True)
 
-    print("Building (real, target) training pairs ...", flush=True)
-    pairs = build_training_pairs(all_triples, kg["n_ent"], kg["n_rel"], rng)
-    print(f"  pairs = {len(pairs):,}", flush=True)
+    # Pack the real triples into one [N, 3] tensor (no Python lists in the epoch
+    # loop from here on — only tensor indexing).
+    real_all = torch.tensor(all_triples, dtype=torch.long, device=device)
 
-    # Pack pairs into two tensors once. From here on, no Python lists in the
-    # epoch loop — only tensor indexing. This is where most of the speed comes from.
-    real_all, target_all = prepare_tensors(pairs, device)
+    # Target selection. `contradiction` (default) rebuilds context-distant,
+    # type-valid targets each epoch from the CURRENT encoder — this is what makes
+    # E' earn its place. `random` fixes simple random-corrupt targets once (the
+    # ablation arm where E' stays inert because the target ignores it).
+    if args.target_mode == "contradiction":
+        target_sampler = ContradictionTargetSampler(
+            real_all, kg["n_ent"], kg["n_rel"],
+            k_candidates=args.k_candidates, seed=args.seed, device=device)
+        fixed_targets = None
+        print(f"Targets: contradiction bias (type-valid, context-distant), "
+              f"k_candidates = {args.k_candidates}", flush=True)
+    else:
+        target_sampler = None
+        fixed_targets = torch.tensor(
+            [random_corrupt(h, r, t, kg["n_ent"], kg["n_rel"], rng) for (h, r, t) in all_triples],
+            dtype=torch.long, device=device)
+        print("Targets: random single-slot corruption (ablation)", flush=True)
 
     encoder = KGSAGEEncoder(
         kg["n_ent"], kg["n_rel"], dim=args.dim,
@@ -325,6 +328,15 @@ def main():
     print(f"Training started at: {train_start_wall:%Y-%m-%d %H:%M:%S}", flush=True)
 
     for epoch in range(1, args.epochs + 1):
+        # Contradiction mode: refresh targets against the CURRENT context table so
+        # they track the improving encoder. Random mode: reuse the fixed targets.
+        if target_sampler is not None:
+            with torch.no_grad():
+                context_snapshot = encoder(edge_index, edge_type)
+            target_all = target_sampler.build_targets(context_snapshot)
+        else:
+            target_all = fixed_targets
+
         discriminator_loss, generator_loss = train_one_epoch(
             encoder, generator, discriminator,
             optimizer_generator, optimizer_discriminator,
