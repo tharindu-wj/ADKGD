@@ -109,9 +109,12 @@ def main() -> int:
     ap.add_argument("--script", default="Our_TopK%_RankingList.py", help="ADKGD entry-point script")
     # Phase B (GAN integration). Forwarded verbatim to both train and test subprocesses.
     ap.add_argument("--neg_source", default="random", choices=["random", "gan"],
-                    help="source of training-time negatives; 'random' = baseline (default)")
+                    help="source of TRAINING negatives; 'random' = baseline (default)")
+    ap.add_argument("--test_anomaly_source", default="random", choices=["random", "gan"],
+                    help="source of the INJECTED eval anomalies; 'random' = baseline (default). "
+                         "The (neg_source x test_anomaly_source) pair is the experiment matrix.")
     ap.add_argument("--gan_path", default="experiments/kgsage/outputs/checkpoints/kgsage_fb15k237.pt",
-                    help="path to the KGSAGE GAN .pt checkpoint (used when --neg_source=gan; missing file is a hard error)")
+                    help="path to the KGSAGE GAN .pt checkpoint (used when EITHER axis is 'gan'; missing file is a hard error)")
     args = ap.parse_args()
 
     # This file lives at experiments/run_experiment.py; the repo root (where
@@ -144,8 +147,9 @@ def main() -> int:
     # in each subprocess). --gan_path is only forwarded when we actually need
     # it -- otherwise it's misleading noise in the B0 log (and could mask a
     # real misconfiguration if the path is stale).
-    gan_args = ["--neg_source", args.neg_source]
-    if args.neg_source == "gan":
+    gan_args = ["--neg_source", args.neg_source,
+                "--test_anomaly_source", args.test_anomaly_source]
+    if args.neg_source == "gan" or args.test_anomaly_source == "gan":
         gan_args += ["--gan_path", args.gan_path]
 
     # Train -- cwd=project_root so ADKGD's "./data/..." / "./checkpoints/..." resolve correctly.

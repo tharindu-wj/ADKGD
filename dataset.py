@@ -404,17 +404,33 @@ class Reader:
         # else:
         #
 
-        # idx = random.sample(range(0, self.num_original_triples - 1), num_anomalies)
-        # 随机选择一半的异常数量对应的索引，用于从原始三元组中选择三元组来生成第一部分的异常数据
-        idx = random.sample(range(0, self.num_original_triples - 1), self.num_anomalies // 2)
-        # 根据选定的索引从原始数据集中抽取三元组
-        selected_triples = [original_triples[idx[i]] for i in range(len(idx))]
-        # 生成anomalies。
-        # 生成anomalies1：用已有的entities对数据替换
-        # 生成anomalies2：从整个实体和关系空间中随机生成另一半的异常三元组，确保这些异常三元组不在原始数据集中
-        # anomalies1和anomalies2的数据之间，它们之间可能有重复的
-        anomalies = self.generate_anomalous_triples(selected_triples) \
-                    + self.generate_anomalous_triples_2(self.num_anomalies // 2)
+        # Source of the INJECTED eval anomalies (the label-1 triples ADKGD detects,
+        # and -- because ADKGD is transductive -- the anomalies polluting the graph).
+        #   'random' -> ADKGD original: half single-slot corruption of real triples,
+        #               half fully-random triples.
+        #   'gan'    -> KGSAGE corruptions. We OVERSAMPLE and keep only GENUINE
+        #               corruptions (differ from their source) so no real triple is
+        #               mislabelled as an anomaly -- the single-shot generator keeps
+        #               the original triple on a self-loop/collision (used_original).
+        test_source = getattr(args, 'test_anomaly_source', 'random')
+        if test_source == 'gan':
+            over = min(self.num_original_triples, int(self.num_anomalies * 1.5) + 1)
+            idx = random.sample(range(0, self.num_original_triples), over)
+            selected_triples = [original_triples[i] for i in idx]
+            corrupted = self._gan_negatives(selected_triples)
+            anomalies = [c for src, c in zip(selected_triples, corrupted)
+                         if tuple(c) != tuple(src)][:self.num_anomalies]
+            if len(anomalies) < self.num_anomalies:
+                print('[test-anomaly gan] only %d/%d genuine GAN anomalies '
+                      '(generator collided on the rest)'
+                      % (len(anomalies), self.num_anomalies))
+        else:
+            # 随机选择一半的异常数量对应的索引，从原始三元组中生成第一部分异常数据
+            idx = random.sample(range(0, self.num_original_triples - 1), self.num_anomalies // 2)
+            selected_triples = [original_triples[idx[i]] for i in range(len(idx))]
+            # anomalies1：用已有的entities替换；anomalies2：从整个空间随机生成另一半
+            anomalies = self.generate_anomalous_triples(selected_triples) \
+                        + self.generate_anomalous_triples_2(self.num_anomalies // 2)
 
         triple_label = [(original_triples[i], 0) for i in range(len(original_triples))]
         anomaly_label = [(anomalies[i], 1) for i in range(len(anomalies))]

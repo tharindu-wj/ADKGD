@@ -80,9 +80,13 @@ def main():
     #            eval anomalies. --gan_path points at the GAN .pt checkpoint.
     # Only `Reader.get_data()` consults these; everything downstream is unchanged.
     parser.add_argument('--neg_source', default='random', choices=['random', 'gan'],
-                        help="source of training-time negatives (set C); default 'random' = baseline behaviour")
+                        help="source of TRAINING negatives (set C); default 'random' = baseline behaviour")
+    # Source of the INJECTED eval anomalies (Reader.inject_anomaly). Independent of
+    # --neg_source, so the 2x2 experiment matrix (train x test) is a pair of flags.
+    parser.add_argument('--test_anomaly_source', default='random', choices=['random', 'gan'],
+                        help="source of the INJECTED eval anomalies; 'random' = baseline, 'gan' = KGSAGE")
     parser.add_argument('--gan_path', default='experiments/kgsage/outputs/checkpoints/dummy.pt',
-                        help="path to the KGSAGE GAN .pt checkpoint (only used when --neg_source=gan; missing file is a hard error)")
+                        help="path to the KGSAGE GAN .pt checkpoint (used when EITHER --neg_source or --test_anomaly_source is 'gan'; missing file is a hard error)")
     args = parser.parse_args()
 
     # data_name = args.dataset

@@ -1,0 +1,80 @@
+#!/bin/bash
+# Experiment 2 (cross-check): ADKGD trained on KGSAGE negatives, tested on
+# RULE-BASED anomalies. Does training on KGSAGE negatives still detect the
+# ordinary (random) anomalies the baseline uses?
+#
+#   sbatch experiments/slurm/exp2_crosscheck.slurm
+#   DATASET=WN18RR sbatch experiments/slurm/exp2_crosscheck.slurm
+#
+# Matrix: Exp1 random/random  Exp2 gan/random <-  Exp3 random/gan  Exp4 gan/gan
+# Requires a trained KGSAGE checkpoint (train_gan_<dataset>.slurm).
+
+#SBATCH --job-name=exp2_crosscheck
+#SBATCH --output=%x-%j.out.txt
+#SBATCH --time=01:30:00
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:tesla_v100:1
+#SBATCH --account=cse
+
+set -eo pipefail
+
+# ---- EDIT THESE PATHS to match your HPC layout ----
+PROJECT_DIR="$HOME/ADKGD"
+CONDA_ENV="$HOME/envs/adkgd"
+
+# ---- Experiment knobs (override via env vars) ----
+DATASET="${DATASET:-FB15K-237}"
+ANOMALY_RATIO="${ANOMALY_RATIO:-0.05}"
+SEED="${SEED:-0}"
+NEG_SOURCE="gan"         # TRAIN negatives = KGSAGE
+TEST_SOURCE="random"     # TEST (injected) anomalies = rule-based
+
+echo "Job $SLURM_JOB_ID on $(hostname) starting $(date)"
+echo "Exp 2 (cross-check) | dataset=$DATASET | train=$NEG_SOURCE test=$TEST_SOURCE | anomaly_ratio=$ANOMALY_RATIO seed=$SEED"
+nvidia-smi || echo "WARNING: nvidia-smi failed (no GPU visible?)"
+
+module load Miniconda3
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV" || echo "WARNING: conda activate failed; using absolute python path below."
+
+PY="$CONDA_ENV/bin/python"
+if [[ ! -x "$PY" ]]; then
+    echo "ERROR: $PY does not exist or is not executable." >&2
+    exit 1
+fi
+echo "Using python: $PY"
+
+export OMP_NUM_THREADS="$SLURM_CPUS_PER_TASK"
+export MKL_NUM_THREADS="$SLURM_CPUS_PER_TASK"
+export PYTHONUNBUFFERED=1
+
+$PY -c "import torch; assert torch.cuda.is_available(), 'torch cannot see a GPU: install the CUDA wheel'; print('GPU:', torch.cuda.get_device_name(0), '| torch', torch.__version__)"
+$PY -c "import numpy, sklearn, matplotlib; print('deps ok')"
+
+cd "$PROJECT_DIR"
+mkdir -p "checkpoints/$DATASET"
+
+# KGSAGE checkpoint (default derived from DATASET: FB15K-237 -> kgsage_fb15k237.pt).
+# GAN inference is PyG-free (cached E' in the checkpoint) — no torch_geometric needed here.
+CKPT_TAG=$(echo "$DATASET" | tr '[:upper:]' '[:lower:]' | tr -d '-')
+GAN_CKPT="${GAN_CKPT:-experiments/kgsage/outputs/checkpoints/kgsage_${CKPT_TAG}.pt}"
+if [[ ! -f "$GAN_CKPT" ]]; then
+    echo "ERROR: GAN checkpoint $GAN_CKPT not found." >&2
+    echo "Train it: sbatch experiments/kgsage/slurm/train_gan_${CKPT_TAG}.slurm" >&2
+    exit 1
+fi
+echo "GAN checkpoint: $GAN_CKPT"
+
+$PY experiments/run_experiment.py \
+    --dataset "$DATASET" \
+    --anomaly_ratio "$ANOMALY_RATIO" \
+    --seed "$SEED" \
+    --max_epoch 1 \
+    --neg_source "$NEG_SOURCE" \
+    --test_anomaly_source "$TEST_SOURCE" \
+    --gan_path "$GAN_CKPT"
+
+echo "Done $(date)"
