@@ -39,6 +39,8 @@ _LAZY_ATTRS = {
     "KGSAGEDiscriminator":  "kgsage.gan.models",
     "gumbel_softmax":       "kgsage.gan.models",
     "soft_embedding":       "kgsage.gan.models",
+    # RGCN context encoder (needs torch + torch_geometric)
+    "KGSAGEEncoder":        "kgsage.gan.encoder",
     # Inference (needs torch + the GAN models)
     "generate_negatives":   "kgsage.inference",
     "load_checkpoint":      "kgsage.inference",
@@ -69,6 +71,8 @@ __all__ = [
     "KGSAGEDiscriminator",
     "gumbel_softmax",
     "soft_embedding",
+    # RGCN encoder - lazy-loaded; requires torch + torch_geometric at access time
+    "KGSAGEEncoder",
     "generate_negatives",
     "load_checkpoint",
 ]

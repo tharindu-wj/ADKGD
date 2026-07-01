@@ -1,142 +1,203 @@
-"""KGSAGE GAN for knowledge-graph triple corruption.
+"""KGSAGE conditional GAN for knowledge-graph triple corruption (B1a).
 
-The job of this GAN:
-  Given a real triple like (Alice, born_in, Australia), produce a fake-but-
-  plausible triple like (Carol, born_in, Australia) — same shape, slightly
-  wrong content.
+WHAT THIS GAN DOES
+    Given a real triple like (Alice, born_in, Australia), the generator produces
+    a fake-but-plausible triple with ONE slot corrupted, e.g.
+    (Alice, born_in, Canada). Those corruptions become ADKGD's training negatives.
 
-Two networks:
-  KGSAGEGenerator     — takes a real triple + noise, outputs the fake triple.
-  KGSAGEDiscriminator — sees a pair (real, candidate) and scores whether the
-                        candidate looks real. The generator tries to fool it.
+WHAT MAKES B1a DIFFERENT — neighbourhood conditioning
+    The generator does NOT learn its own entity embeddings. Instead it is
+    CONDITIONED on E' — the context embeddings produced by the RGCN encoder
+    (kgsage.gan.encoder), where E'[e] summarises entity e's neighbourhood. So the
+    generator sees each entity's surroundings and can pick a corruption that is
+    type-valid but contradicts the head's converging context (a "near-miss" the
+    ADKGD neighbourhood channel must then learn to catch).
 
-Both are plain MLPs that learn their OWN entity/relation embedding tables from
-scratch during GAN training. One slot (head, relation, or tail) is corrupted
-per generated negative — the convention used by the ADKGD baseline.
+    The generator's conditioning vector is:
+        [ E'[head] | relation_embedding[relation] | E'[tail] | noise ]
+    Entity slots come from E' (supplied by the encoder at forward time); the
+    relation slot uses the generator's OWN learned relation embedding table.
+
+TWO NETWORKS
+    KGSAGEGenerator     - entity context + noise -> corrupted-triple logits (3 heads)
+    KGSAGEDiscriminator - scores a (real triple, candidate triple) embedding pair
+
+The entity embedding table used everywhere (conditioning, and embedding the
+generator's soft output so the discriminator can score it) is E'. The encoder
+that produces E' is trained JOINTLY with this GAN — gradients flow back through
+E' into the encoder.
 """
 import torch
 import torch.nn as nn
 
 
 class KGSAGEGenerator(nn.Module):
-    """Generator: real triple + noise -> fake triple logits (one head per slot)."""
+    """Generator: entity context + noise -> logits for a one-slot corruption.
+
+    Conditioned on externally-supplied entity context vectors E' (from the RGCN
+    encoder) instead of learning its own entity embeddings. It keeps a small
+    learned RELATION embedding table, because relations are not entities and the
+    encoder only contextualises entities.
+    """
 
     def __init__(self, n_ent, n_rel, dim=64, z_dim=16, hidden=256):
         super().__init__()
-        # Embedding tables: row i is a vector representing entity (or relation) i.
-        # These are LEARNED during training — the GAN figures out what makes a
-        # good vector representation of each entity/relation.
-        self.ent_emb = nn.Embedding(n_ent, dim)
-        self.rel_emb = nn.Embedding(n_rel, dim)
-        nn.init.normal_(self.ent_emb.weight, std=0.1)
-        nn.init.normal_(self.rel_emb.weight, std=0.1)
 
-        # MLP: combine (h_emb, r_emb, t_emb, noise) into one hidden vector.
-        self.mlp = nn.Sequential(
+        # Learned relation embedding table. Entities are deliberately NOT stored
+        # here — the generator receives entity context E' from the encoder at
+        # forward time (so the encoder, not the generator, owns entity vectors).
+        self.relation_embedding = nn.Embedding(n_rel, dim)
+        nn.init.normal_(self.relation_embedding.weight, std=0.1)
+
+        # MLP that turns the conditioning vector into a shared hidden state.
+        # Input width = E'[head] (dim) + relation_embedding (dim)
+        #             + E'[tail] (dim) + noise (z_dim)  =  3*dim + z_dim.
+        self.conditioning_mlp = nn.Sequential(
             nn.Linear(3 * dim + z_dim, hidden),
             nn.ReLU(),
             nn.Linear(hidden, hidden),
             nn.ReLU(),
         )
 
-        # Three "heads" — each predicts logits over a different vocabulary:
-        #   head_out -> which entity should the corrupted head be?
-        #   rel_out  -> which relation?
-        #   tail_out -> which entity for the tail?
-        # The corrupter (in inference.py) picks ONE of these per call.
-        self.head_out = nn.Linear(hidden, n_ent)
-        self.rel_out = nn.Linear(hidden, n_rel)
-        self.tail_out = nn.Linear(hidden, n_ent)
+        # Three prediction heads — each maps the hidden state to a distribution
+        # over the vocabulary for ONE slot. The corrupter (inference.py) uses
+        # exactly one of these per generated negative.
+        self.head_slot_predictor = nn.Linear(hidden, n_ent)      # entity for a new head
+        self.relation_slot_predictor = nn.Linear(hidden, n_rel)  # relation for a new relation
+        self.tail_slot_predictor = nn.Linear(hidden, n_ent)      # entity for a new tail
 
-        # Save sizes so the checkpoint loader can rebuild this model.
+        # Remember sizes so the checkpoint loader can rebuild this module.
         self.n_ent = n_ent
         self.n_rel = n_rel
         self.dim = dim
         self.z_dim = z_dim
         self.hidden = hidden
 
-    def lookup(self, h, r, t):
-        """Look up the embedding vectors for a batch of (h, r, t) triples."""
-        return self.ent_emb(h), self.rel_emb(r), self.ent_emb(t)
+    def gather_conditioning_embeddings(self, head_ids, relation_ids, tail_ids,
+                                       entity_context):
+        """Collect the vectors that condition generation for a batch of triples.
 
-    def forward(self, h, r, t, z):
-        """Run the generator.
+        Entity slots are looked up in `entity_context` (E' from the encoder) so
+        the generator sees each entity's neighbourhood; the relation slot uses
+        the generator's own learned relation embedding.
 
-        Inputs:
-          h, r, t : (batch,) integer IDs of the real triple
-          z       : (batch, z_dim) random noise vector
+        Args:
+            head_ids, relation_ids, tail_ids : LongTensor [batch] real-triple ids.
+            entity_context : FloatTensor [n_ent, dim] = E' from the encoder.
+
+        Returns:
+            (head_context, relation_embedding, tail_context), each [batch, dim].
+        """
+        head_context = entity_context[head_ids]                 # E'[head]
+        tail_context = entity_context[tail_ids]                 # E'[tail]
+        relation_embedding = self.relation_embedding(relation_ids)
+        return head_context, relation_embedding, tail_context
+
+    def forward(self, head_ids, relation_ids, tail_ids, noise, entity_context):
+        """Run the generator for a batch of real triples.
+
+        Args:
+            head_ids, relation_ids, tail_ids : LongTensor [batch] real-triple ids.
+            noise          : FloatTensor [batch, z_dim] random noise (adds variety
+                             so the same triple can yield different corruptions).
+            entity_context : FloatTensor [n_ent, dim] = E' from the RGCN encoder.
+                             Gradients flow back through this, which is what makes
+                             the encoder train jointly with the generator.
 
         Returns three logit tensors:
-          head_logits : (batch, n_ent)  — scores over all entities for new head
-          rel_logits  : (batch, n_rel)  — scores over all relations
-          tail_logits : (batch, n_ent)  — scores over all entities for new tail
+            head_logits     : [batch, n_ent] scores over entities for a new head
+            relation_logits : [batch, n_rel] scores over relations
+            tail_logits     : [batch, n_ent] scores over entities for a new tail
         """
-        h_emb, r_emb, t_emb = self.lookup(h, r, t)
-        x = torch.cat([h_emb, r_emb, t_emb, z], dim=1)
-        hidden = self.mlp(x)
-        return self.head_out(hidden), self.rel_out(hidden), self.tail_out(hidden)
+        head_context, relation_embedding, tail_context = self.gather_conditioning_embeddings(
+            head_ids, relation_ids, tail_ids, entity_context,
+        )
+        conditioning_vector = torch.cat(
+            [head_context, relation_embedding, tail_context, noise], dim=1,
+        )
+        hidden_state = self.conditioning_mlp(conditioning_vector)
+        return (
+            self.head_slot_predictor(hidden_state),
+            self.relation_slot_predictor(hidden_state),
+            self.tail_slot_predictor(hidden_state),
+        )
 
 
 class KGSAGEDiscriminator(nn.Module):
-    """Discriminator: sees a (real triple, candidate triple) pair and scores it.
+    """Discriminator: score a (real triple, candidate triple) embedding pair.
 
-    High score = "candidate looks like a real fact in this graph."
-    Low score  = "candidate looks fake."
-
-    The generator wins when the discriminator can't tell its outputs apart
-    from real triples.
+    High score = "the candidate looks like a real fact in this graph."
+    Low score  = "the candidate looks fake."
+    The generator wins when the discriminator can no longer tell its corruptions
+    apart from real triples. Both triples are embedded in the SAME space the
+    generator conditions on (E' for entities, the relation table for relations),
+    so the discriminator judges realness in context.
     """
 
     def __init__(self, dim=64, hidden=128):
         super().__init__()
-        # Input is the two triple embeddings concatenated:
-        #   real_emb     -> 3 * dim
-        #   candidate    -> 3 * dim
-        #   total        -> 6 * dim
-        self.mlp = nn.Sequential(
+        # Input = real triple embedding (3*dim) + candidate embedding (3*dim).
+        self.scoring_mlp = nn.Sequential(
             nn.Linear(6 * dim, hidden),
             nn.LeakyReLU(0.2),
             nn.Linear(hidden, hidden),
             nn.LeakyReLU(0.2),
-            nn.Linear(hidden, 1),  # one scalar score per pair
+            nn.Linear(hidden, 1),  # one realness score per pair
         )
 
-    def forward(self, real_emb, candidate_emb):
+    def forward(self, anchor_triple_embedding, candidate_triple_embedding):
         """Score a batch of (real, candidate) embedding pairs.
 
-        real_emb, candidate_emb : (batch, 3, dim) each
-        Returns : (batch, 1) scores (logits — apply sigmoid for probability)
+        Args:
+            anchor_triple_embedding    : [batch, 3, dim] the real triple (h,r,t).
+            candidate_triple_embedding : [batch, 3, dim] the candidate triple.
+
+        Returns:
+            [batch, 1] realness logits (apply sigmoid for a probability).
         """
-        x = torch.cat([real_emb.flatten(1), candidate_emb.flatten(1)], dim=1)
-        return self.mlp(x)
+        pair = torch.cat(
+            [anchor_triple_embedding.flatten(1), candidate_triple_embedding.flatten(1)],
+            dim=1,
+        )
+        return self.scoring_mlp(pair)
 
 
 def gumbel_softmax(logits, tau=1.0):
-    """Differentiable categorical sample.
+    """Differentiable categorical sample (Gumbel-Softmax trick).
 
-    Normal `argmax` is not differentiable, so we can't backprop through it.
-    The Gumbel-Softmax trick:
-      1. Add Gumbel noise to the logits (so the sample is random).
-      2. Take softmax with a low temperature `tau` (output becomes near-one-hot).
-    The result looks like a one-hot vector but is smooth, so gradients flow.
-
-    Used during training so we can sample a fake triple, look up its
-    embedding, and let the gradient flow back into the generator.
+    A plain argmax is not differentiable, so we cannot backprop through a hard
+    pick. Instead we (1) add Gumbel noise to the logits, then (2) take a
+    low-temperature softmax so the result is near one-hot but smooth. Gradients
+    then flow, letting us sample a corrupted slot, embed it, and update G.
     """
     noise = torch.rand_like(logits).clamp_(1e-10, 1.0 - 1e-10)
     gumbel = -torch.log(-torch.log(noise))
     return torch.softmax((logits + gumbel) / tau, dim=-1)
 
 
-def soft_embedding(soft_h, soft_r, soft_t, ent_weight, rel_weight):
-    """Turn near-one-hot vectors back into embeddings, differentiably.
+def soft_embedding(soft_head, soft_relation, soft_tail,
+                   entity_embedding_table, relation_embedding_table):
+    """Turn near-one-hot slot distributions into a triple embedding, differentiably.
 
-    `soft @ embedding_table` is the matrix-multiplication way of saying
-    "look up the embedding". When `soft` is exactly one-hot, this is the same
-    as `embedding_table[argmax(soft)]`. When `soft` is near-one-hot (from
-    Gumbel-Softmax), the result is a smooth average that supports gradients.
+    `soft @ table` is the matrix-multiply form of an embedding lookup: when
+    `soft` is exactly one-hot it equals table[argmax(soft)]; when it is
+    near-one-hot (from gumbel_softmax) it is a smooth average that supports
+    gradients.
+
+    For B1a the `entity_embedding_table` is E' (the encoder's context table), so
+    the candidate triple is embedded in the SAME context space the discriminator
+    and the conditioning use.
+
+    Args:
+        soft_head, soft_tail   : [batch, n_ent] near-one-hot entity distributions.
+        soft_relation          : [batch, n_rel] near-one-hot relation distribution.
+        entity_embedding_table : [n_ent, dim] = E' (encoder context table).
+        relation_embedding_table : [n_rel, dim] the generator's relation table.
+
+    Returns:
+        [batch, 3, dim] the (head, relation, tail) embeddings stacked.
     """
-    h_emb = soft_h @ ent_weight
-    r_emb = soft_r @ rel_weight
-    t_emb = soft_t @ ent_weight
-    return torch.stack([h_emb, r_emb, t_emb], dim=1)
+    head_embedding = soft_head @ entity_embedding_table
+    relation_embedding = soft_relation @ relation_embedding_table
+    tail_embedding = soft_tail @ entity_embedding_table
+    return torch.stack([head_embedding, relation_embedding, tail_embedding], dim=1)

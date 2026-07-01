@@ -5,11 +5,17 @@ directory. The loader is format-agnostic — works for FB15K-237, WN18RR,
 NELL-995, and any custom dataset in the same format.
 
 It returns integer (h, r, t) triples plus the string<->int vocabulary maps,
-which is everything the GAN trainer and inference need.
+which is everything the GAN trainer and inference need. It also returns a
+directed edge list (edge_index / edge_type) over the TRAIN graph, which the
+RGCN context encoder (kgsage.gan.encoder) consumes for message passing.
 
 Vocab strategy: first-seen ordering. Train.txt is loaded first, so its entities
 and relations get the lowest IDs. This matches the standard KGE convention and
 means valid/test only-entities (if any) get higher IDs.
+
+Dependency note: this module is deliberately standard-library only (no torch,
+no numpy) so that `import kgsage` succeeds on machines without torch. The edge
+list is therefore returned as plain Python lists — the encoder tensorises it.
 """
 import os
 
@@ -28,6 +34,8 @@ def load_kg(data_dir):
       triples_test       : list of (h, r, t) integer tuples
       triple_set_train   : set of train triples (collision check)
       triple_set_all     : set of train+valid+test triples (collision filter)
+      edge_index         : [[src...], [dst...]] over train (shape [2, E]), lists
+      edge_type          : [rel...] over train (shape [E]), list
       n_ent, n_rel       : vocabulary sizes
     """
     # ─── Step 1: parse train.txt first to lock in the vocab order ──────
@@ -64,6 +72,9 @@ def load_kg(data_dir):
     triple_set_train = set(triples_train)
     triple_set_all = set(triples_train) | set(triples_valid) | set(triples_test)
 
+    # ─── Step 4: build the message-passing edge list over the train graph ──
+    edge_index, edge_type = build_edge_index(triples_train)
+
     return {
         "ent2id": ent2id,
         "rel2id": rel2id,
@@ -74,9 +85,31 @@ def load_kg(data_dir):
         "triples_test": triples_test,
         "triple_set_train": triple_set_train,
         "triple_set_all": triple_set_all,
+        "edge_index": edge_index,
+        "edge_type": edge_type,
         "n_ent": len(ent2id),
         "n_rel": len(rel2id),
     }
+
+
+def build_edge_index(triples):
+    """Build a directed edge list for RGCN message passing from int triples.
+
+    Returns (edge_index, edge_type) as PLAIN PYTHON LISTS so this module stays
+    torch/numpy-free (see the module docstring). The encoder tensorises them:
+
+      edge_index : [[src0, src1, ...], [dst0, dst1, ...]]   logical shape [2, E]
+      edge_type  : [rel0, rel1, ...]                        logical shape [E]
+
+    One directed edge  h -> t  per triple, labelled with relation r (edge_type
+    in [0, n_rel)). INVERSE edges (t -> h) are intentionally NOT added here —
+    the RGCN encoder appends them itself, so it owns the num_relations = 2*n_rel
+    modelling decision and loaders stays purely structural.
+    """
+    src = [h for (h, r, t) in triples]
+    dst = [t for (h, r, t) in triples]
+    rel = [r for (h, r, t) in triples]
+    return [src, dst], rel
 
 
 def _parse_split(file_path, ent2id, rel2id, add_to_vocab):

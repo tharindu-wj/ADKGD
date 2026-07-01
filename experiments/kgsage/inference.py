@@ -9,7 +9,8 @@ The 8-step pipeline (one negative per real triple):
   STEP 1: Translate ADKGD integer IDs -> strings -> GAN integer IDs.
           (ADKGD and the GAN may number the same entity differently; strings
            are the lingua franca that keeps both worlds aligned.)
-  STEP 2: Run the generator forward to get 3 logit vectors.
+  STEP 2: Run the generator forward to get 3 logit vectors, CONDITIONED on the
+          cached context table E' (loaded from the checkpoint — no PyG needed).
           (one over entities for the new head, one over relations for the new
            rel, one over entities for the new tail. These are PROBABILITIES,
            not picks yet.)
@@ -41,6 +42,15 @@ def load_checkpoint(ckpt_path, device=None):
 
     payload = torch.load(ckpt_path, map_location=device, weights_only=False)
 
+    # B1a checkpoints cache the RGCN context table E' so inference can condition
+    # the generator without ever running the encoder (or importing PyG).
+    if "context_embeddings" not in payload:
+        raise KeyError(
+            f"Checkpoint {ckpt_path!r} has no 'context_embeddings' (E'). It looks "
+            "like an old pre-B1a checkpoint. Retrain with `python -m "
+            "kgsage.cli.train_gan ...` — the current pipeline caches E' automatically."
+        )
+
     gen_kwargs = dict(
         n_ent=payload["n_ent"],
         n_rel=payload["n_rel"],
@@ -53,12 +63,17 @@ def load_checkpoint(ckpt_path, device=None):
     G.load_state_dict(payload["generator_state"])
     G.eval()
 
+    # Cached context table E' [n_ent, dim]. Move to `device` ONCE here; the
+    # generator conditions on it every forward. This is the "PyG-free" firewall.
+    entity_context = payload["context_embeddings"].to(device)
+
     # The set of real triples (in the GAN's ID space) for collision filtering.
     real_triple_set = set(tuple(t) for t in payload["real_triples"])
 
     return {
         "generator": G,
         "device": device,
+        "entity_context": entity_context,
         "ent2id": payload["ent2id"],
         "rel2id": payload["rel2id"],
         "id2ent": payload["id2ent"],
@@ -125,6 +140,7 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
 
     G = payload["generator"]
     device = payload["device"]
+    entity_context = payload["entity_context"]  # cached E' [n_ent, dim]
     ent2id_gan = payload["ent2id"]
     rel2id_gan = payload["rel2id"]
     id2ent_gan = payload["id2ent"]
@@ -163,7 +179,8 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
 
         with torch.no_grad():
             z = torch.randn(n, z_dim, device=device)
-            head_logits, rel_logits, tail_logits = G(h_in, r_in, t_in, z)
+            # Condition on the cached context table E' (STEP 2).
+            head_logits, rel_logits, tail_logits = G(h_in, r_in, t_in, z, entity_context)
 
         # STEP 3: Pick which slot to corrupt - uniform random per triple.
         slots = rng.integers(3, size=n)
