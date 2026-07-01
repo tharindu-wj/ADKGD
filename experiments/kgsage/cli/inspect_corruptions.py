@@ -114,6 +114,81 @@ def neighbourhood_lines(entity, gi, id2ent, id2rel, cap):
 
 
 # --------------------------------------------------------------------------- #
+# Readable entity names (optional: --labels file and/or --wordnet)            #
+# --------------------------------------------------------------------------- #
+def load_label_map(labels_file):
+    """Optional TSV `entity_string<TAB>readable_name` -> dict (dataset-agnostic)."""
+    mapping = {}
+    if not labels_file:
+        return mapping
+    with open(labels_file, encoding="utf-8") as f:
+        for line in f:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= 2:
+                mapping[parts[0]] = parts[1]
+    return mapping
+
+
+def make_wordnet_resolver(enabled):
+    """Best-effort resolver for numeric WordNet synset offsets (WN18RR).
+
+    WN18RR entity IDs are bare offsets with NO part-of-speech, so we try POS in
+    order (noun, verb, adj, adv) and take the first synset that resolves. This is
+    best-effort — an offset that exists for several POS may resolve to the wrong
+    one — but a readable synset name (e.g. `land_reform.n.01`) helps a human far
+    more than a bare number. Returns a function, or None if disabled/unavailable.
+    """
+    if not enabled:
+        return None
+    try:
+        from nltk.corpus import wordnet as wn
+    except Exception:
+        print("  [--wordnet] nltk/WordNet unavailable -> showing raw offsets. Enable with: "
+              "pip install nltk && python -c \"import nltk; nltk.download('wordnet')\"", flush=True)
+        return None
+    import warnings
+    cache = {}
+
+    def resolve(ent):
+        if ent not in cache:
+            name = ent
+            if ent.isdigit():
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")  # nltk warns per wrong-POS probe
+                    for pos in ("n", "v", "a", "r"):
+                        try:
+                            name = wn.synset_from_pos_and_offset(pos, int(ent)).name()
+                            break
+                        except Exception:
+                            continue
+            cache[ent] = name
+        return cache[ent]
+    return resolve
+
+
+class ReadableEntities:
+    """Dict-like id -> readable string: label map > WordNet resolver > raw. Lazy + cached.
+
+    A drop-in replacement for id2ent, so every entity display in the report/CSV
+    goes through it without touching the render functions.
+    """
+    def __init__(self, id2ent, label_map, wn_resolve):
+        self.id2ent, self.label_map, self.wn_resolve, self.cache = id2ent, label_map, wn_resolve, {}
+
+    def __getitem__(self, i):
+        if i not in self.cache:
+            s = self.id2ent[i]
+            if s in self.label_map:
+                r = self.label_map[s]
+            elif self.wn_resolve is not None:
+                r = self.wn_resolve(s)
+            else:
+                r = s
+            self.cache[i] = r
+        return self.cache[i]
+
+
+# --------------------------------------------------------------------------- #
 # Corruption generation                                                       #
 # --------------------------------------------------------------------------- #
 def model_corruption(payload, h, r, t, slot):
@@ -239,6 +314,10 @@ def main():
     ap.add_argument("--corruptions", type=int, default=3, help="model draws per triple")
     ap.add_argument("--neighbours", type=int, default=8, help="max neighbour edges shown per entity")
     ap.add_argument("--out_dir", default="experiments/kgsage/outputs/inspect")
+    ap.add_argument("--wordnet", action="store_true",
+                    help="resolve numeric WordNet synset offsets (WN18RR) to readable names via nltk")
+    ap.add_argument("--labels", default=None,
+                    help="optional TSV `entity_string<TAB>readable_name` to display readable entities")
     ap.add_argument("--device", default="cpu")
     args = ap.parse_args()
 
@@ -250,6 +329,15 @@ def main():
     id2ent, id2rel, rel2id = payload["id2ent"], payload["id2rel"], payload["rel2id"]
     n_ent, E, real_set = payload["n_ent"], payload["entity_context"], payload["real_triple_set"]
     print(f"  {n_ent:,} entities, {payload['n_rel']:,} relations, {len(real_set):,} real triples", flush=True)
+
+    # Optional readable entity names (label file and/or WordNet offset resolver).
+    # Wrapping id2ent makes every entity display in the report/CSV readable.
+    label_map = load_label_map(args.labels)
+    wn_resolve = make_wordnet_resolver(args.wordnet)
+    if label_map or wn_resolve:
+        modes = ([f"labels-file ({len(label_map):,})"] if label_map else []) + (["wordnet"] if wn_resolve else [])
+        print(f"  entity names: {', '.join(modes)}", flush=True)
+    id2ent = ReadableEntities(id2ent, label_map, wn_resolve)
 
     # Neighbourhoods come from ALL real triples (full context regardless of split).
     print("Building graph index ...", flush=True)
