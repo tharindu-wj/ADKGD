@@ -12,18 +12,20 @@ WHERE IT LIVES IN THE PIPELINE
     on the graph, then the FINAL E' is cached in the checkpoint. Inference
     (PHASE 2, inside ADKGD) replays that cached E' and never imports PyG.
 
-WHY FastRGCNConv
-    FB15K-237 has ~237 relations. RGCNConv loops over relations (slow with many
-    relations); FastRGCNConv processes all relations at once (faster, more
-    memory). Basis decomposition (num_bases) keeps the per-relation parameter
-    count and memory in check. FastRGCNConv and RGCNConv share the same
-    constructor, so swapping to RGCNConv on OOM is a one-line change.
+WHY RGCNConv (not FastRGCNConv)
+    Both are relation-aware and share the same constructor. FastRGCNConv is
+    faster because it processes all relations at once — but it materialises a
+    per-edge [E, dim, dim] weight tensor, which on FB15K-237 (~544k directed
+    edges incl. inverses, dim=64) needs ~8.9 GB PER LAYER and OOMs. RGCNConv
+    instead LOOPS over relations, keeping memory at O(E * dim) — it fits
+    comfortably. Basis decomposition (num_bases) keeps the parameter count small.
+    The relation loop is a little slower, but correctness/fit beats speed here.
 """
 import torch
 import torch.nn as nn
 
 try:
-    from torch_geometric.nn import FastRGCNConv
+    from torch_geometric.nn import RGCNConv
 except ImportError as exc:  # pragma: no cover - environment guard
     raise ImportError(
         "KGSAGEEncoder requires torch_geometric (PyG). Install it with:\n"
@@ -69,7 +71,7 @@ class KGSAGEEncoder(nn.Module):
 
         nb = min(num_bases, eff_rel)  # num_bases must not exceed relation count
         self.convs = nn.ModuleList(
-            FastRGCNConv(dim, dim, eff_rel, num_bases=nb, aggr="mean")
+            RGCNConv(dim, dim, eff_rel, num_bases=nb, aggr="mean")
             for _ in range(num_layers)
         )
 

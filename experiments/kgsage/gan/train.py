@@ -63,14 +63,20 @@ from kgsage.gan.targets import ContradictionTargetSampler
 def train_one_epoch(encoder, generator, discriminator,
                     optimizer_generator, optimizer_discriminator,
                     real_all, target_all, edge_index, edge_type,
-                    batch_size, device, recon_weight=10.0):
+                    batch_size, device, recon_weight=10.0, context_refresh=1):
     """One pass over the training pairs. Returns (avg_D_loss, avg_G_loss).
 
-    Each batch does ONE encoder forward to produce the context table E'. That
-    tensor is:
-      - DETACHED for the discriminator step (so only D updates there), and
-      - reused GRAD-ENABLED for the generator step, so gradients flow
-        generator -> E' -> encoder and the encoder trains jointly.
+    The context table E' is produced by a FULL-GRAPH RGCN forward, which is
+    expensive on big graphs. `context_refresh` controls how often it is
+    recomputed WITH gradients:
+      - every `context_refresh` batches E' is recomputed grad-enabled, and that
+        batch's generator step backprops generator -> E' -> encoder (joint
+        training);
+      - between refreshes the last E' is reused DETACHED (skips the RGCN forward).
+    context_refresh=1 gives exact per-batch joint training (right for small
+    graphs); larger values trade encoder-update frequency for speed (needed on
+    big graphs like FB15K-237 to fit the time budget). The discriminator step
+    always uses a detached E'.
 
     `real_all` / `target_all` are pre-packed [N, 3] tensors; each epoch we just
     permute and slice — no Python lists, no per-batch tensor construction.
@@ -83,8 +89,9 @@ def train_one_epoch(encoder, generator, discriminator,
     total_discriminator_loss = 0.0
     total_generator_loss = 0.0
     n_batches = 0
+    entity_context = None
 
-    for start in range(0, n_total, batch_size):
+    for batch_i, start in enumerate(range(0, n_total, batch_size)):
         end = min(start + batch_size, n_total)
         if end - start < 2:
             continue
@@ -95,10 +102,16 @@ def train_one_epoch(encoder, generator, discriminator,
         target_head, target_relation, target_tail = target_triples[:, 0], target_triples[:, 1], target_triples[:, 2]
         batch = end - start
 
-        # Context table E' for THIS step (grad-enabled). We detach a copy for the
-        # discriminator step and reuse this grad-enabled tensor for the generator
-        # step, so the RGCN runs only ONCE per batch.
-        entity_context = encoder(edge_index, edge_type)
+        # Refresh the grad-enabled context table E' every `context_refresh`
+        # batches (a full-graph RGCN forward). On a refresh batch the generator
+        # step backprops G -> E' -> encoder (joint training); between refreshes we
+        # reuse E' DETACHED, skipping the expensive forward. context_refresh=1 =
+        # exact per-batch joint training.
+        if entity_context is None or batch_i % context_refresh == 0:
+            entity_context = encoder(edge_index, edge_type)
+            generator_context = entity_context            # grad-enabled
+        else:
+            generator_context = entity_context.detach()   # values only, no encoder grad
 
         # ---------------- Discriminator step (E' detached) ----------------
         with torch.no_grad():
@@ -131,21 +144,23 @@ def train_one_epoch(encoder, generator, discriminator,
         loss_discriminator.backward()
         optimizer_discriminator.step()
 
-        # ------------- Generator + encoder step (E' grad-enabled) -------------
+        # ------------- Generator + encoder step -------------
+        # generator_context carries encoder gradients on refresh batches (joint
+        # training) and is a detached snapshot otherwise.
         optimizer_generator.zero_grad()
         noise = torch.randn(batch, generator.z_dim, device=device)
         head_logits, relation_logits, tail_logits = generator(
-            real_head, real_relation, real_tail, noise, entity_context,
+            real_head, real_relation, real_tail, noise, generator_context,
         )
         soft_head = gumbel_softmax(head_logits)
         soft_relation = gumbel_softmax(relation_logits)
         soft_tail = gumbel_softmax(tail_logits)
         candidate_embedding = soft_embedding(
             soft_head, soft_relation, soft_tail,
-            entity_context, generator.relation_embedding.weight,
+            generator_context, generator.relation_embedding.weight,
         )
         real_embedding = torch.stack(list(generator.gather_conditioning_embeddings(
-            real_head, real_relation, real_tail, entity_context)), dim=1)
+            real_head, real_relation, real_tail, generator_context)), dim=1)
 
         # Adversarial loss: G wants D to think the candidate is REAL (label 1).
         score_candidate_for_generator = discriminator(real_embedding, candidate_embedding)
@@ -226,6 +241,10 @@ def main():
     ap.add_argument("--k_candidates", type=int, default=20,
                     help="Type-valid fillers considered per triple when picking the "
                          "context-distant target")
+    ap.add_argument("--context_refresh", type=int, default=1,
+                    help="Recompute the RGCN context table E' (with encoder gradients) "
+                         "every N batches. 1 = exact per-batch joint training (small "
+                         "graphs); raise it (e.g. 8) on big graphs to fit the time budget")
     ap.add_argument("--device", default=None)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -281,11 +300,11 @@ def main():
         discriminator.parameters(), lr=args.lr * 0.25, betas=(0.5, 0.999),
     )
 
-    print(f"Encoder: FastRGCNConv x{args.encoder_layers}  "
+    print(f"Encoder: RGCNConv x{args.encoder_layers}  "
           f"num_bases={min(args.num_bases, encoder.eff_rel)}  "
           f"inverse_edges={not args.no_inverse}  eff_relations={encoder.eff_rel}", flush=True)
     print(f"Training: {args.epochs} epochs, batch_size = {args.batch_size}, "
-          f"recon_weight = {args.recon_weight}", flush=True)
+          f"recon_weight = {args.recon_weight}, context_refresh = {args.context_refresh}", flush=True)
     print("-" * 60, flush=True)
 
     # Wall-clock timing. datetime.now() for human-readable timestamps in the log;
@@ -305,7 +324,7 @@ def main():
             encoder, generator, discriminator,
             optimizer_generator, optimizer_discriminator,
             real_all, target_all, edge_index, edge_type,
-            args.batch_size, device, args.recon_weight,
+            args.batch_size, device, args.recon_weight, args.context_refresh,
         )
         # Print every epoch for the first 5, then every 5% of total.
         log_every = max(1, args.epochs // 20)

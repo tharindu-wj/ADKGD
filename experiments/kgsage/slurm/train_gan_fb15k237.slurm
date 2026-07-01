@@ -1,17 +1,30 @@
 #!/bin/bash
-# Train the KGSAGE GAN (KGSAGEGenerator + KGSAGEDiscriminator) on FB15K-237 —
-# one V100 allocation. The GAN learns its own embeddings and generates
-# single-slot-corruption negatives for ADKGD's --neg_source gan path.
+# Train the KGSAGE conditional GAN (B1a) on FB15K-237 — one V100 allocation.
+#
+# B1a = an RGCN context encoder (torch_geometric FastRGCNConv) is trained JOINTLY
+# with the generator + discriminator. The generator is CONDITIONED on the
+# encoder's context table E', and trained toward TYPE-VALID but CONTEXT-DISTANT
+# targets (the "converging-context contradiction" — kgsage.gan.targets). The
+# final E' is cached in the checkpoint so ADKGD inference needs no PyG.
 # Output: experiments/kgsage/outputs/checkpoints/kgsage_fb15k237.pt
 #
 #   sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm
 #
 # Prerequisites (run ONCE on the login node):
 #   1. Conda env with torch+CUDA wheel (see RUNNING_ON_DEEPTHOUGHT.md).
-#   2. FB15K-237 TSVs at data/FB15K-237/{train,valid,test}.txt.
+#   2. PyTorch Geometric installed in that env (B1a's RGCN encoder needs it):
+#        pip install torch_geometric
+#      If importing torch_geometric crashes on markupsafe, repair it once:
+#        pip install --force-reinstall markupsafe
+#   3. FB15K-237 TSVs at data/FB15K-237/{train,valid,test}.txt.
 #
-# Env overrides (no script edits): EPOCHS, BATCH_SIZE, SEED, CKPT_PATH, DATASET_DIR.
+# Env overrides (no script edits): EPOCHS, BATCH_SIZE, SEED, CKPT_PATH, DATASET_DIR,
+#   DIM, Z_DIM, NUM_BASES, ENCODER_LAYERS, K_CANDIDATES, RECON_WEIGHT, CONTEXT_REFRESH.
 #   EPOCHS=100 BATCH_SIZE=1024 sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm
+#
+# CONTEXT_REFRESH (default 8): how often the full-graph RGCN is recomputed with
+# encoder gradients. Per-batch (=1) is exact but too slow at FB15K-237 scale;
+# 8 recomputes E' every 8 batches (still frequent joint training, ~8x faster).
 
 #SBATCH --job-name=kgsage_train_gan_fb15k237
 #SBATCH --output=%x-%j.out.txt
@@ -37,11 +50,22 @@ EPOCHS="${EPOCHS:-50}"
 # 512 is a safe V100 default (fits 32GB HBM2). Bump to 1024 for more throughput.
 BATCH_SIZE="${BATCH_SIZE:-512}"
 SEED="${SEED:-0}"
+# Recompute E' with encoder gradients every N batches (8 fits the 4h budget).
+CONTEXT_REFRESH="${CONTEXT_REFRESH:-8}"
+# Optional model/encoder overrides — empty means "use train.py's default".
+DIM="${DIM:-}"
+Z_DIM="${Z_DIM:-}"
+NUM_BASES="${NUM_BASES:-}"
+ENCODER_LAYERS="${ENCODER_LAYERS:-}"
+K_CANDIDATES="${K_CANDIDATES:-}"
+RECON_WEIGHT="${RECON_WEIGHT:-}"
 
 echo "Job $SLURM_JOB_ID on $(hostname) starting $(date)"
 echo "Dataset    : $DATASET_DIR"
 echo "Checkpoint : $CKPT_PATH"
-echo "Epochs     : $EPOCHS    Batch size: $BATCH_SIZE    Seed: $SEED"
+echo "Epochs     : $EPOCHS    Batch size: $BATCH_SIZE    Seed: $SEED    Context refresh: $CONTEXT_REFRESH"
+echo "Overrides  : DIM=$DIM Z_DIM=$Z_DIM NUM_BASES=$NUM_BASES ENCODER_LAYERS=$ENCODER_LAYERS"
+echo "             K_CANDIDATES=$K_CANDIDATES RECON_WEIGHT=$RECON_WEIGHT  (empty = default)"
 echo "----------------------------------------------------------------------"
 
 nvidia-smi || echo "WARNING: nvidia-smi failed (no GPU visible?)"
@@ -65,18 +89,34 @@ export PYTHONUNBUFFERED=1
 # Fail fast if torch can't see the GPU.
 $PY -c "import torch; assert torch.cuda.is_available(), 'torch cannot see a GPU: install the CUDA wheel'; print('GPU:', torch.cuda.get_device_name(0), '| torch', torch.__version__, '| cuda', torch.version.cuda)"
 
+# Fail fast if PyG isn't installed (B1a needs it for the RGCN context encoder).
+# RGCNConv is exactly what kgsage.gan.encoder imports.
+$PY -c "from torch_geometric.nn import RGCNConv; import torch_geometric; print('PyG OK | torch_geometric', torch_geometric.__version__)"
+
 cd "$PROJECT_DIR"
 export PYTHONPATH="$PROJECT_DIR/experiments:$PYTHONPATH"
 mkdir -p "$(dirname "$CKPT_PATH")"
 
-echo "[$(date)] Training KGSAGE GAN -> $CKPT_PATH"
-$PY -m kgsage.cli.train_gan \
-    --data       "$DATASET_DIR" \
-    --out        "$CKPT_PATH" \
-    --epochs     "$EPOCHS" \
-    --batch_size "$BATCH_SIZE" \
-    --seed       "$SEED" \
-    --device     cuda
+# Build the command; optional overrides only appended when their env var is set.
+CMD=( "$PY" -m kgsage.cli.train_gan
+      --data            "$DATASET_DIR"
+      --out             "$CKPT_PATH"
+      --epochs          "$EPOCHS"
+      --batch_size      "$BATCH_SIZE"
+      --seed            "$SEED"
+      --context_refresh "$CONTEXT_REFRESH"
+      --device          cuda )
+
+[[ -n "$DIM"            ]] && CMD+=( --dim            "$DIM" )
+[[ -n "$Z_DIM"          ]] && CMD+=( --z_dim          "$Z_DIM" )
+[[ -n "$NUM_BASES"      ]] && CMD+=( --num_bases      "$NUM_BASES" )
+[[ -n "$ENCODER_LAYERS" ]] && CMD+=( --encoder_layers "$ENCODER_LAYERS" )
+[[ -n "$K_CANDIDATES"   ]] && CMD+=( --k_candidates   "$K_CANDIDATES" )
+[[ -n "$RECON_WEIGHT"   ]] && CMD+=( --recon_weight   "$RECON_WEIGHT" )
+
+echo "[$(date)] Training KGSAGE GAN (B1a) -> $CKPT_PATH"
+echo "Command: ${CMD[*]}"
+"${CMD[@]}"
 
 echo "----------------------------------------------------------------------"
 echo "Done $(date). Checkpoint: $CKPT_PATH"
