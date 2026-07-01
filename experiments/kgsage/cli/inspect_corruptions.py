@@ -269,7 +269,7 @@ def main():
                              "Pass the same dataset the checkpoint was trained on.")
         split_map = {"train": kg["triples_train"], "valid": kg["triples_valid"], "test": kg["triples_test"]}
         sample_universe = [tuple(x) for x in split_map[args.split]]
-        held = " (HELD-OUT — unseen by the GAN)" if args.split in ("valid", "test") else ""
+        held = " (HELD-OUT: unseen by the GAN)" if args.split in ("valid", "test") else ""
         print(f"  sampling from '{args.split}' split: {len(sample_universe):,} triples{held}", flush=True)
 
     # ---- eligible triples (relation + head-degree filters) ----
