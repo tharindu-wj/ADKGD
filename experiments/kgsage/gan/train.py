@@ -52,7 +52,7 @@ from datetime import datetime
 import torch
 import torch.nn.functional as F
 
-from kgsage.data.loaders import load_kg
+from kgsage.data.loaders import load_kg, build_edge_index
 from kgsage.gan.encoder import KGSAGEEncoder
 from kgsage.gan.models import (
     KGSAGEGenerator, KGSAGEDiscriminator, gumbel_softmax, soft_embedding,
@@ -221,6 +221,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", required=True, help="Dataset directory")
     ap.add_argument("--out", required=True, help="Output checkpoint path (.pt)")
+    ap.add_argument("--train_split", choices=["train", "all"], default="train",
+                    help="Which triples the generator trains on AND which edges feed "
+                         "the RGCN context graph. 'train' (default): TRAIN split only, "
+                         "so valid/test triples stay held out for clean evaluation. "
+                         "'all': train+valid+test with the full graph (no held-out "
+                         "split) — for a final production generator. The collision "
+                         "filter is ALWAYS all splits either way.")
     ap.add_argument("--epochs", type=int, default=50)
     # 256 is a good default on both CPU and a single V100. Bigger batches
     # (512/1024) are faster on GPU; smaller (32/64) on a laptop CPU may help
@@ -257,21 +264,36 @@ def main():
 
     print(f"Loading KG from {args.data} ...", flush=True)
     kg = load_kg(args.data)
-    # Train on the TRAIN split ONLY, so the generator can be evaluated on held-out
-    # valid/test triples it never saw (clean train/test separation). The collision
-    # set stays ALL splits: a corruption matching ANY real fact (train/valid/test)
-    # is a false negative and must still be filtered at generation time.
-    train_triples = list(kg["triples_train"])
+    # --train_split selects BOTH the generator's real triples and the RGCN
+    # message-passing graph, keeping the two consistent:
+    #   'train' (default): TRAIN split only, so the generator can be evaluated on
+    #     held-out valid/test triples it never saw (clean train/test separation).
+    #   'all': train+valid+test, and the context graph is rebuilt over all edges
+    #     too (no held-out split) — a final production generator.
+    # The collision set stays ALL splits either way: a corruption matching ANY
+    # real fact (train/valid/test) is a false negative and must still be filtered
+    # at generation time, regardless of what we train on.
+    if args.train_split == "all":
+        train_triples = (list(kg["triples_train"])
+                         + list(kg["triples_valid"])
+                         + list(kg["triples_test"]))
+        # Rebuild the message-passing graph over all edges so the encoder has
+        # neighbourhood context for valid/test-only entities it now trains on.
+        kg["edge_index"], kg["edge_type"] = build_edge_index(train_triples)
+    else:
+        train_triples = list(kg["triples_train"])
     kg["triple_set"] = kg["triple_set_all"]
     print(f"  entities = {kg['n_ent']:,}  relations = {kg['n_rel']:,}  "
-          f"train triples = {len(train_triples):,}  (collision set = all {len(kg['triple_set_all']):,})",
+          f"training on '{args.train_split}' split = {len(train_triples):,} triples  "
+          f"(collision set = all {len(kg['triple_set_all']):,})",
           flush=True)
 
-    # The encoder's message-passing graph is the TRAIN graph (load_kg builds
-    # edge_index over train only). This is the standard no-leakage choice: the
-    # generator is conditioned on context derived from known training structure.
+    # The encoder's message-passing graph follows --train_split (set above):
+    # the TRAIN graph by default (the standard no-leakage choice — context is
+    # derived from known training structure only) or the full graph when
+    # --train_split all.
     edge_index, edge_type = KGSAGEEncoder.to_tensors(kg["edge_index"], kg["edge_type"], device)
-    print(f"  message-passing edges = {edge_index.size(1):,} (train graph)", flush=True)
+    print(f"  message-passing edges = {edge_index.size(1):,} ({args.train_split} graph)", flush=True)
 
     # Pack the real triples into one [N, 3] tensor (no Python lists in the epoch
     # loop from here on — only tensor indexing).

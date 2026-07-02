@@ -26,8 +26,14 @@
 #   3. WN18RR TSVs at data/WN18RR/{train,valid,test}.txt.
 #
 # Env overrides (no script edits): EPOCHS, BATCH_SIZE, SEED, CKPT_PATH, DATASET_DIR,
-#   DIM, Z_DIM, NUM_BASES, ENCODER_LAYERS, K_CANDIDATES, RECON_WEIGHT, CONTEXT_REFRESH.
+#   DIM, Z_DIM, NUM_BASES, ENCODER_LAYERS, K_CANDIDATES, RECON_WEIGHT, CONTEXT_REFRESH,
+#   TRAIN_SPLIT.
 #   EPOCHS=150 sbatch experiments/kgsage/slurm/train_gan_wn18rr.slurm
+#
+# TRAIN_SPLIT (default train): 'train' trains the generator on the TRAIN split only
+#   (valid/test held out for clean evaluation); 'all' trains on train+valid+test with
+#   the full context graph (final production generator, no held-out split).
+#   TRAIN_SPLIT=all sbatch experiments/kgsage/slurm/train_gan_wn18rr.slurm
 
 #SBATCH --job-name=kgsage_train_gan_wn18rr
 #SBATCH --output=%x-%j.out.txt
@@ -65,13 +71,15 @@ NUM_BASES="${NUM_BASES:-}"
 ENCODER_LAYERS="${ENCODER_LAYERS:-}"
 K_CANDIDATES="${K_CANDIDATES:-}"
 RECON_WEIGHT="${RECON_WEIGHT:-}"
+# Data split to train on: empty = train.py default ('train'); set 'all' for train+valid+test.
+TRAIN_SPLIT="${TRAIN_SPLIT:-}"
 
 echo "Job $SLURM_JOB_ID on $(hostname) starting $(date)"
 echo "Dataset    : $DATASET_DIR"
 echo "Checkpoint : $CKPT_PATH"
 echo "Epochs     : $EPOCHS    Batch size: $BATCH_SIZE    Seed: $SEED    Context refresh: $CONTEXT_REFRESH"
 echo "Overrides  : DIM=$DIM Z_DIM=$Z_DIM NUM_BASES=$NUM_BASES ENCODER_LAYERS=$ENCODER_LAYERS"
-echo "             K_CANDIDATES=$K_CANDIDATES RECON_WEIGHT=$RECON_WEIGHT  (empty = default)"
+echo "             K_CANDIDATES=$K_CANDIDATES RECON_WEIGHT=$RECON_WEIGHT TRAIN_SPLIT=$TRAIN_SPLIT  (empty = default)"
 echo "----------------------------------------------------------------------"
 
 nvidia-smi || echo "WARNING: nvidia-smi failed (no GPU visible?)"
@@ -119,6 +127,7 @@ CMD=( "$PY" -m kgsage.cli.train_gan
 [[ -n "$ENCODER_LAYERS" ]] && CMD+=( --encoder_layers "$ENCODER_LAYERS" )
 [[ -n "$K_CANDIDATES"   ]] && CMD+=( --k_candidates   "$K_CANDIDATES" )
 [[ -n "$RECON_WEIGHT"   ]] && CMD+=( --recon_weight   "$RECON_WEIGHT" )
+[[ -n "$TRAIN_SPLIT"    ]] && CMD+=( --train_split    "$TRAIN_SPLIT" )
 
 echo "[$(date)] Training KGSAGE GAN (B1a) on WN18RR -> $CKPT_PATH"
 echo "Command: ${CMD[*]}"
