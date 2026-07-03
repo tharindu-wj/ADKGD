@@ -91,14 +91,24 @@ def main():
     #            last resort. Same logic applied to real positives AND injected
     #            eval anomalies. --gan_path points at the GAN .pt checkpoint.
     # Only `Reader.get_data()` consults these; everything downstream is unchanged.
-    parser.add_argument('--neg_source', default='random', choices=['random', 'gan'],
+    # 'lp_band' = Option B: close-but-false corruption ranked by a frozen
+    #             pretrained ComplEx (experiments/kgsage/band_sampler.py) --
+    #             type-valid, masked against ALL known-true fillers, sampled
+    #             from the top-k band below s(true). Needs --lp_path/--lp_ids_dir.
+    parser.add_argument('--neg_source', default='random', choices=['random', 'gan', 'lp_band'],
                         help="source of TRAINING negatives (set C); default 'random' = baseline behaviour")
     # Source of the INJECTED eval anomalies (Reader.inject_anomaly). Independent of
-    # --neg_source, so the 2x2 experiment matrix (train x test) is a pair of flags.
-    parser.add_argument('--test_anomaly_source', default='random', choices=['random', 'gan'],
-                        help="source of the INJECTED eval anomalies; 'random' = baseline, 'gan' = KGSAGE")
+    # --neg_source, so the experiment matrix (train x test) is a pair of flags.
+    parser.add_argument('--test_anomaly_source', default='random', choices=['random', 'gan', 'lp_band'],
+                        help="source of the INJECTED eval anomalies; 'random' = baseline")
     parser.add_argument('--gan_path', default='experiments/kgsage/outputs/checkpoints/dummy.pt',
                         help="path to the KGSAGE GAN .pt checkpoint (used when EITHER --neg_source or --test_anomaly_source is 'gan'; missing file is a hard error)")
+    parser.add_argument('--lp_path', default=None,
+                        help="LibKGE ComplEx checkpoint for lp_band (see kgsage/cli/fetch_lp.py); required when either source is 'lp_band'")
+    parser.add_argument('--lp_ids_dir', default=None,
+                        help="LibKGE archive dir (train/valid/test.txt) the LP checkpoint ids were assigned from; required when either source is 'lp_band'")
+    parser.add_argument('--band_k', default=10, type=int, help="lp_band: sample from the top-k candidates below s(true)")
+    parser.add_argument('--band_temp', default=0.5, type=float, help="lp_band: softmax temperature within the band")
     args = parser.parse_args()
 
     # data_name = args.dataset

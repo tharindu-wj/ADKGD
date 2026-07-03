@@ -289,6 +289,8 @@ class Reader:
         neg_source = getattr(self.args, 'neg_source', 'random')
         if neg_source == 'gan':
             bn_triples = self._gan_negatives(bp_triples)
+        elif neg_source == 'lp_band':
+            bn_triples = self._lp_negatives(bp_triples)
         else:
             bn_triples = self.generate_anomalous_triples(bp_triples)
 
@@ -321,15 +323,65 @@ class Reader:
             rng=self._gan_rng,
         )
         print('[GAN] ' + render_stats(stats))
+        self._print_pair_preview('GAN', pos_triples, negatives)
+        return negatives
 
-        # Print a PREVIEW of (positive, negative) pairs so the user can verify
-        # what the generator produced. Capped at _preview pairs: on FB15K-237
-        # (~325k pairs) printing every pair floods the slurm log (and is emitted
-        # once per get_data() call). Raise GAN_PAIR_PREVIEW to see more.
+    def _lp_negatives(self, pos_triples):
+        """Option B: one close-but-false negative per positive from the frozen
+        LP band sampler (type-valid, all-splits-masked, top-k band below
+        s(true)). No null corruptions by construction -- the sampler's
+        fallback ladder always yields a genuine single-slot corruption."""
+        if not hasattr(self, '_lp_payload') or self._lp_payload is None:
+            self._load_lp_sampler()
+
+        from kgsage_bridge.bridge import generate_band, render_band_stats
+
+        negatives, stats = generate_band(
+            pos_triples,
+            payload=self._lp_payload,
+            adkgd_id2ent=self.id2ent,
+            adkgd_id2rel=self.id2rel,
+            adkgd_ent2id=self.ent2id,
+            adkgd_rel2id=self.rel2id,
+            rng=self._lp_rng,
+        )
+        print(render_band_stats(stats))
+        self._print_pair_preview('lp_band', pos_triples, negatives)
+        return negatives
+
+    def _load_lp_sampler(self):
+        """Build the band sampler once, cache on self. Missing --lp_path /
+        --lp_ids_dir fails loudly, mirroring the GAN checkpoint policy."""
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        _experiments_dir = _Path(__file__).resolve().parent / 'experiments'
+        if str(_experiments_dir) not in _sys.path:
+            _sys.path.insert(0, str(_experiments_dir))
+
+        from kgsage_bridge.bridge import load_lp
+        import numpy as _np
+
+        lp_path = getattr(self.args, 'lp_path', None)
+        lp_ids_dir = getattr(self.args, 'lp_ids_dir', None)
+        if not lp_path or not lp_ids_dir:
+            raise ValueError(
+                "--lp_path and --lp_ids_dir are required for 'lp_band' "
+                "(fetch them with: python -m kgsage.cli.fetch_lp)")
+        self._lp_payload = load_lp(
+            lp_path, lp_ids_dir, self.args.data_path,
+            band_k=getattr(self.args, 'band_k', 10),
+            band_temp=getattr(self.args, 'band_temp', 0.5))
+        self._lp_rng = _np.random.default_rng(getattr(self.args, 'seed', 0))
+        print('[lp_band] sampler ready (ckpt=%s, masks from %s)'
+              % (lp_path, self.args.data_path))
+
+    def _print_pair_preview(self, tag, pos_triples, negatives):
+        """Log a capped preview of (positive -> negative) pairs."""
         _preview = int(os.environ.get('GAN_PAIR_PREVIEW', '20'))
         n = len(pos_triples)
-        print('[GAN] %d (positive -> negative) pairs (showing first %d):'
-              % (n, min(_preview, n)))
+        print('[%s] %d (positive -> negative) pairs (showing first %d):'
+              % (tag, n, min(_preview, n)))
         for i in range(min(_preview, n)):
             ph, pr, pt = pos_triples[i]
             nh, nr, nt = negatives[i]
@@ -348,7 +400,6 @@ class Reader:
         if n > _preview:
             print('  ... (%d more pairs suppressed; set GAN_PAIR_PREVIEW to raise)'
                   % (n - _preview))
-        return negatives
 
     def _load_gan_model(self):
         """Load the GAN checkpoint once, cache on self.
@@ -413,17 +464,20 @@ class Reader:
         #               mislabelled as an anomaly -- the single-shot generator keeps
         #               the original triple on a self-loop/collision (used_original).
         test_source = getattr(args, 'test_anomaly_source', 'random')
-        if test_source == 'gan':
+        if test_source in ('gan', 'lp_band'):
             over = min(self.num_original_triples, int(self.num_anomalies * 1.5) + 1)
             idx = random.sample(range(0, self.num_original_triples), over)
             selected_triples = [original_triples[i] for i in idx]
-            corrupted = self._gan_negatives(selected_triples)
+            if test_source == 'gan':
+                corrupted = self._gan_negatives(selected_triples)
+            else:
+                corrupted = self._lp_negatives(selected_triples)
             anomalies = [c for src, c in zip(selected_triples, corrupted)
                          if tuple(c) != tuple(src)][:self.num_anomalies]
             if len(anomalies) < self.num_anomalies:
-                print('[test-anomaly gan] only %d/%d genuine GAN anomalies '
+                print('[test-anomaly %s] only %d/%d genuine anomalies '
                       '(generator collided on the rest)'
-                      % (len(anomalies), self.num_anomalies))
+                      % (test_source, len(anomalies), self.num_anomalies))
         else:
             # 随机选择一半的异常数量对应的索引，从原始三元组中生成第一部分异常数据
             idx = random.sample(range(0, self.num_original_triples - 1), self.num_anomalies // 2)

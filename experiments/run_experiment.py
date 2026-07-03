@@ -108,13 +108,18 @@ def main() -> int:
     ap.add_argument("--model", default="ADKGD", help="label written into output filenames")
     ap.add_argument("--script", default="Our_TopK%_RankingList.py", help="ADKGD entry-point script")
     # Phase B (GAN integration). Forwarded verbatim to both train and test subprocesses.
-    ap.add_argument("--neg_source", default="random", choices=["random", "gan"],
+    ap.add_argument("--neg_source", default="random", choices=["random", "gan", "lp_band"],
                     help="source of TRAINING negatives; 'random' = baseline (default)")
-    ap.add_argument("--test_anomaly_source", default="random", choices=["random", "gan"],
+    ap.add_argument("--test_anomaly_source", default="random", choices=["random", "gan", "lp_band"],
                     help="source of the INJECTED eval anomalies; 'random' = baseline (default). "
                          "The (neg_source x test_anomaly_source) pair is the experiment matrix.")
     ap.add_argument("--gan_path", default="experiments/kgsage/outputs/checkpoints/kgsage_fb15k237.pt",
                     help="path to the KGSAGE GAN .pt checkpoint (used when EITHER axis is 'gan'; missing file is a hard error)")
+    ap.add_argument("--lp_path", default=None,
+                    help="LibKGE ComplEx checkpoint for lp_band; when omitted, derived from --dataset "
+                         "(FB15K* -> fb15k-237-complex.pt, WN18RR -> wnrr-complex.pt under experiments/kgsage/outputs/lp/)")
+    ap.add_argument("--lp_ids_dir", default=None,
+                    help="LibKGE archive dir for lp_band id maps; derived from --dataset when omitted")
     args = ap.parse_args()
 
     # B0 hygiene: encode the experiment cell in the model label so checkpoint
@@ -159,6 +164,23 @@ def main() -> int:
                 "--test_anomaly_source", args.test_anomaly_source]
     if args.neg_source == "gan" or args.test_anomaly_source == "gan":
         gan_args += ["--gan_path", args.gan_path]
+    if args.neg_source == "lp_band" or args.test_anomaly_source == "lp_band":
+        # Derive the LP checkpoint + id-map dir from the dataset when not given.
+        # FB15K-mini reuses the full FB15K-237 scorer (its vocab is a subset).
+        lp_root = project_root / "experiments" / "kgsage" / "outputs" / "lp"
+        name = args.dataset.upper()
+        if args.lp_path is None or args.lp_ids_dir is None:
+            if name.startswith("FB15K"):
+                stem = "fb15k-237"
+            elif name.startswith("WN18RR"):
+                stem = "wnrr"
+            else:
+                print(f"!! cannot derive --lp_path for dataset {args.dataset}; "
+                      "pass --lp_path/--lp_ids_dir explicitly", file=sys.stderr)
+                return 2
+            args.lp_path = args.lp_path or str(lp_root / f"{stem}-complex.pt")
+            args.lp_ids_dir = args.lp_ids_dir or str(lp_root / stem)
+        gan_args += ["--lp_path", args.lp_path, "--lp_ids_dir", args.lp_ids_dir]
 
     # Train -- cwd=project_root so ADKGD's "./data/..." / "./checkpoints/..." resolve correctly.
     _run([

@@ -93,6 +93,12 @@ class BandSampler:
 
         self.n_ent = scorer.ent_emb.shape[0]
         self.row2ent = {v: k for k, v in e2r.items()}
+        # the consumer dataset's entity universe: the global fallback must
+        # never leave it (a scorer may cover a superset, e.g. full FB15K-237
+        # scoring the FB15K-mini smoke subset)
+        universe = {e2r[tok] for tris in splits.values()
+                    for h, _, t in tris for tok in (h, t)}
+        self.universe = sorted(universe)
 
     # ------------------------------------------------------------------
 
@@ -119,9 +125,10 @@ class BandSampler:
             stats["fallback_pool_uniform"] += 1
             return int(pool[int(rng.choice(keep))])
         # degenerate relation: whole pool is true/self -- leave type validity
+        # but stay inside the consumer dataset's entity universe
         stats["fallback_global"] += 1
         while True:
-            cand = int(rng.integers(0, self.n_ent))
+            cand = self.universe[int(rng.integers(0, len(self.universe)))]
             if cand not in banned and cand != self_row:
                 return cand
 
