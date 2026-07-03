@@ -163,9 +163,15 @@ class BandSampler:
                 rt = torch.full((len(idxs),), rr, dtype=torch.long)
                 if slot == TAIL:
                     all_scores = self.scorer.score_tails_all(hs, rt)
+                    # direction-consistent s(true): same score row as candidates
+                    s_true = all_scores[torch.arange(len(idxs)), ts]
                 else:
                     all_scores = self.scorer.score_heads_all(rt, ts)
-                s_true = self.scorer.score_hrt(hs, rt, ts)
+                    # reciprocal models score heads in the inverse direction;
+                    # comparing candidates against a forward-direction
+                    # score_hrt(h,r,t) would be inconsistent -- read the true
+                    # head's score from the same row instead
+                    s_true = all_scores[torch.arange(len(idxs)), hs]
                 pool_scores = (all_scores[:, pool] if len(pool) else
                                torch.empty(len(idxs), 0))
                 for j, i in enumerate(idxs):
