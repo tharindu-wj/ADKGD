@@ -23,9 +23,10 @@ TWO NETWORKS
     KGSAGEDiscriminator - scores a (real triple, candidate triple) embedding pair
 
 The entity embedding table used everywhere (conditioning, and embedding the
-generator's soft output so the discriminator can score it) is E'. The encoder
-that produces E' is trained JOINTLY with this GAN — gradients flow back through
-E' into the encoder.
+generator's soft output so the discriminator can score it) is E'. Arm note: in the
+legacy B1a arm (kgsage.gan.train) the encoder trains JOINTLY with the GAN via
+gradients through E'; in the primary A-ii arm (kgsage.gan.train_aii) E' is
+LP-warmup-trained and then FROZEN for the adversarial phase.
 """
 import torch
 import torch.nn as nn
@@ -101,8 +102,9 @@ class KGSAGEGenerator(nn.Module):
             noise          : FloatTensor [batch, z_dim] random noise (adds variety
                              so the same triple can yield different corruptions).
             entity_context : FloatTensor [n_ent, dim] = E' from the RGCN encoder.
-                             Gradients flow back through this, which is what makes
-                             the encoder train jointly with the generator.
+                             In the legacy B1a arm gradients flow back through
+                             this (joint encoder training); the A-ii arm
+                             passes a frozen, detached E'.
 
         Returns three logit tensors:
             head_logits     : [batch, n_ent] scores over entities for a new head

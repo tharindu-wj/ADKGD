@@ -1,7 +1,7 @@
 #!/bin/bash
 # Train the KGSAGE conditional GAN (B1a) on FB15K-237 — one V100 allocation.
 #
-# B1a = an RGCN context encoder (torch_geometric FastRGCNConv) is trained JOINTLY
+# B1a = an RGCN context encoder (torch_geometric RGCNConv) is trained JOINTLY
 # with the generator + discriminator. The generator is CONDITIONED on the
 # encoder's context table E', and trained toward TYPE-VALID but CONTEXT-DISTANT
 # targets (the "converging-context contradiction" — kgsage.gan.targets). The

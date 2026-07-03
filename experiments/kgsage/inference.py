@@ -4,7 +4,7 @@ This is the public generation API for the KGSAGE package. ADKGD calls it
 (via kgsage_bridge.bridge) every time it builds a training batch with
 `--neg_source gan`. Everything stays in-process — no intermediate file.
 
-The 8-step pipeline (one negative per real triple):
+The 7-step pipeline (one negative per real triple):
 
   STEP 1: Translate ADKGD integer IDs -> strings -> GAN integer IDs.
           (ADKGD and the GAN may number the same entity differently; strings

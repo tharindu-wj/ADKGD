@@ -43,7 +43,7 @@ class KGSAGEEncoder(nn.Module):
         dim        : embedding width (both input features and E').
         num_bases  : basis-decomposition rank; capped at the effective relation
                      count. ~30 is the classic FB15K-237 setting.
-        num_layers : number of FastRGCNConv layers (hops of context). 2 is typical.
+        num_layers : number of RGCNConv layers (hops of context). 2 is typical.
         add_inverse: if True, append inverse edges t -> r+n_rel -> h so context
                      flows both ways; the encoder then sees 2*n_rel relations.
     """

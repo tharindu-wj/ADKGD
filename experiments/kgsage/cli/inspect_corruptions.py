@@ -1,4 +1,10 @@
-"""Inspect a trained KGSAGE generator's corruptions for HUMAN evaluation.
+"""LEGACY ARM (B1a) TOOL — for contradiction-trained (context-distant)
+checkpoints. It draws RAW single-shot generator samples (NOT the deployed
+decode path: kgsage.inference adds known-true/self/pool masks + bounded
+resample), and its ctx-dist column assumes the B1a far-from-context
+objective. For A-ii checkpoints use `python -m kgsage.cli.inspect_gan_lp`.
+
+Inspect a trained KGSAGE generator's corruptions for HUMAN evaluation.
 
 Picks random real triples, corrupts an ENTITY slot with the trained generator
 (a few diverse draws) plus one random corruption for calibration, and writes:

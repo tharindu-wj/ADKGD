@@ -1,9 +1,14 @@
-"""Run ONE ADKGD baseline experiment (one train + one test) and print the
-five Precision@K / Recall@K values plus the total training time.
+"""Run ONE experiment-matrix cell (one train + one test subprocess) and report
+Precision@K / Recall@K at five cutoffs, global AUC/AUPRC, and timings.
 
-Defaults reproduce the FB15K-237 column of the paper's Table 2 (5% anomaly,
-seed 0, 1 epoch). Designed to be invoked from a slurm script, but runs
-identically from a normal shell.
+Cells are (--neg_source x --test_anomaly_source), sources {random, lp_band,
+gan}. The default --model label encodes the cell identity
+(ADKGD_<neg>x<test>_s<seed>) so artifacts never collide across cells or
+seeds; a machine-readable <model>_<dataset>_run.json is written per run for
+experiments/aggregate_results.py; lp_band LP paths derive from --dataset.
+Defaults (random x random, 5% anomalies, seed 0, 1 epoch) reproduce the
+paper's baseline protocol. Invoked by experiments/slurm/exp_cell.slurm and
+exp1-4, but runs identically from a shell.
 
 Local CPU caveat: on Windows/CPU, set OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 KMP_DUPLICATE_LIB_OK=TRUE in the environment before running -- otherwise

@@ -5,7 +5,8 @@ anomalies (single-slot-corruption negatives) to train and evaluate per-triple
 anomaly detectors such as ADKGD.
 
 A conditional GAN consumes a real triple + noise and produces a fake-but-
-plausible triple (one slot — head, relation, or tail — corrupted). Lives in
+plausible triple (one ENTITY slot — head or tail — corrupted; the relation
+head exists but is never chosen at generation time, see inference STEP 3). Lives in
 `kgsage.gan`. ADKGD integration (the bridge that calls KGSAGE from ADKGD's
 training pipeline) lives in `experiments/kgsage_bridge/`, keeping `kgsage/`
 ADKGD-agnostic.
@@ -14,7 +15,7 @@ Public API (stable across versions; suitable for the future pip release):
   load_kg(path)                - load a KG from a TSV directory
   resolve_dataset(name_or_path)- look up known dataset defaults
   KNOWN_DATASETS               - dict of pre-configured datasets
-  KGSAGEGenerator              - GAN generator (3-head, learns own embeddings)
+  KGSAGEGenerator              - GAN generator (3-head; conditioned on cached RGCN E')
   KGSAGEDiscriminator          - GAN discriminator (scores real vs candidate)
   generate_negatives           - inference API: one negative per input triple
   load_checkpoint              - load a trained GAN checkpoint for inference

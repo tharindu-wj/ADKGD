@@ -1,11 +1,16 @@
 """KGSAGE <-> ADKGD bridge.
 
 The single integration layer between the KGSAGE package and ADKGD's training
-pipeline. ADKGD's `dataset.py` imports the three-function API from here:
+pipeline. ADKGD's `dataset.py` imports the six-function API from here:
 
+  GAN arm (A-ii or legacy checkpoints):
   - load_gan(checkpoint_path)        -> payload dict (model + vocab + reals)
   - generate(triples, payload, ...)  -> list of negative triples + stats
   - render_stats(stats)              -> human-readable log line
+  lp_band arm (Option B, frozen-LP band sampler):
+  - load_lp(lp_ckpt, lp_ids, data)   -> payload dict (BandSampler)
+  - generate_band(triples, ...)      -> negatives + stats (no nulls)
+  - render_band_stats(stats)         -> human-readable log line
 
 This is the only module in the repo that knows about BOTH the standalone
 KGSAGE package (`kgsage.*`) and ADKGD's vocabulary/ID conventions.

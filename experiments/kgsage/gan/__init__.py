@@ -8,7 +8,7 @@ The conditional GAN that produces single-slot-corruption negatives for ADKGD's
   gumbel_softmax      - reparameterised soft argmax (training helper)
   soft_embedding      - lookup into an embedding table via a soft distribution
 
-Training lives at `kgsage.gan.train` (cli.train_gan). Generation (load checkpoint
+Training: `kgsage.gan.train_aii` is the PRIMARY (A-ii) trainer; `kgsage.gan.train` (cli.train_gan) is the retained legacy B1a ablation arm. Generation (load checkpoint
 + produce negatives) lives at `kgsage.inference` — the same pipeline `kgsage_bridge`
 uses to feed ADKGD.
 """

@@ -246,7 +246,7 @@ def main():
     ap.add_argument("--num_bases", type=int, default=30,
                     help="RGCN basis-decomposition rank (capped at 2*n_rel)")
     ap.add_argument("--encoder_layers", type=int, default=2,
-                    help="Number of FastRGCNConv layers (hops of context)")
+                    help="Number of RGCNConv layers (hops of context)")
     ap.add_argument("--no_inverse", action="store_true",
                     help="Do NOT add inverse edges to the message-passing graph")
     # --- contradiction-bias target selection (B1a) ---
