@@ -1,6 +1,7 @@
 #!/bin/bash
 # ONE experiment-matrix cell: (NEG_SOURCE x TEST_SOURCE) on DATASET at SEED.
-# Generic replacement for the exp1-4 scripts, adding the lp_band source.
+# The single matrix-cell launcher (former exp1-4 named cells map to
+# NEG_SOURCE/TEST_SOURCE pairs below; those scripts were removed).
 #
 #   NEG_SOURCE  in {random, lp_band, gan}   -- training negatives
 #   TEST_SOURCE in {random, lp_band, gan}   -- injected eval anomalies

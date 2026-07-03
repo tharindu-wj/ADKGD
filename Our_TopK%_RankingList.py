@@ -86,11 +86,11 @@ def main():
     parser.add_argument('--num_anomaly_num', default=300, type=int, help="number of anomalies")
     # Phase B (GAN integration): source of training-time negatives.
     # 'random' = ADKGD's original generate_anomalous_triples (default; baseline).
-    # 'gan'    = in-process call to the KGSAGE GAN via experiments/kgsage_bridge/bridge.
-    #            The GAN picks a slot per positive, runs masked decode, retries
-    #            on real-graph collision, falls back to uniform random as a
-    #            last resort. Same logic applied to real positives AND injected
-    #            eval anomalies. --gan_path points at the GAN .pt checkpoint.
+    # 'gan'    = in-process call to a trained KGSAGE checkpoint via
+    #            experiments/kgsage_bridge/bridge. Head/tail slot by
+    #            corruptibility; decode masked by type pool + known-true
+    #            fillers + self-loop; bounded resample; failed rows come
+    #            back flagged (never trained on). --gan_path = checkpoint.
     # Only `Reader.get_data()` consults these; everything downstream is unchanged.
     # 'lp_band' = Option B: close-but-false corruption ranked by a frozen
     #             pretrained ComplEx (experiments/kgsage/band_sampler.py) --
@@ -407,11 +407,6 @@ def test(args, dataset, device):
 
             # print('{}th test data'.format(i))
             logging.info('[Test] Evaluation on %d batch of Original graph' % i)
-            # sum = labels.sum()
-            # if sum < labels.size(0):
-            #     # loss = -1 * loss
-            #     AUC = roc_auc_score(labels.cpu(), loss.cpu())
-            #     print('AUC on the {}th test images: {} %'.format(i, np.around(AUC)))
 
         total_num = len(all_label)
 

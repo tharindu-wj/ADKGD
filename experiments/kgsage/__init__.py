@@ -16,7 +16,6 @@ Public API (stable across versions; suitable for the future pip release):
   resolve_dataset(name_or_path)- look up known dataset defaults
   KNOWN_DATASETS               - dict of pre-configured datasets
   KGSAGEGenerator              - GAN generator (3-head; conditioned on cached RGCN E')
-  KGSAGEDiscriminator          - GAN discriminator (scores real vs candidate)
   generate_negatives           - inference API: one negative per input triple
   load_checkpoint              - load a trained GAN checkpoint for inference
 
@@ -37,9 +36,7 @@ from kgsage.data.datasets import resolve_dataset, KNOWN_DATASETS
 _LAZY_ATTRS = {
     # GAN (needs torch)
     "KGSAGEGenerator":      "kgsage.gan.models",
-    "KGSAGEDiscriminator":  "kgsage.gan.models",
     "gumbel_softmax":       "kgsage.gan.models",
-    "soft_embedding":       "kgsage.gan.models",
     # RGCN context encoder (needs torch + torch_geometric)
     "KGSAGEEncoder":        "kgsage.gan.encoder",
     # Inference (needs torch + the GAN models)
@@ -69,9 +66,7 @@ __all__ = [
     "KNOWN_DATASETS",
     # GAN - lazy-loaded; requires torch at access time
     "KGSAGEGenerator",
-    "KGSAGEDiscriminator",
     "gumbel_softmax",
-    "soft_embedding",
     # RGCN encoder - lazy-loaded; requires torch + torch_geometric at access time
     "KGSAGEEncoder",
     "generate_negatives",

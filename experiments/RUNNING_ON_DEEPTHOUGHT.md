@@ -27,8 +27,8 @@ names quoted in older sections below). All scripts merge stderr into the
 `.out.txt` — **no `.err.txt` is ever produced.**
 
 > The sections below predate this build: they describe the legacy two-config
-> "B0 vs B1" flow (whose `run_baseline_*.slurm` launchers have been removed —
-> use `exp_cell.slurm`) and quote pre-B0 artifact names. The cluster
+> "B0 vs B1" flow (whose `run_baseline_*.slurm` and `exp1–4.slurm` launchers have been
+> removed — use `exp_cell.slurm`) and quote pre-B0 artifact names. The cluster
 > mechanics they document — login vs compute nodes, conda/CUDA-wheel setup,
 > queueing/backfill behaviour, monitoring commands — remain accurate and are
 > kept for reference.

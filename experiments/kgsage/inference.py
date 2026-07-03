@@ -57,7 +57,7 @@ def load_checkpoint(ckpt_path, device=None):
         raise KeyError(
             f"Checkpoint {ckpt_path!r} has no 'context_embeddings' (E'). It looks "
             "like an old pre-B1a checkpoint. Retrain with `python -m "
-            "kgsage.cli.train_gan ...` — the current pipeline caches E' automatically."
+            "kgsage.gan.train_aii ...` — the current pipeline caches E' automatically."
         )
 
     gen_kwargs = dict(
@@ -294,12 +294,7 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
                 stats["used_original"] += 1
                 stats["null_indices"].append(batch_start + i)
 
-            if slot == 0:
-                stats["slot_h"] += 1
-            elif slot == 1:
-                stats["slot_r"] += 1
-            else:
-                stats["slot_t"] += 1
+            stats["slot_h" if slot == 0 else "slot_t"] += 1
 
             # STEP 7: Translate GAN IDs -> strings -> ADKGD IDs.
             out.append((

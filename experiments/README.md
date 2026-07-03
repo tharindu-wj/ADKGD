@@ -14,7 +14,7 @@ One run = one cell of `(--neg_source × --test_anomaly_source)`, sources:
 |---|---|
 | `random`  | ADKGD's original corruption (baseline; bit-identical to the paper) |
 | `lp_band` | Option B: a frozen pretrained ComplEx ranks the relation's type pool; sample the top-k band **below** s(true), masked against every known-true filler (all splits) — no GAN; doubles as the `sampler_direct` control arm |
-| `gan`     | a trained KGSAGE checkpoint — primary arm = **A-ii** (`kgsage.gan.train_aii`: frozen ComplEx backbone + trainable contextual residual D); legacy arm = B1a (`kgsage.cli.train_gan`, ablation only) |
+| `gan`     | a trained KGSAGE A-ii checkpoint (`kgsage.gan.train_aii`: frozen ComplEx backbone + trainable contextual residual D) |
 
 The PoC read-out (pre-registered in `docs/OPTION_B_PLAN.md` §0):
 `random×random` (baseline) vs `random×lp_band` (**the gap**) vs
@@ -47,7 +47,7 @@ override) — both are no-ops on the GPU cluster.
 2. Train A-ii generators: `DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train_aii.slurm` (× datasets × seeds).
 3. Inspect each checkpoint: `python -m kgsage.cli.inspect_gan_lp --ckpt ... --n 40`.
 4. Run cells: `NEG_SOURCE=... TEST_SOURCE=... SEED=... DATASET=... [GAN_CKPT=...] sbatch experiments/slurm/exp_cell.slurm`
-   (exp1–4.slurm remain as the named random/gan cells; `exp_cell.slurm` covers everything incl. `lp_band`).
+   (`exp_cell.slurm` is the single cell launcher — all source pairings, incl. `lp_band`).
 5. `python experiments/aggregate_results.py --dataset <ds>`.
 
 ## What a run produces
@@ -72,7 +72,7 @@ a capped `(positive -> negative)` pair preview (`GAN_PAIR_PREVIEW` to raise).
 | `aggregate_results.py` | mean±std tables per cell over seeds |
 | `kgsage/` | the standalone generator package (ADKGD-agnostic) — see its README |
 | `kgsage_bridge/` | the ONLY ADKGD-aware glue (six-function API) — see its README |
-| `slurm/exp_cell.slurm` | generic cell launcher; `exp1–4.slurm` = named random/gan cells |
+| `slurm/exp_cell.slurm` | the single generic cell launcher |
 | `docs/` | plans of record + research library (gitignored except the three plan files) |
 
 Smoke tests: `python experiments/kgsage/smoke_test.py` (package + bridge);

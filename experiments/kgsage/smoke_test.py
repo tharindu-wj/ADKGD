@@ -67,13 +67,12 @@ def main():
     section("SECTION 3: kgsage.gan.* + kgsage.inference imports")
 
     from kgsage.gan.models import (
-        KGSAGEGenerator, KGSAGEDiscriminator, gumbel_softmax, soft_embedding,
+        KGSAGEGenerator, gumbel_softmax,
     )
-    print("OK: kgsage.gan.models.{KGSAGEGenerator, KGSAGEDiscriminator, "
-          "gumbel_softmax, soft_embedding}")
+    print("OK: kgsage.gan.models.{KGSAGEGenerator, gumbel_softmax}")
 
-    from kgsage.gan import train as _gan_train
-    print("OK: kgsage.gan.train (the training loop module)")
+    from kgsage.gan import train_aii as _gan_train_aii
+    print("OK: kgsage.gan.train_aii (the A-ii training module)")
 
     from kgsage.inference import load_checkpoint, generate_negatives, render_stats as _rs
     print("OK: kgsage.inference.{load_checkpoint, generate_negatives, render_stats}")
@@ -96,7 +95,7 @@ def main():
     ckpt = "experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt"
     if not os.path.isfile(ckpt):
         print(f"SKIP: {ckpt} not found.")
-        print(f"      Run `python -m kgsage.cli.train_gan --data data/dummy_kg "
+        print(f"      Run `python -m kgsage.gan.train_aii --data data/dummy_kg "
               f"--epochs 5 --device cpu --out {ckpt}` first.")
         section("ALL CHECKS THAT COULD RUN PASSED")
         return 0

@@ -33,10 +33,6 @@ class Reader:
         self.A = {}
         #读取所有的数据，从train.txt， valid.txt, test.txt
         self.read_triples()
-        # if self.path == args.data_dir_YAGO or self.path == args.data_dir_NELL or self.path == args.data_dir_DBPEDIA:
-        #     self.read_triples_yago3()
-        # else:
-        #     self.read_triples()
         # 存储原始三元组的集合，用于快速检查是否存在某个特定的三元组
         self.triple_ori_set = set(self.triples)
         # 记录原始三元组的数量
@@ -135,45 +131,6 @@ class Reader:
                     temp = self.t2h[tail_id]
                     temp.add(head_id)
                     self.t2h[tail_id] = temp
-
-        print("Read end!")
-        return self.triples
-
-    def read_triples_yago3(self):
-        print('Read begin!')
-        for file in ["train", "valid", "test"]:
-            with open(self.path + '/' + file + ".txt", "r", encoding="utf-8") as f:
-                train = f.readlines()
-                # train_ = set({})
-                for i in range(len(train)):
-                    x = train[i].split()
-                    x_ = tuple(x)
-                    head, rel, tail = x_[0], x_[1], x_[2]
-
-                    head_id = self.get_add_ent_id(head)
-                    rel_id = self.get_add_rel_id(rel)
-                    tail_id = self.get_add_ent_id(tail)
-
-                    self.triples.append((head_id, rel_id, tail_id))
-                    # (head_id, tail_id) 在字典中只有一个唯一对应的关系 rel_id
-                    self.A[(head_id, tail_id)] = rel_id
-                    # self.A[head_id][tail_id] = rel_id
-
-                    # generate h2t
-                    if not head_id in self.h2t.keys():
-                        self.h2t[head_id] = set()
-                    temp = self.h2t[head_id]
-                    temp.add(tail_id)
-                    self.h2t[head_id] = temp
-
-                    # generate t2h
-                    if not tail_id in self.t2h.keys():
-                        self.t2h[tail_id] = set()
-                    temp = self.t2h[tail_id]
-                    temp.add(head_id)
-                    self.t2h[tail_id] = temp
-
-                del (train)
 
         print("Read end!")
         return self.triples

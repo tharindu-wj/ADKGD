@@ -19,8 +19,6 @@ exclusively in `experiments/kgsage_bridge/`.
   one entity slot via masked straight-through Gumbel under a frozen fence
   below s(true). Falseness is structural (`gan/masks.py`), plausibility is
   frozen (`gan/complex_d.py`); only G and f_θ ever train.
-- **Legacy B1a arm (ablation only):** `gan/train.py` + `gan/targets.py`
-  (context-distant targets, joint encoder training) via `cli/train_gan.py`.
 
 ## Generation API
 
@@ -37,10 +35,8 @@ bridge/Reader handles this).
 ```
 python -m kgsage.cli.fetch_lp             # download LP ckpts + MRR gate
 python -m kgsage.gan.train_aii            # PRIMARY trainer (A-ii)
-python -m kgsage.cli.train_gan            # legacy B1a trainer (ablation)
 python -m kgsage.cli.inspect_band         # lp_band diagnostics (gap/rank/FN)
 python -m kgsage.cli.inspect_gan_lp       # GAN-arm diagnostics via deployed decode
-python -m kgsage.cli.inspect_corruptions  # legacy-arm human-eval report
 python  experiments/kgsage/smoke_test.py  # package + bridge smoke
 ```
 

@@ -25,10 +25,10 @@ builder iterates python ints); every model call moves its inputs to `device`
 at the boundary and diagnostics move results back. Verified on CPU; the GPU
 path uses the same boundaries.
 
-Legacy note: the B1a arm (kgsage.gan.train + ContradictionTargetSampler)
-is untouched and remains runnable for ablation; this module shares the
-checkpoint format via train.save_checkpoint(extra=...), so inference and the
-ADKGD bridge consume A-ii checkpoints unchanged.
+History note: the earlier B1a arm (context-distant contradiction targets,
+jointly-trained encoder) was removed under the single-version policy --
+recover it from git history if ever needed. The checkpoint format is
+unchanged, so inference and the ADKGD bridge are unaffected.
 
 Run (repo root):
   PYTHONPATH=experiments python -m kgsage.gan.train_aii --data data/FB15K-mini \
@@ -40,6 +40,7 @@ Run (repo root):
 from __future__ import annotations
 
 import argparse
+import os
 import time
 from collections import deque
 from datetime import datetime
@@ -54,8 +55,43 @@ from kgsage.gan.models import KGSAGEGenerator, gumbel_softmax
 from kgsage.gan.masks import CandidateMasks, HEAD, TAIL
 from kgsage.gan.complex_d import FrozenComplEx
 from kgsage.gan.residual_d import ResidualContextD
-from kgsage.gan.train import save_checkpoint
 from kgsage.lp_scorer import ComplExScorer
+
+
+def save_checkpoint(generator, encoder, kg, dim, z_dim, edge_index, edge_type, save_path,
+                    extra=None):
+    """Bundle everything kgsage.inference.load_checkpoint needs into one .pt file.
+
+    The B1a addition is `context_embeddings` (E'): the FINAL encoder output,
+    cached so inference can look up E'[head]/E'[tail] without ever running the
+    RGCN (or importing torch_geometric) again.
+
+    `extra` (A4): optional dict of additional payload keys merged in verbatim
+    (arm tag, LP provenance, pool masks, z-stats ...); legacy keys always win.
+    """
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    # Freeze the trained context table for inference.
+    context_embeddings = encoder.cache_embeddings(edge_index, edge_type)  # [n_ent, dim], CPU
+    torch.save({
+        **(extra or {}),
+        "generator_state": generator.state_dict(),
+        "ent2id": kg["ent2id"],
+        "rel2id": kg["rel2id"],
+        "id2ent": kg["id2ent"],
+        "id2rel": kg["id2rel"],
+        # Sets aren't pickle-friendly across versions; store as a list.
+        "real_triples": list(kg["triple_set"]),
+        "n_ent": kg["n_ent"],
+        "n_rel": kg["n_rel"],
+        "dim": dim,
+        "z_dim": z_dim,
+        "hidden": generator.hidden,
+        # --- B1a: cached RGCN context table (what the whole encoder is for) ---
+        "context_embeddings": context_embeddings,
+        "encoder_num_bases": encoder.num_bases,
+        "encoder_layers": encoder.num_layers,
+        "encoder_add_inverse": encoder.add_inverse,
+    }, save_path)
 
 
 # ---------------------------------------------------------------------------

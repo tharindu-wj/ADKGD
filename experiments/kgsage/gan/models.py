@@ -18,15 +18,13 @@ WHAT MAKES B1a DIFFERENT — neighbourhood conditioning
     Entity slots come from E' (supplied by the encoder at forward time); the
     relation slot uses the generator's OWN learned relation embedding table.
 
-TWO NETWORKS
-    KGSAGEGenerator     - entity context + noise -> corrupted-triple logits (3 heads)
-    KGSAGEDiscriminator - scores a (real triple, candidate triple) embedding pair
+THE NETWORK
+    KGSAGEGenerator - entity context + noise -> corrupted-triple logits (3 heads)
+    (the A-ii discriminator lives in kgsage.gan.residual_d + complex_d)
 
-The entity embedding table used everywhere (conditioning, and embedding the
-generator's soft output so the discriminator can score it) is E'. Arm note: in the
-legacy B1a arm (kgsage.gan.train) the encoder trains JOINTLY with the GAN via
-gradients through E'; in the primary A-ii arm (kgsage.gan.train_aii) E' is
-LP-warmup-trained and then FROZEN for the adversarial phase.
+The entity embedding table used for conditioning is E'; in the A-ii trainer
+(kgsage.gan.train_aii) E' is LP-warmup-trained and then FROZEN for the
+adversarial phase.
 """
 import torch
 import torch.nn as nn
@@ -102,9 +100,7 @@ class KGSAGEGenerator(nn.Module):
             noise          : FloatTensor [batch, z_dim] random noise (adds variety
                              so the same triple can yield different corruptions).
             entity_context : FloatTensor [n_ent, dim] = E' from the RGCN encoder.
-                             In the legacy B1a arm gradients flow back through
-                             this (joint encoder training); the A-ii arm
-                             passes a frozen, detached E'.
+                             The A-ii trainer passes a frozen, detached E'.
 
         Returns three logit tensors:
             head_logits     : [batch, n_ent] scores over entities for a new head
@@ -123,45 +119,6 @@ class KGSAGEGenerator(nn.Module):
             self.relation_slot_predictor(hidden_state),
             self.tail_slot_predictor(hidden_state),
         )
-
-
-class KGSAGEDiscriminator(nn.Module):
-    """Discriminator: score a (real triple, candidate triple) embedding pair.
-
-    High score = "the candidate looks like a real fact in this graph."
-    Low score  = "the candidate looks fake."
-    The generator wins when the discriminator can no longer tell its corruptions
-    apart from real triples. Both triples are embedded in the SAME space the
-    generator conditions on (E' for entities, the relation table for relations),
-    so the discriminator judges realness in context.
-    """
-
-    def __init__(self, dim=64, hidden=128):
-        super().__init__()
-        # Input = real triple embedding (3*dim) + candidate embedding (3*dim).
-        self.scoring_mlp = nn.Sequential(
-            nn.Linear(6 * dim, hidden),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden, hidden),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden, 1),  # one realness score per pair
-        )
-
-    def forward(self, anchor_triple_embedding, candidate_triple_embedding):
-        """Score a batch of (real, candidate) embedding pairs.
-
-        Args:
-            anchor_triple_embedding    : [batch, 3, dim] the real triple (h,r,t).
-            candidate_triple_embedding : [batch, 3, dim] the candidate triple.
-
-        Returns:
-            [batch, 1] realness logits (apply sigmoid for a probability).
-        """
-        pair = torch.cat(
-            [anchor_triple_embedding.flatten(1), candidate_triple_embedding.flatten(1)],
-            dim=1,
-        )
-        return self.scoring_mlp(pair)
 
 
 def gumbel_softmax(logits, tau=1.0, hard=False, mask=None, generator=None):
@@ -193,31 +150,3 @@ def gumbel_softmax(logits, tau=1.0, hard=False, mask=None, generator=None):
     one_hot = torch.zeros_like(soft).scatter_(
         -1, soft.argmax(dim=-1, keepdim=True), 1.0)
     return one_hot - soft.detach() + soft  # forward: one-hot, backward: soft
-
-
-def soft_embedding(soft_head, soft_relation, soft_tail,
-                   entity_embedding_table, relation_embedding_table):
-    """Turn near-one-hot slot distributions into a triple embedding, differentiably.
-
-    `soft @ table` is the matrix-multiply form of an embedding lookup: when
-    `soft` is exactly one-hot it equals table[argmax(soft)]; when it is
-    near-one-hot (from gumbel_softmax) it is a smooth average that supports
-    gradients.
-
-    For B1a the `entity_embedding_table` is E' (the encoder's context table), so
-    the candidate triple is embedded in the SAME context space the discriminator
-    and the conditioning use.
-
-    Args:
-        soft_head, soft_tail   : [batch, n_ent] near-one-hot entity distributions.
-        soft_relation          : [batch, n_rel] near-one-hot relation distribution.
-        entity_embedding_table : [n_ent, dim] = E' (encoder context table).
-        relation_embedding_table : [n_rel, dim] the generator's relation table.
-
-    Returns:
-        [batch, 3, dim] the (head, relation, tail) embeddings stacked.
-    """
-    head_embedding = soft_head @ entity_embedding_table
-    relation_embedding = soft_relation @ relation_embedding_table
-    tail_embedding = soft_tail @ entity_embedding_table
-    return torch.stack([head_embedding, relation_embedding, tail_embedding], dim=1)

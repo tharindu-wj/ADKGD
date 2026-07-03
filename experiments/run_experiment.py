@@ -119,7 +119,7 @@ def main() -> int:
     ap.add_argument("--test_anomaly_source", default="random", choices=["random", "gan", "lp_band"],
                     help="source of the INJECTED eval anomalies; 'random' = baseline (default). "
                          "The (neg_source x test_anomaly_source) pair is the experiment matrix.")
-    ap.add_argument("--gan_path", default="experiments/kgsage/outputs/checkpoints/kgsage_fb15k237.pt",
+    ap.add_argument("--gan_path", default="experiments/kgsage/outputs/checkpoints/kgsage_aii_fb15k237_s0.pt",
                     help="path to the KGSAGE GAN .pt checkpoint (used when EITHER axis is 'gan'; missing file is a hard error)")
     ap.add_argument("--lp_path", default=None,
                     help="LibKGE ComplEx checkpoint for lp_band; when omitted, derived from --dataset "
