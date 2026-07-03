@@ -162,17 +162,35 @@ class KGSAGEDiscriminator(nn.Module):
         return self.scoring_mlp(pair)
 
 
-def gumbel_softmax(logits, tau=1.0):
+def gumbel_softmax(logits, tau=1.0, hard=False, mask=None, generator=None):
     """Differentiable categorical sample (Gumbel-Softmax trick).
 
     A plain argmax is not differentiable, so we cannot backprop through a hard
     pick. Instead we (1) add Gumbel noise to the logits, then (2) take a
     low-temperature softmax so the result is near one-hot but smooth. Gradients
     then flow, letting us sample a corrupted slot, embed it, and update G.
+
+    A-ii additions (all default-off; legacy call sites behave identically):
+      mask      : additive [B, n] mask (0 allowed / -inf banned), applied BEFORE
+                  the noise so banned candidates are unsampleable by
+                  construction (type pools + known-true + self-loop bans).
+      hard      : straight-through estimator -- one-hot(argmax) on the forward
+                  pass, soft gradient on the backward pass. Removes the
+                  soft-vs-hard artifact the discriminator could exploit and
+                  matches the hard decode used at deployment.
+      generator : optional torch.Generator for reproducible sampling.
     """
-    noise = torch.rand_like(logits).clamp_(1e-10, 1.0 - 1e-10)
+    if mask is not None:
+        logits = logits + mask
+    noise = torch.empty_like(logits)
+    noise.uniform_(generator=generator).clamp_(1e-10, 1.0 - 1e-10)
     gumbel = -torch.log(-torch.log(noise))
-    return torch.softmax((logits + gumbel) / tau, dim=-1)
+    soft = torch.softmax((logits + gumbel) / tau, dim=-1)
+    if not hard:
+        return soft
+    one_hot = torch.zeros_like(soft).scatter_(
+        -1, soft.argmax(dim=-1, keepdim=True), 1.0)
+    return one_hot - soft.detach() + soft  # forward: one-hot, backward: soft
 
 
 def soft_embedding(soft_head, soft_relation, soft_tail,
