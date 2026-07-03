@@ -6,6 +6,18 @@ from dataset import Reader
 # import utils
 from create_batch import get_pair_batch_train, get_pair_batch_test, toarray, get_pair_batch_train_common, toarray_float
 import torch
+
+# Windows/CPU compat guard (torch 2.8): the oneDNN (mkldnn) LSTM kernel path
+# access-violates (0xC0000005) after the first training batch in this model's
+# full context -- verified via faulthandler (crash inside nn.LSTM.forward) and
+# an A/B probe: mkldnn off completes training, single-threading does not help.
+# Kernel selection only; model math is unchanged. No-op on the GPU cluster.
+# Override with ADKGD_DISABLE_MKLDNN=0/1.
+import os as _os_compat
+_mkldnn_flag = _os_compat.environ.get("ADKGD_DISABLE_MKLDNN", "auto")
+if _mkldnn_flag == "1" or (_mkldnn_flag == "auto" and _os_compat.name == "nt" and not torch.cuda.is_available()):
+    torch.backends.mkldnn.enabled = False
+
 from model import BiLSTM_Attention
 import torch.nn as nn
 from sklearn.metrics import roc_auc_score
