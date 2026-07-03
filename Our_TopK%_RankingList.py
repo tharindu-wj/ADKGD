@@ -21,6 +21,7 @@ if _mkldnn_flag == "1" or (_mkldnn_flag == "auto" and _os_compat.name == "nt" an
 from model import BiLSTM_Attention
 import torch.nn as nn
 from sklearn.metrics import roc_auc_score
+from sklearn.metrics import average_precision_score
 from sklearn.metrics import precision_recall_fscore_support
 import os
 import logging
@@ -414,6 +415,23 @@ def test(args, dataset, device):
 
         total_num = len(all_label)
 
+        # B5: threshold-free metrics over the full ranking (higher loss = more
+        # anomalous) + raw score dump for the cross-source hardness analysis.
+        # The old commented per-batch AUC (see git history) was statistically
+        # meaningless; this is ONE global AUC/AUPRC over all test triples.
+        _scores_np = np.array(all_loss, dtype=np.float64)
+        _labels_np = np.array(all_label, dtype=np.int64)
+        try:
+            auc_val = roc_auc_score(_labels_np, _scores_np)
+            auprc_val = average_precision_score(_labels_np, _scores_np)
+            logging.info('[Test][%s][%s] AUC %f -- AUPRC %f'
+                         % (args.dataset, model_name, auc_val, auprc_val))
+        except ValueError as _exc:  # e.g. degenerate single-class labels
+            logging.info('[Test] AUC/AUPRC unavailable: %s' % _exc)
+        _npz_path = os.path.join(args.log_folder,
+                                 model_name + '_' + args.dataset + '_scores.npz')
+        np.savez_compressed(_npz_path, scores=_scores_np, labels=_labels_np)
+        logging.info('[Test] score dump: %s' % _npz_path)
 
         # 9300
         max_top_k = total_num_anomalies * 2

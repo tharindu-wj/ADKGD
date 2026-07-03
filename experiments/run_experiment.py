@@ -34,6 +34,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 PRECISION_RE = re.compile(r"Precision\s+(\d+\.\d+)\s*--\s*(\d+\.\d+)\s*:\s*(\d+\.\d+)")
 RECALL_RE = re.compile(r"Recall\s+(\d+\.\d+)\s*--\s*(\d+\.\d+)\s*:\s*(\d+\.\d+)")
 DURATION_RE = re.compile(r"Duration:\s+([\d.]+)")
+AUC_RE = re.compile(r"AUC\s+([\d.]+)\s*--\s*AUPRC\s+([\d.]+)")
 
 
 def _run(cmd: list[str], cwd: Path | None = None) -> None:
@@ -210,6 +211,8 @@ def main() -> int:
 
     # get the metrics and timing info from the log files, print them in a nice format
     metrics = parse_metrics(log, ratio, ks)
+    auc_match = AUC_RE.search(log.read_text(encoding="utf-8", errors="replace")) if log.exists() else None
+    auc, auprc = (float(auc_match.group(1)), float(auc_match.group(2))) if auc_match else (None, None)
 
     # The epoch_times file is only written during training, and the test_time
     # file is only written during testing. Either may be missing if its phase
@@ -230,6 +233,26 @@ def main() -> int:
         r_str = f"{r:.4f}" if r is not None else "  --  "
         print(f"{k * 100:>5.0f}%  {p_str:>12}  {r_str:>10}")
     print()
+    if auc is not None:
+        print(f"AUC:   {auc:.4f}    AUPRC: {auprc:.4f}")
+    else:
+        print("AUC:   -- (no AUC line found in the log)")
+    print()
+
+    # Machine-readable per-run record for aggregate_results.py (mean±std over
+    # seeds per matrix cell). One JSON per run, named by the cell-identity label.
+    import json
+    run_record = {
+        "dataset": args.dataset, "model": args.model, "seed": args.seed,
+        "neg_source": args.neg_source, "test_anomaly_source": args.test_anomaly_source,
+        "anomaly_ratio": ratio, "max_epoch": args.max_epoch,
+        "precision_at": {str(k): metrics[k][0] for k in ks},
+        "recall_at": {str(k): metrics[k][1] for k in ks},
+        "auc": auc, "auprc": auprc,
+    }
+    run_json = ckpt_dir / f"{args.model}_{args.dataset}_run.json"
+    run_json.write_text(json.dumps(run_record, indent=2), encoding="utf-8")
+    print(f"per-run record: {run_json}")
 
     if timing is None:
         print("Total train time: -- (no epoch_times file found)")

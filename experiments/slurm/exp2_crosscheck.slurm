@@ -29,6 +29,7 @@ CONDA_ENV="$HOME/envs/adkgd"
 DATASET="${DATASET:-FB15K-237}"
 ANOMALY_RATIO="${ANOMALY_RATIO:-0.05}"
 SEED="${SEED:-0}"
+MAX_EPOCH="${MAX_EPOCH:-1}"
 NEG_SOURCE="gan"         # TRAIN negatives = KGSAGE
 TEST_SOURCE="random"     # TEST (injected) anomalies = rule-based
 
@@ -72,7 +73,7 @@ $PY experiments/run_experiment.py \
     --dataset "$DATASET" \
     --anomaly_ratio "$ANOMALY_RATIO" \
     --seed "$SEED" \
-    --max_epoch 1 \
+    --max_epoch "$MAX_EPOCH" \
     --neg_source "$NEG_SOURCE" \
     --test_anomaly_source "$TEST_SOURCE" \
     --gan_path "$GAN_CKPT"
