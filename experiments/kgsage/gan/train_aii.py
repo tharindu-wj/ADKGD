@@ -251,8 +251,10 @@ def main() -> None:
         logits = tail_logits if slot == TAIL else head_logits
         mask, _ = masks.logits_mask(h, r, t, slot)         # CPU build
         mask = mask.to(device)
-        sample = gumbel_softmax(logits, tau=args.tau, hard=True, mask=mask,
-                                generator=None if with_grad else None)
+        # global torch RNG (seeded in main) drives the Gumbel draw; a
+        # dedicated generator is unnecessary here since training batches are
+        # already deterministic given --seed
+        sample = gumbel_softmax(logits, tau=args.tau, hard=True, mask=mask)
         return sample, logits + mask
 
     # ---------------- Phase 1: G warm start (band-teacher CE) ----------------

@@ -20,13 +20,15 @@ import os
 
 
 KNOWN_DATASETS = {
-    "fb15k237": {"default_path": "data/FB15K-237", "n_relations": 237},
-    "wn18rr":   {"default_path": "data/WN18RR",    "n_relations": 11},
-    "nell995":  {"default_path": "data/NELL-995",  "n_relations": 200},
-    "kinship":  {"default_path": "data/Kinship",   "n_relations": 46},
-    "yago":     {"default_path": "data/YAGO",      "n_relations": 37},
-    "kg20c":    {"default_path": "data/KG20C",     "n_relations": 5},
-    "dummy_kg": {"default_path": "data/dummy_kg",  "n_relations": 3},
+    # Only datasets that exist on disk in this checkout are registered.
+    # (nell995/kinship/yago/kg20c entries were removed: their directories are
+    # not in the repo and resolve_dataset would silently "succeed" with a
+    # 0-triple KG. The YAGO converter was deleted by the dev_gan_1 cleanup;
+    # recover it from commit 982cb77 if that dataset returns.)
+    "fb15k237":   {"default_path": "data/FB15K-237",  "n_relations": 237},
+    "wn18rr":     {"default_path": "data/WN18RR",     "n_relations": 11},
+    "fb15k_mini": {"default_path": "data/FB15K-mini", "n_relations": 213},
+    "dummy_kg":   {"default_path": "data/dummy_kg",   "n_relations": 3},
 }
 
 

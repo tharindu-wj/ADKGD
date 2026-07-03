@@ -129,4 +129,4 @@ echo "Command: ${CMD[*]}"
 
 echo "----------------------------------------------------------------------"
 echo "Done $(date). Checkpoint: $CKPT_PATH"
-echo "Next: sbatch experiments/slurm/run_baseline_with_kgsage_fb15k237.slurm"
+echo "Next: NEG_SOURCE=gan TEST_SOURCE=random GAN_CKPT=$CKPT_PATH sbatch experiments/slurm/exp_cell.slurm"
