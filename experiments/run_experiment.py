@@ -117,6 +117,14 @@ def main() -> int:
                     help="path to the KGSAGE GAN .pt checkpoint (used when EITHER axis is 'gan'; missing file is a hard error)")
     args = ap.parse_args()
 
+    # B0 hygiene: encode the experiment cell in the model label so checkpoint
+    # and log filenames (all derived from --model) can never collide between
+    # matrix cells or seeds running concurrently. A user-supplied --model is
+    # respected verbatim; the default gets the cell identity appended.
+    if args.model == "ADKGD":
+        args.model = f"ADKGD_{args.neg_source}x{args.test_anomaly_source}_s{args.seed}"
+    print(f"[run_experiment] model label: {args.model}")
+
     # This file lives at experiments/run_experiment.py; the repo root (where
     # ADKGD's data/, Our_TopK%_RankingList.py, etc. live) is one level up.
     project_root = Path(__file__).resolve().parent.parent

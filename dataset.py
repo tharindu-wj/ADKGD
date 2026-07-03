@@ -432,6 +432,16 @@ class Reader:
             anomalies = self.generate_anomalous_triples(selected_triples) \
                         + self.generate_anomalous_triples_2(self.num_anomalies // 2)
 
+        # B0 hygiene: the realised anomaly count can be smaller than requested
+        # (gan-branch shortfall after the genuine-corruption filter; random
+        # branch's //2 rounding). test() uses num_anomalies as the recall
+        # denominator and max_top_k, so keep it in sync with reality.
+        if len(anomalies) != self.num_anomalies:
+            print('[inject_anomaly] realised %d anomalies (requested %d) -- '
+                  'num_anomalies updated' % (len(anomalies), self.num_anomalies))
+        self.num_anomalies = len(anomalies)
+        args.num_anomaly_num = self.num_anomalies
+
         triple_label = [(original_triples[i], 0) for i in range(len(original_triples))]
         anomaly_label = [(anomalies[i], 1) for i in range(len(anomalies))]
         # 将带有标签的原始三元组和异常三元组合并成一个列表。
