@@ -1,4 +1,4 @@
-﻿/m/027rn	/location/country/form_of_government	/m/06cx9
+/m/027rn	/location/country/form_of_government	/m/06cx9
 /m/017dcd	/tv/tv_program/regular_cast./tv/regular_tv_appearance/actor	/m/06v8s0
 /m/07s9rl0	/media_common/netflix_genre/titles	/m/0170z3
 /m/01sl1q	/award/award_winner/awards_won./award/award_honor/award_winner	/m/044mz_

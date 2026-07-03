@@ -73,7 +73,7 @@ def _first_appearance_maps(split_paths: list[Path]) -> tuple[dict, dict]:
     len(map) on first appearance -- subject, then predicate, then object."""
     ent, rel = {}, {}
     for path in split_paths:
-        with open(path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8-sig") as fh:
             for line in fh:
                 parts = line.rstrip("\n").split("\t")
                 if len(parts) != 3:
@@ -205,7 +205,7 @@ class ComplExScorer:
     @staticmethod
     def _read_triples(path: Path) -> list[tuple[str, str, str]]:
         out = []
-        with open(path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8-sig") as fh:
             for line in fh:
                 parts = line.rstrip("\n").split("\t")
                 if len(parts) == 3:
