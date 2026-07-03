@@ -186,17 +186,22 @@ def train_one_epoch(encoder, generator, discriminator,
             total_generator_loss / max(n_batches, 1))
 
 
-def save_checkpoint(generator, encoder, kg, dim, z_dim, edge_index, edge_type, save_path):
+def save_checkpoint(generator, encoder, kg, dim, z_dim, edge_index, edge_type, save_path,
+                    extra=None):
     """Bundle everything kgsage.inference.load_checkpoint needs into one .pt file.
 
     The B1a addition is `context_embeddings` (E'): the FINAL encoder output,
     cached so inference can look up E'[head]/E'[tail] without ever running the
     RGCN (or importing torch_geometric) again.
+
+    `extra` (A4): optional dict of additional payload keys merged in verbatim
+    (arm tag, LP provenance, pool masks, z-stats ...); legacy keys always win.
     """
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     # Freeze the trained context table for inference.
     context_embeddings = encoder.cache_embeddings(edge_index, edge_type)  # [n_ent, dim], CPU
     torch.save({
+        **(extra or {}),
         "generator_state": generator.state_dict(),
         "ent2id": kg["ent2id"],
         "rel2id": kg["rel2id"],
