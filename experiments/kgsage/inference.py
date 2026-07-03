@@ -185,14 +185,17 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
     """
     if rng is None:
         rng = np.random.default_rng(0)
-    # ALL torch randomness (z + Gumbel) flows from this generator, which is
-    # derived from the caller's numpy rng -- the whole call is reproducible
-    # per seed with no dependence on global torch RNG state.
-    torch_gen = torch.Generator()
-    torch_gen.manual_seed(int(rng.integers(0, 2**31 - 1)))
 
     G = payload["generator"]
     device = payload["device"]
+    # ALL torch randomness (z + Gumbel) flows from this generator, which is
+    # derived from the caller's numpy rng -- the whole call is reproducible
+    # per seed with no dependence on global torch RNG state. It MUST live on
+    # the same device as the tensors it fills (a CPU generator against CUDA
+    # tensors raises "Expected a 'cuda' device type for generator").
+    torch_gen = torch.Generator(device=device)
+    torch_gen.manual_seed(int(rng.integers(0, 2**31 - 1)))
+
     entity_context = payload["entity_context"]  # cached E' [n_ent, dim]
     ent2id_gan = payload["ent2id"]
     rel2id_gan = payload["rel2id"]
