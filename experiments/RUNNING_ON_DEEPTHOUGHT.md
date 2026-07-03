@@ -1,10 +1,47 @@
-# Running ADKGD baseline on DeepThought (Flinders HPC)
+# Running the KGSAGE pipeline on DeepThought (Flinders HPC)
+
+## CURRENT WORKFLOW (2026-07-03 — the B/A-ii build)
+
+Submission order (details + env knobs in each script header and
+[README.md](README.md)):
+
+1. **Once, login node** — fetch the frozen LP checkpoints and pass the MRR
+   gates: `PYTHONPATH=experiments python -m kgsage.cli.fetch_lp --dataset all`
+   (expect `GATE PASS` for fb15k237 ≈0.3477 and wn18rr ≈0.4749).
+2. **Train A-ii generators** (GPU): `DATASET=fb15k237 SEED=0 sbatch
+   experiments/kgsage/slurm/train_aii.slurm` — repeat per dataset × seed.
+   Preflights GPU, PyG (`torch_geometric` must be installed in the env) and
+   the LP artifacts, and fails fast with instructions if any is missing.
+3. **Inspect the checkpoint** before spending matrix compute:
+   `PYTHONPATH=experiments python -m kgsage.cli.inspect_gan_lp --ckpt <pt> --n 40`.
+4. **Run matrix cells** (GPU): `NEG_SOURCE=<random|lp_band|gan>
+   TEST_SOURCE=<random|lp_band|gan> DATASET=<FB15K-237|WN18RR> SEED=<n>
+   [MAX_EPOCH=<n>] [GAN_CKPT=<pt>] sbatch experiments/slurm/exp_cell.slurm`.
+5. **Aggregate**: `python experiments/aggregate_results.py --dataset <ds>`.
+
+What one cell job produces: the RESULTS P@K/R@K table **plus an
+`AUC: … AUPRC: …` line and a `per-run record: …_run.json` path** in the
+`.out.txt`; all artifacts under `checkpoints/<dataset>/` are named by the
+cell-identity label `ADKGD_<neg>x<test>_s<seed>` (not the bare `ADKGD_…`
+names quoted in older sections below). All scripts merge stderr into the
+`.out.txt` — **no `.err.txt` is ever produced.**
+
+> The sections below predate this build: they describe the legacy two-config
+> "B0 vs B1" flow (whose `run_baseline_*.slurm` launchers have been removed —
+> use `exp_cell.slurm`) and quote pre-B0 artifact names. The cluster
+> mechanics they document — login vs compute nodes, conda/CUDA-wheel setup,
+> queueing/backfill behaviour, monitoring commands — remain accurate and are
+> kept for reference.
+
+---
+
+# LEGACY REFERENCE: Running the ADKGD baseline (pre-matrix flow)
 
 How to reproduce the FB15K-237 column of the ADKGD paper's Table 2 on the
 DeepThought HPC as a SLURM batch job on the **GPU partition (Tesla V100)**,
-using [`run_experiment.py`](run_experiment.py) as the orchestrator and
-[`experiments/slurm/run_baseline_fb15k237.slurm`](slurm/run_baseline_fb15k237.slurm) as the
-launcher.
+using [`run_experiment.py`](run_experiment.py) as the orchestrator
+(launcher scripts referenced below were superseded by
+`experiments/slurm/exp_cell.slurm`).
 
 ## Why batch (not the login node)
 

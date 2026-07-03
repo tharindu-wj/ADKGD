@@ -1,117 +1,51 @@
-# KGSAGE — Knowledge Graph Synthetic Anomaly Generator
+# kgsage — the standalone anomaly-generator package
 
-A standalone-ready Python package that trains a conditional GAN to generate
-synthetic knowledge-graph anomalies (single-slot-corruption negatives), used to
-train and evaluate per-triple anomaly detectors such as ADKGD.
+Self-contained (imports nothing outside `kgsage.*`). ADKGD integration lives
+exclusively in `experiments/kgsage_bridge/`.
 
-## What this package does in one paragraph
+## Two generator arms, one frozen scorer
 
-A conditional GAN consumes a real triple together with a noise vector and
-produces a fake-but-plausible triple — same shape, slightly wrong content (one
-slot: head, relation, or tail). The generator learns its own entity/relation
-embedding tables; the discriminator scores a `(real, candidate)` pair. Replacing
-ADKGD's uniform-random corrupter with this learned generator yields harder,
-type-consistent negatives.
+- **Frozen LP (Option B):** `lp_scorer.py` loads the published LibKGE
+  ICLR-2020 ComplEx checkpoints as raw tensors (no libkge/pykeen install) and
+  must reproduce the published filtered MRR (0.348 FB15K-237 / 0.475 WN18RR)
+  via its gate before anything trusts the scores. `band_sampler.py` turns it
+  into the close-but-false `lp_band` source: type-valid (train pools), false
+  by construction (all-splits known-true masks + self-loop bans), plausible
+  (top-k by rank below s(true)); counted fallbacks, never a null.
+- **A-ii GAN (primary):** `gan/train_aii.py` — RGCN LP-warmup → **freeze E'**
+  → generator warm-start toward band-teacher draws → adversarial phase where
+  D = per-relation z-scored frozen ComplEx **+ trainable contextual residual**
+  (`gan/residual_d.py`, candidate-only input, β·tanh-bounded) and G samples
+  one entity slot via masked straight-through Gumbel under a frozen fence
+  below s(true). Falseness is structural (`gan/masks.py`), plausibility is
+  frozen (`gan/complex_d.py`); only G and f_θ ever train.
+- **Legacy B1a arm (ablation only):** `gan/train.py` + `gan/targets.py`
+  (context-distant targets, joint encoder training) via `cli/train_gan.py`.
 
-ADKGD integration (running the detector with KGSAGE-generated negatives) lives
-in the sibling folder `experiments/kgsage_bridge/`, not in this package —
-keeping `kgsage/` ADKGD-agnostic and standalone-extractable.
+## Generation API
 
-## Package layout
+`inference.py` (PyG-free; conditions on the checkpoint's cached E'): one
+negative per input triple; head/tail slot by corruptibility (relation slot is
+never chosen); decode masked by the true value + every known-true filler +
+self-loop (+ the type pool on A-ii checkpoints); seeded `torch.Generator`
+(bit-reproducible per seed); bounded resample, then a flagged null
+(`stats["null_indices"]`) — callers must never train on nulls (the
+bridge/Reader handles this).
+
+## CLIs (repo root, `PYTHONPATH=experiments`)
 
 ```
-kgsage/
-├── __init__.py             <- public API (load_kg, KGSAGEGenerator, generate_negatives, ...)
-├── README.md               <- this file
-│
-├── data/                   <- KG loading + dataset registry
-│   ├── loaders.py          <- load_kg(path) -> integer triples + vocab maps
-│   └── datasets.py         <- KNOWN_DATASETS + resolve_dataset()
-│
-├── gan/                    <- the conditional GAN
-│   ├── models.py           <- KGSAGEGenerator (3-head) + KGSAGEDiscriminator + helpers
-│   └── train.py            <- adversarial training loop (BCE + reconstruction)
-│
-├── inference.py            <- generation API: generate_negatives / load_checkpoint / render_stats
-│
-├── cli/                    <- command-line entry points (thin shims)
-│   └── train_gan.py
-│
-└── slurm/                  <- HPC job launchers
-    ├── README.md
-    └── train_gan_fb15k237.slurm
+python -m kgsage.cli.fetch_lp             # download LP ckpts + MRR gate
+python -m kgsage.gan.train_aii            # PRIMARY trainer (A-ii)
+python -m kgsage.cli.train_gan            # legacy B1a trainer (ablation)
+python -m kgsage.cli.inspect_band         # lp_band diagnostics (gap/rank/FN)
+python -m kgsage.cli.inspect_gan_lp       # GAN-arm diagnostics via deployed decode
+python -m kgsage.cli.inspect_corruptions  # legacy-arm human-eval report
+python  experiments/kgsage/smoke_test.py  # package + bridge smoke
 ```
 
-## How it works
+SLURM launchers in `slurm/` (see that folder's README). Outputs land under
+`outputs/` — gitignored except the committed MRR gate reports.
 
-**Generator** `KGSAGEGenerator(h, r, t, z)` — looks up the triple's embeddings,
-concatenates the noise `z`, runs a 2-layer MLP, and emits three logit heads:
-one over entities (new head), one over relations, one over entities (new tail).
-
-**Discriminator** `KGSAGEDiscriminator(real_emb, candidate_emb)` — scores whether
-the candidate looks like a real fact given the real triple.
-
-**Training** (`gan/train.py`): for every real triple, a target is built by
-randomly corrupting one slot. The discriminator learns to tell the real-vs-target
-pair from the real-vs-generated pair (BCE); the generator's loss is the
-adversarial term plus a `10 ×` cross-entropy reconstruction term against the
-target. Gumbel-Softmax keeps the categorical sampling differentiable.
-
-**Inference** (`inference.py::generate_negatives`): per real triple, pick a slot
-at random, mask the original value, Gumbel-argmax a replacement, and reject any
-candidate that is a self-loop or already in the real graph (retry, then fall
-back to uniform random). One negative per input, in ADKGD's ID space.
-
-## Quick start
-
-```bash
-# Make `import kgsage` work without pip-installing
-export PYTHONPATH="$(pwd)/experiments:$PYTHONPATH"
-
-# Train the GAN (dummy KG, CPU, ~minutes)
-python -m kgsage.cli.train_gan \
-    --data data/dummy_kg \
-    --epochs 50 \
-    --device cpu \
-    --out experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt
-
-# FB15K-237 on HPC (V100)
-sbatch experiments/kgsage/slurm/train_gan_fb15k237.slurm
-```
-
-## ADKGD integration
-
-After training the GAN, point ADKGD at the checkpoint:
-
-```bash
-python experiments/run_experiment.py \
-    --dataset dummy_kg --anomaly_ratio 0.05 --max_epoch 1 \
-    --neg_source gan \
-    --gan_path experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt
-```
-
-ADKGD's `Reader._gan_negatives` imports `kgsage_bridge.bridge`, which calls
-`kgsage.inference.generate_negatives(...)` — running the loaded generator in
-`torch.no_grad()` mode per training batch to produce one negative per positive.
-
-## Datasets
-
-The loader reads any `data/<NAME>/{train,valid,test}.txt` (tab-separated triples).
-`KNOWN_DATASETS` in [data/datasets.py](data/datasets.py) maps short names
-(`fb15k237`, `wn18rr`, `nell995`, `kinship`, `yago`, `kg20c`, `dummy_kg`) to their
-directories; any other directory can be passed by path. Training hyperparameters
-(`--dim`, `--epochs`, `--batch_size`, `--lr`, ...) are CLI flags on the trainer.
-
-## What gets saved
-
-| Path | Content |
-|---|---|
-| `experiments/kgsage/outputs/checkpoints/kgsage_<dataset>.pt` | Trained KGSAGEGenerator weights + vocab maps + real-triple set. |
-
-## Going standalone someday
-
-`kgsage/` imports nothing from outside the `kgsage.*` namespace. To release as a
-pip package: `git mv experiments/kgsage ./kgsage`, add a `pyproject.toml`, move
-tests to `tests/`, and drop the sys.path shim in the CLI wrappers. The ADKGD
-bridge in `experiments/kgsage_bridge/` stays in this thesis codebase — it's
-application glue, not library code.
+Datasets registered in `data/datasets.py`: `fb15k237`, `wn18rr`,
+`fb15k_mini`, `dummy_kg` — only directories that exist in this checkout.
