@@ -22,17 +22,20 @@ The 8-step pipeline (one negative per real triple):
           head vs tail, sampled proportional to the score — so the GAN, not a
           coin flip, decides WHERE to corrupt. (Deliberately no longer matches
           the random baseline's uniform 3-slot distribution.)
-  STEP 4: Mask the original index in the chosen slot to -inf, then sample
-          the new value via argmax + Gumbel noise.
-          (Mask = "force the slot to move". Gumbel noise = "vary across calls"
-           so we don't return the same negative every time.)
-  STEP 5: Build the candidate triple by gluing the new value into the slot we
-          picked. SINGLE shot — no retry loop.
-  STEP 6: Keep the candidate only if it is a VALID negative (not a self-loop and
-          not an existing real triple). If it FAILS, use the ORIGINAL triple (a
-          null corruption) and count it in `used_original`. There is NO random
-          fallback: we measure the generator's real failure rate rather than
-          papering over it, so training reflects the model, not a safety net.
+  STEP 4: Mask the chosen slot's logits: the original index, every KNOWN-TRUE
+          filler of the query across all splits (1-N safe), the self-loop
+          entity, and -- on A-ii checkpoints that carry `pool_masks` --
+          everything outside the relation's train-split type pool. Then sample
+          via argmax + Gumbel noise (seeded torch.Generator derived from the
+          caller's numpy rng, so generation is reproducible per seed).
+  STEP 5: Build the candidate triple by gluing the new value into the slot.
+          Up to `max_resample` (default 8) redraws if the residual validity
+          check fails.
+  STEP 6: A candidate surviving the checks is emitted. If every redraw FAILS
+          (degenerate row), use the ORIGINAL triple (a null corruption), count
+          it in `used_original` AND record its position in `null_indices` so
+          callers can drop/replace it -- a null is a real fact and must never
+          be trained on as a negative. There is NO hidden random fallback.
   STEP 7: Translate GAN integer IDs back to ADKGD integer IDs via strings.
 """
 import numpy as np
@@ -76,6 +79,13 @@ def load_checkpoint(ckpt_path, device=None):
     # The set of real triples (in the GAN's ID space) for collision filtering.
     real_triple_set = set(tuple(t) for t in payload["real_triples"])
 
+    # A5: known-true filler bans per query direction (1-N safe masking at
+    # decode time -- collisions become structurally impossible, not retried).
+    true_tails, true_heads = {}, {}
+    for h, r, t in real_triple_set:
+        true_tails.setdefault((h, r), []).append(t)
+        true_heads.setdefault((r, t), []).append(h)
+
     return {
         "generator": G,
         "device": device,
@@ -85,27 +95,51 @@ def load_checkpoint(ckpt_path, device=None):
         "id2ent": payload["id2ent"],
         "id2rel": payload["id2rel"],
         "real_triple_set": real_triple_set,
+        "true_tails": true_tails,
+        "true_heads": true_heads,
+        # A-ii checkpoints carry the train-split type pools; legacy ones don't.
+        "pool_masks": payload.get("pool_masks"),
         "n_ent": payload["n_ent"],
         "n_rel": payload["n_rel"],
         "z_dim": payload["z_dim"],
     }
 
 
-def _pick_new_index_with_noise(logits, clean_index, rng):
-    """Implements STEP 4: mask the original + Gumbel-sample a new index.
+def _pick_new_index_with_noise(logits, clean_index, torch_gen,
+                               banned=None, pool_row=None, self_row=None):
+    """Implements STEP 4: mask, then Gumbel-sample a new index.
 
-    Two things happen here:
-      (a) MASK: set logits[clean_index] = -inf so argmax can never pick the
-          original value. This is what forces the slot to actually move.
-      (b) NOISE: add Gumbel noise before argmax. Same input -> different
-          output across calls.
+    Masks applied (each optional beyond the original value):
+      clean_index : the true value -- forces the slot to move
+      banned      : every known-true filler of this query (all splits, 1-N safe)
+      self_row    : the triple's other entity (self-loop ban)
+      pool_row    : bool [n_ent] type pool (A-ii checkpoints only) -- -inf
+                    outside the relation's observed slot fillers
+    Sampling adds Gumbel noise at temperature 0.5 (mostly-argmax) drawn from
+    the caller's seeded torch.Generator -- reproducible per seed and per
+    subprocess, unlike the old global-RNG draw.
+
+    Returns -1 if masking left no candidate (caller falls back to null).
     """
     masked = logits.clone()
     masked[clean_index] = float("-inf")
-
-    # Add Gumbel-distributed noise (Gumbel-Max trick). Temperature 0.5 =
-    # mostly argmax but with some randomness.
-    u = torch.rand_like(masked).clamp_(1e-10, 1.0 - 1e-10)
+    if banned:
+        masked[banned] = float("-inf")
+    if self_row is not None:
+        masked[self_row] = float("-inf")
+    if pool_row is not None:
+        masked[~pool_row] = float("-inf")
+        if torch.isinf(masked).all():          # degenerate pool: lift pool ban
+            masked = logits.clone()
+            masked[clean_index] = float("-inf")
+            if banned:
+                masked[banned] = float("-inf")
+            if self_row is not None:
+                masked[self_row] = float("-inf")
+    if torch.isinf(masked).all():
+        return -1
+    u = torch.empty_like(masked)
+    u.uniform_(generator=torch_gen).clamp_(1e-10, 1.0 - 1e-10)
     gumbel = -torch.log(-torch.log(u))
     return int((masked + gumbel * 0.5).argmax().item())
 
@@ -135,7 +169,7 @@ def _corruptibility_scores(head_logits, rel_logits, tail_logits, h_in, r_in, t_i
 
 
 def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
-                       batch_size=256):
+                       batch_size=256, max_resample=8):
     """Generate one negative per input triple. Main entry point.
 
     adkgd_triples : list of (h, r, t) in ADKGD's integer ID space
@@ -143,11 +177,19 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
     adkgd_maps    : dict with 'id2ent', 'id2rel', 'ent2id', 'rel2id' from
                     ADKGD's Reader (round-trip via strings)
     rng           : numpy random.Generator (per-Reader seeded for reproducibility)
+    max_resample  : bounded redraws before a row degrades to a null corruption
 
-    Returns: (negatives_list, stats_dict).
+    Returns: (negatives_list, stats_dict). stats['null_indices'] lists the
+    positions whose emitted 'negative' is the original triple -- callers
+    training on these negatives must drop or replace those rows.
     """
     if rng is None:
         rng = np.random.default_rng(0)
+    # ALL torch randomness (z + Gumbel) flows from this generator, which is
+    # derived from the caller's numpy rng -- the whole call is reproducible
+    # per seed with no dependence on global torch RNG state.
+    torch_gen = torch.Generator()
+    torch_gen.manual_seed(int(rng.integers(0, 2**31 - 1)))
 
     G = payload["generator"]
     device = payload["device"]
@@ -157,6 +199,9 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
     id2ent_gan = payload["id2ent"]
     id2rel_gan = payload["id2rel"]
     real_triple_set = payload["real_triple_set"]
+    true_tails = payload.get("true_tails", {})
+    true_heads = payload.get("true_heads", {})
+    pool_masks = payload.get("pool_masks")      # [2, n_rel, n_ent] bool or None
     z_dim = payload["z_dim"]
 
     # STEP 1: Translate ADKGD IDs -> strings -> GAN IDs (once, up front).
@@ -170,7 +215,10 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
     out = []
     stats = {
         "processed": 0,
-        "used_original": 0,   # generation failed (self-loop/collision) -> kept original
+        "used_original": 0,   # generation failed -> kept original (see null_indices)
+        "null_indices": [],   # positions of null corruptions in the output
+        "resampled": 0,       # extra draws consumed by the bounded retry loop
+        "type_valid": 0,      # emitted negatives inside the relation's type pool
         "slot_h": 0,
         "slot_r": 0,
         "slot_t": 0,
@@ -186,7 +234,7 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
         t_in = torch.tensor([row[2] for row in batch], dtype=torch.long, device=device)
 
         with torch.no_grad():
-            z = torch.randn(n, z_dim, device=device)
+            z = torch.empty(n, z_dim, device=device).normal_(generator=torch_gen)
             # Condition on the cached context table E' (STEP 2).
             head_logits, rel_logits, tail_logits = G(h_in, r_in, t_in, z, entity_context)
 
@@ -207,36 +255,44 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
             h_gan, r_gan, t_gan = batch[i]
             slot = int(slots[i])
 
-            # STEP 4: select the logits + clean value for the chosen slot.
-            if slot == 0:
+            # STEP 4: slot logits + the full mask set for this query.
+            if slot == 0:      # head
                 logits_for_slot = head_logits[i]
-                clean_value = h_gan
-            elif slot == 1:
-                logits_for_slot = rel_logits[i]
-                clean_value = r_gan
-            else:
+                clean_value, self_row = h_gan, t_gan
+                banned = true_heads.get((r_gan, t_gan))
+                pool_row = pool_masks[0, r_gan] if pool_masks is not None else None
+            else:              # tail (relation slot is never chosen; see STEP 3)
                 logits_for_slot = tail_logits[i]
-                clean_value = t_gan
+                clean_value, self_row = t_gan, h_gan
+                banned = true_tails.get((h_gan, r_gan))
+                pool_row = pool_masks[1, r_gan] if pool_masks is not None else None
 
-            # STEP 5: single-shot pick (mask the true value, Gumbel-argmax). No
-            # retry loop, no random fallback.
-            new_idx = _pick_new_index_with_noise(logits_for_slot, clean_value, rng)
-            if slot == 0:
-                candidate = (new_idx, r_gan, t_gan)
-            elif slot == 1:
-                candidate = (h_gan, new_idx, t_gan)
-            else:
-                candidate = (h_gan, r_gan, new_idx)
+            # STEP 5: masked Gumbel pick with a bounded resample loop. With the
+            # known-true + self masks a collision is structurally impossible;
+            # the residual check guards edge cases (e.g. lifted degenerate pool).
+            neg_h, neg_r, neg_t = h_gan, r_gan, t_gan   # null default
+            emitted = False
+            for attempt in range(max_resample):
+                new_idx = _pick_new_index_with_noise(
+                    logits_for_slot, clean_value, torch_gen,
+                    banned=banned, pool_row=pool_row, self_row=self_row)
+                if new_idx < 0:
+                    break                                  # nothing sampleable
+                candidate = ((new_idx, r_gan, t_gan) if slot == 0
+                             else (h_gan, r_gan, new_idx))
+                if candidate[0] != candidate[2] and candidate not in real_triple_set:
+                    neg_h, neg_r, neg_t = candidate
+                    emitted = True
+                    if pool_row is not None and bool(pool_row[new_idx]):
+                        stats["type_valid"] += 1
+                    break
+                stats["resampled"] += 1
 
-            # STEP 6: keep it only if it is a valid negative (not a self-loop and
-            # not an existing real triple). If it FAILS, use the ORIGINAL triple
-            # (a null corruption) and record it, so the generator's real failure
-            # rate is visible instead of hidden by a random fallback.
-            if candidate[0] != candidate[2] and candidate not in real_triple_set:
-                neg_h, neg_r, neg_t = candidate
-            else:
-                neg_h, neg_r, neg_t = h_gan, r_gan, t_gan
+            # STEP 6: every redraw failed -> null corruption, flagged for the
+            # caller (a null is a real fact; it must never train as a negative).
+            if not emitted:
                 stats["used_original"] += 1
+                stats["null_indices"].append(batch_start + i)
 
             if slot == 0:
                 stats["slot_h"] += 1
@@ -270,8 +326,13 @@ def render_stats(stats):
     processed = stats["processed"]
     used = stats["used_original"]
     fail_pct = f"{used:,}/{processed:,}({used / processed:.1%})" if processed else "n/a"
+    extras = ""
+    if "type_valid" in stats and processed:
+        extras = (f"  type_valid={stats['type_valid']:,}/{processed:,}"
+                  f"({stats['type_valid'] / processed:.1%})"
+                  f"  resampled={stats.get('resampled', 0):,}")
     return (
         f"processed={processed:,}  "
-        f"used_original(gen_failed)={fail_pct}  "
+        f"used_original(gen_failed)={fail_pct}{extras}  "
         f"slot_distribution: {slot_pct}"
     )

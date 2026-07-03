@@ -299,14 +299,20 @@ class Reader:
 
         return self.toarray(all_triples), self.toarray(labels)
 
-    def _gan_negatives(self, pos_triples):
+    def _gan_negatives(self, pos_triples, replace_nulls=True):
         """Generate one negative per positive by running the GAN in-process.
 
         Treats every entry in `pos_triples` uniformly -- real positives AND
-        injected eval anomalies -- the GAN doesn't distinguish. For each
-        positive, the GAN picks a slot uniformly at random, decodes the
-        replacement from a noise-perturbed argmax, retries on real-graph
-        collisions, and falls back to uniform random only if retries exhaust.
+        injected eval anomalies. The generator picks a head/tail slot by
+        corruptibility, decodes under type-pool + known-true + self masks,
+        and redraws up to a bound; rows that STILL fail come back as null
+        corruptions (the original triple), flagged in stats['null_indices'].
+
+        A null is a real fact: training on it as a 'negative' injects label
+        noise, so for the TRAINING role (replace_nulls=True) null rows are
+        replaced with ADKGD's own random corruption, counted and logged. The
+        eval role (inject_anomaly) passes replace_nulls=False and filters
+        nulls itself via the genuine-corruption check.
         """
         if not hasattr(self, '_gan_payload') or self._gan_payload is None:
             self._load_gan_model()
@@ -323,6 +329,14 @@ class Reader:
             rng=self._gan_rng,
         )
         print('[GAN] ' + render_stats(stats))
+        null_idx = stats.get('null_indices', [])
+        if replace_nulls and null_idx:
+            fillers = self.generate_anomalous_triples(
+                [pos_triples[i] for i in null_idx])
+            for j, i in enumerate(null_idx):
+                negatives[i] = fillers[j]
+            print('[GAN] %d null corruptions replaced with random fallbacks '
+                  'for the training role' % len(null_idx))
         self._print_pair_preview('GAN', pos_triples, negatives)
         return negatives
 
@@ -469,7 +483,9 @@ class Reader:
             idx = random.sample(range(0, self.num_original_triples), over)
             selected_triples = [original_triples[i] for i in idx]
             if test_source == 'gan':
-                corrupted = self._gan_negatives(selected_triples)
+                # eval role: nulls are filtered below by the genuine-corruption
+                # check, so no random replacement (would blur attribution)
+                corrupted = self._gan_negatives(selected_triples, replace_nulls=False)
             else:
                 corrupted = self._lp_negatives(selected_triples)
             anomalies = [c for src, c in zip(selected_triples, corrupted)
