@@ -6,7 +6,7 @@ cell launcher stays in `experiments/slurm/exp_cell.slurm`.
 
 | script | what it does |
 |---|---|
-| `train_aii.slurm` | trains the A-ii generator (`kgsage.gan.train_aii`). `DATASET=fb15k237\|wn18rr SEED=n sbatch …` — derives data dir + frozen-LP artifacts from `DATASET`; fails fast if `kgsage.cli.fetch_lp` has not been run on the login node |
+| `train.slurm` | trains the KGSAGE generator (`kgsage.gan.train`). `DATASET=fb15k237\|wn18rr SEED=n sbatch …` — derives data dir + frozen-LP artifacts from `DATASET`; fails fast if `kgsage.cli.fetch_lp` has not been run on the login node |
 
 After a training job finishes, run the checkpoint through
 `python -m kgsage.cli.inspect_gan_lp` (or corrupt your own triples with

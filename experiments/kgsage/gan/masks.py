@@ -1,4 +1,4 @@
-"""Training-time candidate masks for the A-ii adversarial loop (stage A2).
+"""Training-time candidate masks for the adversarial loop.
 
 The generator must sample from the same constrained space the deployed
 negatives come from: the relation's TRAIN-split type pool, minus every

@@ -11,7 +11,7 @@
 #   NEG_SOURCE=random  TEST_SOURCE=lp_band SEED=0 sbatch ...   # "the gap"
 #   NEG_SOURCE=lp_band TEST_SOURCE=lp_band SEED=0 sbatch ...   # "the recovery"
 #   NEG_SOURCE=lp_band TEST_SOURCE=random  SEED=0 sbatch ...   # "no regression"
-#   NEG_SOURCE=gan     TEST_SOURCE=lp_band SEED=0 GAN_CKPT=... sbatch ...  # A-ii off-diagonal
+#   NEG_SOURCE=gan     TEST_SOURCE=lp_band SEED=0 GAN_CKPT=... sbatch ...  # GAN off-diagonal
 #
 # Env knobs: DATASET (FB15K-237|WN18RR), SEED, MAX_EPOCH, ANOMALY_RATIO,
 #   GAN_CKPT (required when a source is 'gan'). LP paths are derived from
@@ -65,8 +65,8 @@ CMD=( "$PY" experiments/run_experiment.py
 
 if [[ "$NEG_SOURCE" == "gan" || "$TEST_SOURCE" == "gan" ]]; then
     [[ -n "$GAN_CKPT" && -f "$GAN_CKPT" ]] || {
-        echo "ERROR: GAN_CKPT must point at a trained A-ii checkpoint for gan cells." >&2
-        echo "  Train one first: DATASET=... sbatch experiments/kgsage/slurm/train_aii.slurm" >&2
+        echo "ERROR: GAN_CKPT must point at a trained GAN checkpoint for gan cells." >&2
+        echo "  Train one first: DATASET=... sbatch experiments/kgsage/slurm/train.slurm" >&2
         exit 1; }
     CMD+=( --gan_path "$GAN_CKPT" )
 fi

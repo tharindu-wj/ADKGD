@@ -5,8 +5,7 @@ imports this six-function API; `kgsage/` itself never imports ADKGD code.
 
 ## Contract (`bridge.py`)
 
-GAN arm — used for `--neg_source gan` / `--test_anomaly_source gan`
-(A-ii or legacy B1a checkpoints alike):
+GAN source — used for `--neg_source gan` / `--test_anomaly_source gan`:
 
 ```
 load_gan(ckpt_path)                  -> payload (generator + vocab + reals + masks)
@@ -14,7 +13,7 @@ generate(triples, payload=…, …)     -> (negatives, stats)   # ADKGD-id in/ou
 render_stats(stats)                  -> log line
 ```
 
-lp_band arm — used for `--neg_source lp_band` / `--test_anomaly_source lp_band`
+lp_band source — used for `--neg_source lp_band` / `--test_anomaly_source lp_band`
 (Option B, frozen-LP band sampler; no checkpoint, no nulls):
 
 ```

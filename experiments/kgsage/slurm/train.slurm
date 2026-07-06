@@ -1,6 +1,6 @@
 #!/bin/bash
-# Train the A-ii KGSAGE generator (frozen ComplEx backbone + contextual
-# residual discriminator; kgsage.gan.train_aii) — one V100 allocation.
+# Train the KGSAGE generator (frozen ComplEx backbone + contextual
+# residual discriminator; kgsage.gan.train) — one V100 allocation.
 #
 # Generic over datasets: set DATASET=fb15k237 (default) or DATASET=wn18rr.
 # LP checkpoint + id-map dir are derived from DATASET; fetch them ONCE on the
@@ -8,16 +8,16 @@
 #     python -m kgsage.cli.fetch_lp --dataset all      (PYTHONPATH=experiments)
 # (runs the filtered-MRR loader gate; both datasets must print GATE PASS.)
 #
-#   DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train_aii.slurm
-#   DATASET=fb15k237 SEED=1 sbatch experiments/kgsage/slurm/train_aii.slurm
-#   DATASET=wn18rr   SEED=0 sbatch experiments/kgsage/slurm/train_aii.slurm
-#   DATASET=wn18rr   SEED=1 sbatch experiments/kgsage/slurm/train_aii.slurm
+#   DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train.slurm
+#   DATASET=fb15k237 SEED=1 sbatch experiments/kgsage/slurm/train.slurm
+#   DATASET=wn18rr   SEED=0 sbatch experiments/kgsage/slurm/train.slurm
+#   DATASET=wn18rr   SEED=1 sbatch experiments/kgsage/slurm/train.slurm
 #
 # Env overrides: SEED, WARMUP_EPOCHS, WARMSTART_EPOCHS, EPOCHS, BATCH_SIZE,
 #   CKPT_PATH, TAU, BAND_K, FENCE_SIGMA, LAMBDA_H, TRAIN_SPLIT.
-# Output checkpoint: experiments/kgsage/outputs/checkpoints/kgsage_aii_<tag>_s<seed>.pt
+# Output checkpoint: experiments/kgsage/outputs/checkpoints/kgsage_<tag>_s<seed>.pt
 
-#SBATCH --job-name=kgsage_train_aii
+#SBATCH --job-name=kgsage_train
 #SBATCH --output=%x-%j.out.txt
 #SBATCH --time=04:00:00
 #SBATCH --ntasks=1
@@ -49,7 +49,7 @@ WARMUP_EPOCHS="${WARMUP_EPOCHS:-10}"
 WARMSTART_EPOCHS="${WARMSTART_EPOCHS:-2}"
 EPOCHS="${EPOCHS:-30}"
 BATCH_SIZE="${BATCH_SIZE:-512}"
-CKPT_PATH="${CKPT_PATH:-experiments/kgsage/outputs/checkpoints/kgsage_aii_${TAG}_s${SEED}.pt}"
+CKPT_PATH="${CKPT_PATH:-experiments/kgsage/outputs/checkpoints/kgsage_${TAG}_s${SEED}.pt}"
 TAU="${TAU:-0.5}"
 BAND_K="${BAND_K:-10}"
 FENCE_SIGMA="${FENCE_SIGMA:-0.5}"
@@ -89,8 +89,8 @@ $PY -c "from torch_geometric.nn import RGCNConv; print('PyG OK')"
 
 mkdir -p "$(dirname "$CKPT_PATH")"
 
-echo "[$(date)] Training A-ii generator -> $CKPT_PATH"
-$PY -m kgsage.gan.train_aii \
+echo "[$(date)] Training generator -> $CKPT_PATH"
+$PY -m kgsage.gan.train \
     --data             "$DATA_DIR" \
     --out              "$CKPT_PATH" \
     --lp_ckpt          "$LP_CKPT" \

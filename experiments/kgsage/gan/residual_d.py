@@ -1,4 +1,4 @@
-"""A-ii residual contextual discriminator f_theta (stage A4).
+"""Residual contextual discriminator f_theta.
 
 D(x) = s_z(x) + f_theta(x), where s_z is the per-relation z-scored FROZEN
 ComplEx score (global plausibility, cannot move) and f_theta is a small

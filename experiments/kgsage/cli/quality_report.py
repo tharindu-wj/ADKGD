@@ -19,7 +19,7 @@ entity coverage and entropy.
 entity2text.txt and relation2text.txt are auto-detected inside --data, so the
 usual call is just (repo root, PYTHONPATH=experiments):
   python -m kgsage.cli.quality_report \
-      --ckpt experiments/kgsage/outputs/checkpoints/kgsage_aii_fb15k237_all_s0.pt \
+      --ckpt experiments/kgsage/outputs/checkpoints/kgsage_fb15k237_all_s0.pt \
       --data data/FB15K-237 \
       --sample_frac 0.05 --out reports/quality_fb15k237.md
 (pass --entity2text / --relation2text explicitly to override the auto-detected files.)

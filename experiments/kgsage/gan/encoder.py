@@ -1,4 +1,4 @@
-"""RGCN context encoder for the KGSAGE conditional GAN (B1a).
+"""RGCN context encoder for the KGSAGE conditional GAN.
 
 WHAT IT DOES
     Runs relation-aware message passing over the whole KG and returns ONE

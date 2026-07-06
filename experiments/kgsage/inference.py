@@ -24,7 +24,7 @@ The 7-step pipeline (one negative per real triple):
           the random baseline's uniform 3-slot distribution.)
   STEP 4: Mask the chosen slot's logits: the original index, every KNOWN-TRUE
           filler of the query across all splits (1-N safe), the self-loop
-          entity, and -- on A-ii checkpoints that carry `pool_masks` --
+          entity, and -- on checkpoints that carry `pool_masks` --
           everything outside the relation's train-split type pool. Then sample
           via argmax + Gumbel noise (seeded torch.Generator derived from the
           caller's numpy rng, so generation is reproducible per seed).
@@ -51,13 +51,13 @@ def load_checkpoint(ckpt_path, device=None):
 
     payload = torch.load(ckpt_path, map_location=device, weights_only=False)
 
-    # B1a checkpoints cache the RGCN context table E' so inference can condition
+    # Checkpoints cache the RGCN context table E' so inference can condition
     # the generator without ever running the encoder (or importing PyG).
     if "context_embeddings" not in payload:
         raise KeyError(
             f"Checkpoint {ckpt_path!r} has no 'context_embeddings' (E'). It looks "
-            "like an old pre-B1a checkpoint. Retrain with `python -m "
-            "kgsage.gan.train_aii ...` — the current pipeline caches E' automatically."
+            "like an old checkpoint without cached E'. Retrain with `python -m "
+            "kgsage.gan.train ...` — the current pipeline caches E' automatically."
         )
 
     gen_kwargs = dict(
@@ -97,7 +97,7 @@ def load_checkpoint(ckpt_path, device=None):
         "real_triple_set": real_triple_set,
         "true_tails": true_tails,
         "true_heads": true_heads,
-        # A-ii checkpoints carry the train-split type pools; legacy ones don't.
+        # Checkpoints carry the train-split type pools.
         "pool_masks": payload.get("pool_masks"),
         "n_ent": payload["n_ent"],
         "n_rel": payload["n_rel"],
@@ -113,7 +113,7 @@ def _pick_new_index_with_noise(logits, clean_index, torch_gen,
       clean_index : the true value -- forces the slot to move
       banned      : every known-true filler of this query (all splits, 1-N safe)
       self_row    : the triple's other entity (self-loop ban)
-      pool_row    : bool [n_ent] type pool (A-ii checkpoints only) -- -inf
+      pool_row    : bool [n_ent] type pool (when present) -- -inf
                     outside the relation's observed slot fillers
     Sampling adds Gumbel noise at temperature 0.5 (mostly-argmax) drawn from
     the caller's seeded torch.Generator -- reproducible per seed and per

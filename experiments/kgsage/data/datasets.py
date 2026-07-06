@@ -9,7 +9,7 @@ pattern to add a dataset:
     2. (Optional) add an entry to KNOWN_DATASETS below so the short name works.
 
     3. Use the dataset directory with the GAN trainer / ADKGD run, e.g.:
-          python -m kgsage.gan.train_aii --data data/<NAME> --out <ckpt>.pt ...
+          python -m kgsage.gan.train --data data/<NAME> --out <ckpt>.pt ...
 
 For one-off datasets that don't need a registry entry, pass a filesystem path
 directly. `resolve_dataset()` distinguishes names from paths and returns a

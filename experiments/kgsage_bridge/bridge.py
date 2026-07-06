@@ -3,11 +3,11 @@
 The single integration layer between the KGSAGE package and ADKGD's training
 pipeline. ADKGD's `dataset.py` imports the six-function API from here:
 
-  GAN arm (A-ii or legacy checkpoints):
+  GAN negatives (KGSAGE generator checkpoints):
   - load_gan(checkpoint_path)        -> payload dict (model + vocab + reals)
   - generate(triples, payload, ...)  -> list of negative triples + stats
   - render_stats(stats)              -> human-readable log line
-  lp_band arm (Option B, frozen-LP band sampler):
+  lp_band negatives (frozen-LP band sampler):
   - load_lp(lp_ckpt, lp_ids, data)   -> payload dict (BandSampler)
   - generate_band(triples, ...)      -> negatives + stats (no nulls)
   - render_band_stats(stats)         -> human-readable log line

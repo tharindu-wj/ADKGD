@@ -6,7 +6,7 @@ The conditional GAN that produces single-slot-corruption negatives for ADKGD's
   KGSAGEGenerator     - real triple + noise -> head/rel/tail logits (3 heads)
   gumbel_softmax      - reparameterised soft argmax (training helper)
 
-Training lives at `kgsage.gan.train_aii` (the A-ii trainer). Generation (load checkpoint
+Training lives at `kgsage.gan.train` (the trainer). Generation (load checkpoint
 + produce negatives) lives at `kgsage.inference` — the same pipeline `kgsage_bridge`
 uses to feed ADKGD.
 """

@@ -5,10 +5,10 @@ module. Library users call the modules directly (e.g. `kgsage.gan.train`);
 shell users call the CLI shims (e.g. `python -m kgsage.cli.fetch_lp`).
 
 Available commands:
-  python -m kgsage.gan.train_aii          - train the PRIMARY A-ii generator
+  python -m kgsage.gan.train              - train the KGSAGE generator
   python -m kgsage.cli.fetch_lp           - download LP checkpoints + MRR gate
   python -m kgsage.cli.inspect_band       - lp_band negative diagnostics
-  python -m kgsage.cli.inspect_gan_lp     - GAN-arm negative diagnostics
+  python -m kgsage.cli.inspect_gan_lp     - GAN negative diagnostics
 """
 import sys
 

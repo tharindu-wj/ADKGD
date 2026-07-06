@@ -9,7 +9,7 @@ from random import shuffle
 class Reader:
     def __init__(self, args, path):
         # Stored so get_data() can consult args.neg_source / args.gan_path
-        # (path to kggan .pt checkpoint when neg_source='gan') without changing
+        # (path to the KGSAGE .pt checkpoint when neg_source='gan') without changing
         # its signature. Optional flags use getattr() below.
         self.args = args
 
@@ -236,10 +236,9 @@ class Reader:
         bp_triples = [bp_triples_label[i][0] for i in range(len(bp_triples_label))]
 
         # Phase B: source of training-time negatives (set C).
-        # 'gan'    -> in-process call to kggan's generator (loaded once from a
+        # 'gan'    -> in-process call to the KGSAGE generator (loaded once from a
         #             .pt checkpoint at --gan_path). Same masked-decode + retry +
-        #             uniform-random-fallback logic as kggan's TSV exporter, but
-        #             returned directly instead of routed through a file.
+        #             masked decode, but returned in-process instead of via a file.
         #             Used uniformly for both real positives AND injected eval
         #             anomalies in bp_triples_label.
         # 'random' -> ADKGD's original per-positive random corruption (default).

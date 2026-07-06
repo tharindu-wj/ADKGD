@@ -1,6 +1,6 @@
 # Running the KGSAGE pipeline on DeepThought (Flinders HPC)
 
-## CURRENT WORKFLOW (2026-07-03 — the B/A-ii build)
+## CURRENT WORKFLOW (2026-07-03 — the KGSAGE build)
 
 Submission order (details + env knobs in each script header and
 [README.md](README.md)):
@@ -8,8 +8,8 @@ Submission order (details + env knobs in each script header and
 1. **Once, login node** — fetch the frozen LP checkpoints and pass the MRR
    gates: `PYTHONPATH=experiments python -m kgsage.cli.fetch_lp --dataset all`
    (expect `GATE PASS` for fb15k237 ≈0.3477 and wn18rr ≈0.4749).
-2. **Train A-ii generators** (GPU): `DATASET=fb15k237 SEED=0 sbatch
-   experiments/kgsage/slurm/train_aii.slurm` — repeat per dataset × seed.
+2. **Train the generator** (GPU): `DATASET=fb15k237 SEED=0 sbatch
+   experiments/kgsage/slurm/train.slurm` — repeat per dataset × seed.
    Preflights GPU, PyG (`torch_geometric` must be installed in the env) and
    the LP artifacts, and fails fast with instructions if any is missing.
 3. **Inspect the checkpoint** before spending matrix compute:

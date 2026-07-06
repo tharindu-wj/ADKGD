@@ -1,11 +1,11 @@
-"""Eyeball + aggregate diagnostics for GAN-arm negatives under the frozen LP
-(stage A6). The A-ii counterpart of cli/inspect_band.py: corrupts N sampled
+"""Eyeball + aggregate diagnostics for GAN negatives under the frozen LP
+(stage A6). The counterpart of cli/inspect_band.py: corrupts N sampled
 positives through the DEPLOYED decode path (kgsage.inference, i.e. exactly
 what ADKGD receives) and scores the emissions with the frozen ComplEx.
 
 Usage (repo root, pytorch env):
   PYTHONPATH=experiments python -m kgsage.cli.inspect_gan_lp \
-      --ckpt experiments/kgsage/outputs/checkpoints/kgsage_aii_mini.pt \
+      --ckpt experiments/kgsage/outputs/checkpoints/kgsage_mini.pt \
       --data data/FB15K-mini \
       --lp_ckpt experiments/kgsage/outputs/lp/fb15k-237-complex.pt \
       --lp_ids  experiments/kgsage/outputs/lp/fb15k-237 [--n 30] [--seed 0]

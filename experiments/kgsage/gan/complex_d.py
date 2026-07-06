@@ -1,4 +1,4 @@
-"""Frozen ComplEx as an in-training-loop scorer for Option A-ii (stage A1).
+"""Frozen ComplEx as an in-training-loop scorer for the KGSAGE GAN.
 
 Wraps the raw LibKGE tensors (loaded by kgsage.lp_scorer) as an nn.Module with
 buffers so the adversarial loop can score:

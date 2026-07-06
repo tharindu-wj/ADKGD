@@ -1,5 +1,5 @@
-"""A-ii adversarial training: frozen ComplEx backbone + trainable contextual
-residual discriminator (stage A4; design: experiments/docs/OPTION_A_PLAN.md).
+"""KGSAGE adversarial training: frozen ComplEx backbone + trainable contextual
+residual discriminator (design: experiments/docs/OPTION_A_PLAN.md).
 
 Phases
   0b WARMUP    encoder + throwaway DistMult decoder train on link prediction
@@ -25,16 +25,12 @@ builder iterates python ints); every model call moves its inputs to `device`
 at the boundary and diagnostics move results back. Verified on CPU; the GPU
 path uses the same boundaries.
 
-History note: the earlier B1a arm (context-distant contradiction targets,
-jointly-trained encoder) was removed under the single-version policy --
-recover it from git history if ever needed. The checkpoint format is
-unchanged, so inference and the ADKGD bridge are unaffected.
 
 Run (repo root):
-  PYTHONPATH=experiments python -m kgsage.gan.train_aii --data data/FB15K-mini \
+  PYTHONPATH=experiments python -m kgsage.gan.train --data data/FB15K-mini \
       --lp_ckpt experiments/kgsage/outputs/lp/fb15k-237-complex.pt \
       --lp_ids  experiments/kgsage/outputs/lp/fb15k-237 \
-      --out experiments/kgsage/outputs/checkpoints/kgsage_aii_mini.pt
+      --out experiments/kgsage/outputs/checkpoints/kgsage_mini.pt
 """
 
 from __future__ import annotations
@@ -45,7 +41,6 @@ import time
 from collections import deque
 from datetime import datetime
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -62,12 +57,12 @@ def save_checkpoint(generator, encoder, kg, dim, z_dim, edge_index, edge_type, s
                     extra=None):
     """Bundle everything kgsage.inference.load_checkpoint needs into one .pt file.
 
-    The B1a addition is `context_embeddings` (E'): the FINAL encoder output,
+    `context_embeddings` (E') is the FINAL encoder output,
     cached so inference can look up E'[head]/E'[tail] without ever running the
     RGCN (or importing torch_geometric) again.
 
-    `extra` (A4): optional dict of additional payload keys merged in verbatim
-    (arm tag, LP provenance, pool masks, z-stats ...); legacy keys always win.
+    `extra`: optional dict of additional payload keys merged in verbatim
+    (LP provenance, pool masks, z-stats ...); the base keys always win.
     """
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     # Freeze the trained context table for inference.
@@ -86,7 +81,7 @@ def save_checkpoint(generator, encoder, kg, dim, z_dim, edge_index, edge_type, s
         "dim": dim,
         "z_dim": z_dim,
         "hidden": generator.hidden,
-        # --- B1a: cached RGCN context table (what the whole encoder is for) ---
+        # --- cached RGCN context table (what the whole encoder is for) ---
         "context_embeddings": context_embeddings,
         "encoder_num_bases": encoder.num_bases,
         "encoder_layers": encoder.num_layers,
@@ -278,7 +273,7 @@ def main() -> None:
     def z_of(s_raw, r_ids_dev):
         return (s_raw - mu_r[r_ids_dev]) / sigma_r[r_ids_dev]
 
-    def g_sample(h, r, t, slot, with_grad=False):
+    def g_sample(h, r, t, slot):
         """Generator slot sample under masks. h/r/t are CPU id tensors.
         Returns (ST one-hot [B, n_ent] on device, masked logits on device)."""
         h_d, r_d, t_d = h.to(device), r.to(device), t.to(device)
@@ -376,7 +371,7 @@ def main() -> None:
             opt_d.zero_grad(); l_d.backward(); opt_d.step()
 
             # ---- G step ----
-            g_soft, logits_masked = g_sample(h, r, t, slot, with_grad=True)
+            g_soft, logits_masked = g_sample(h, r, t, slot)
             cand_emb = g_soft @ context                       # frozen E' (device)
             h_d, r_d, t_d = h.to(device), r.to(device), t.to(device)
             if slot == TAIL:
@@ -421,9 +416,8 @@ def main() -> None:
 
     print(f"Adversarial done ({datetime.now() - start_wall}).", flush=True)
 
-    # ---------------- checkpoint (legacy format + A-ii extras) ----------------
+    # ---------------- checkpoint ----------------
     extra = {
-        "arm": "aii",
         "lp_ckpt": str(args.lp_ckpt),
         "pool_masks": masks.pool,          # [2, n_rel, n_ent] bool (A5 decode)
         "zstats_mu": mu_r.cpu(), "zstats_sigma": sigma_r.cpu(),
@@ -432,7 +426,7 @@ def main() -> None:
     }
     save_checkpoint(generator, encoder, kg, args.dim, args.z_dim,
                     edge_index, edge_type, args.out, extra=extra)
-    print(f"Saved A-ii checkpoint to {args.out}", flush=True)
+    print(f"Saved KGSAGE checkpoint to {args.out}", flush=True)
 
 
 if __name__ == "__main__":

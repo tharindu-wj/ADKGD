@@ -1,11 +1,11 @@
-"""KGSAGE conditional GAN for knowledge-graph triple corruption (B1a).
+"""KGSAGE conditional GAN for knowledge-graph triple corruption.
 
 WHAT THIS GAN DOES
     Given a real triple like (Alice, born_in, Australia), the generator produces
     a fake-but-plausible triple with ONE slot corrupted, e.g.
     (Alice, born_in, Canada). Those corruptions become ADKGD's training negatives.
 
-WHAT MAKES B1a DIFFERENT — neighbourhood conditioning
+NEIGHBOURHOOD CONDITIONING
     The generator does NOT learn its own entity embeddings. Instead it is
     CONDITIONED on E' — the context embeddings produced by the RGCN encoder
     (kgsage.gan.encoder), where E'[e] summarises entity e's neighbourhood. So the
@@ -20,10 +20,10 @@ WHAT MAKES B1a DIFFERENT — neighbourhood conditioning
 
 THE NETWORK
     KGSAGEGenerator - entity context + noise -> corrupted-triple logits (3 heads)
-    (the A-ii discriminator lives in kgsage.gan.residual_d + complex_d)
+    (the discriminator lives in kgsage.gan.residual_d + complex_d)
 
-The entity embedding table used for conditioning is E'; in the A-ii trainer
-(kgsage.gan.train_aii) E' is LP-warmup-trained and then FROZEN for the
+The entity embedding table used for conditioning is E'; in the trainer
+(kgsage.gan.train) E' is LP-warmup-trained and then FROZEN for the
 adversarial phase.
 """
 import torch
@@ -100,7 +100,7 @@ class KGSAGEGenerator(nn.Module):
             noise          : FloatTensor [batch, z_dim] random noise (adds variety
                              so the same triple can yield different corruptions).
             entity_context : FloatTensor [n_ent, dim] = E' from the RGCN encoder.
-                             The A-ii trainer passes a frozen, detached E'.
+                             The trainer passes a frozen, detached E'.
 
         Returns three logit tensors:
             head_logits     : [batch, n_ent] scores over entities for a new head
@@ -129,7 +129,7 @@ def gumbel_softmax(logits, tau=1.0, hard=False, mask=None, generator=None):
     low-temperature softmax so the result is near one-hot but smooth. Gradients
     then flow, letting us sample a corrupted slot, embed it, and update G.
 
-    A-ii additions (all default-off; legacy call sites behave identically):
+    Optional additions (all default-off; the base call behaves identically):
       mask      : additive [B, n] mask (0 allowed / -inf banned), applied BEFORE
                   the noise so banned candidates are unsampleable by
                   construction (type pools + known-true + self-loop bans).

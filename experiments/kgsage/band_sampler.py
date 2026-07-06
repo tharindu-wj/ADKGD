@@ -20,7 +20,7 @@ Fallback ladder (all counted, never a null / used_original):
 The sampler lives in the scorer's row space; the public API is string-keyed
 (kgsage stays ADKGD-agnostic -- id translation is the bridge's job). Scorer =
 any object with ent2row/rel2base dicts and score_tails_all / score_heads_all /
-score_hrt (see lp_scorer.ComplExScorer; the A-ii warmup KGE implements the
+score_hrt (see lp_scorer.ComplExScorer; the GAN warmup KGE implements the
 same protocol later).
 """
 

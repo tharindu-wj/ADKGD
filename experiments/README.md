@@ -1,7 +1,7 @@
 # KGSAGE experiments — operator guide
 
 Everything under `experiments/` implements the staged PoC pipeline
-(**Option B → Option A-ii**; plans of record in `docs/OPTION_B_PLAN.md`,
+(design records in `docs/OPTION_B_PLAN.md`,
 `docs/OPTION_A_PLAN.md`, destination in `docs/KGSAGE_IMPLEMENTATION_PLAN.md`):
 generate **close-but-false** KG anomalies and evaluate whether training the
 ADKGD detector on them beats random corruption.
@@ -13,13 +13,13 @@ One run = one cell of `(--neg_source × --test_anomaly_source)`, sources:
 | source | what it is |
 |---|---|
 | `random`  | ADKGD's original corruption (baseline; bit-identical to the paper) |
-| `lp_band` | Option B: a frozen pretrained ComplEx ranks the relation's type pool; sample the top-k band **below** s(true), masked against every known-true filler (all splits) — no GAN; doubles as the `sampler_direct` control arm |
-| `gan`     | a trained KGSAGE A-ii checkpoint (`kgsage.gan.train_aii`: frozen ComplEx backbone + trainable contextual residual D) |
+| `lp_band` | Option B: a frozen pretrained ComplEx ranks the relation's type pool; sample the top-k band **below** s(true), masked against every known-true filler (all splits) — no GAN; doubles as the `sampler_direct` control |
+| `gan`     | a trained KGSAGE checkpoint (`kgsage.gan.train`: frozen ComplEx backbone + trainable contextual residual D) |
 
 The PoC read-out (pre-registered in `docs/OPTION_B_PLAN.md` §0):
 `random×random` (baseline) vs `random×lp_band` (**the gap**) vs
 `lp_band×lp_band` (**the recovery**) vs `lp_band×random` (**no regression**)
-vs `gan×lp_band` (**the A-ii receipt** — must beat the band-sampler control).
+vs `gan×lp_band` (**the GAN receipt** — must beat the band-sampler control).
 
 ## Quickstart (local, CPU, FB15K-mini smoke set)
 
@@ -44,7 +44,7 @@ override) — both are no-ops on the GPU cluster.
 ## HPC workflow (DeepThought — details in RUNNING_ON_DEEPTHOUGHT.md)
 
 1. `PYTHONPATH=experiments python -m kgsage.cli.fetch_lp --dataset all` (login node, once).
-2. Train A-ii generators: `DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train_aii.slurm` (× datasets × seeds).
+2. Train the generator: `DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train.slurm` (× datasets × seeds).
 3. Inspect each checkpoint: `python -m kgsage.cli.inspect_gan_lp --ckpt ... --n 40`.
 4. Run cells: `NEG_SOURCE=... TEST_SOURCE=... SEED=... DATASET=... [GAN_CKPT=...] sbatch experiments/slurm/exp_cell.slurm`
    (`exp_cell.slurm` is the single cell launcher — all source pairings, incl. `lp_band`).

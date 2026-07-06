@@ -4,7 +4,7 @@ Run these from the repo root on DeepThought (`cd ~/ADKGD` first). Each block
 is self-contained — copy the whole block into your terminal.
 
 Dataset naming gotcha: the two scripts spell the dataset differently.
-- `train_aii.slurm` wants the short tag: `fb15k237` / `wn18rr`
+- `train.slurm` wants the short tag: `fb15k237` / `wn18rr`
 - `exp_cell.slurm` wants the data folder name: `FB15K-237` / `WN18RR`
 
 ---
@@ -24,14 +24,14 @@ PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.fetch_lp --dataset 
 ### FB15K-237
 
 ```bash
-DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train_aii.slurm
+DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train.slurm
 ```
 
-Produces `experiments/kgsage/outputs/checkpoints/kgsage_aii_fb15k237_s0.pt`.
+Produces `experiments/kgsage/outputs/checkpoints/kgsage_fb15k237_s0.pt`.
 Watch it:
 
 ```bash
-tail -f kgsage_train_aii-<jobid>.out.txt
+tail -f kgsage_train-<jobid>.out.txt
 ```
 
 Healthy signs: `copy=0.00%` always, `D-acc real/fake` around 0.78/0.87 (not
@@ -41,10 +41,10 @@ single digits/low hundreds).
 ### WN18RR
 
 ```bash
-DATASET=wn18rr SEED=0 sbatch experiments/kgsage/slurm/train_aii.slurm
+DATASET=wn18rr SEED=0 sbatch experiments/kgsage/slurm/train.slurm
 ```
 
-Produces `experiments/kgsage/outputs/checkpoints/kgsage_aii_wn18rr_s0.pt`.
+Produces `experiments/kgsage/outputs/checkpoints/kgsage_wn18rr_s0.pt`.
 
 > **Known issue on WN18RR (from the 2026-07-03 run):** default settings
 > mode-collapsed — `D-acc fake=1.00` from epoch 1, `fence-hit=0%`,
@@ -53,17 +53,17 @@ Produces `experiments/kgsage/outputs/checkpoints/kgsage_aii_wn18rr_s0.pt`.
 > knobs (cheapest first):
 >
 > ```bash
-> DATASET=wn18rr SEED=0 LAMBDA_H=0.05 sbatch experiments/kgsage/slurm/train_aii.slurm
+> DATASET=wn18rr SEED=0 LAMBDA_H=0.05 sbatch experiments/kgsage/slurm/train.slurm
 > # if still collapsed, also lower the discriminator's effective learning rate
-> # by editing --lr_d in kgsage/gan/train_aii.py, or raise BAND_TEMP:
-> DATASET=wn18rr SEED=0 LAMBDA_H=0.05 BAND_TEMP=1.0 sbatch experiments/kgsage/slurm/train_aii.slurm
+> # by editing --lr_d in kgsage/gan/train.py, or raise BAND_TEMP:
+> DATASET=wn18rr SEED=0 LAMBDA_H=0.05 BAND_TEMP=1.0 sbatch experiments/kgsage/slurm/train.slurm
 > ```
 
 ### Second seed (needed later to de-circularize the "recovery" cell — optional for now)
 
 ```bash
-DATASET=fb15k237 SEED=1 sbatch experiments/kgsage/slurm/train_aii.slurm
-DATASET=wn18rr   SEED=1 sbatch experiments/kgsage/slurm/train_aii.slurm
+DATASET=fb15k237 SEED=1 sbatch experiments/kgsage/slurm/train.slurm
+DATASET=wn18rr   SEED=1 sbatch experiments/kgsage/slurm/train.slurm
 ```
 
 ---
@@ -75,14 +75,14 @@ DATASET=wn18rr   SEED=1 sbatch experiments/kgsage/slurm/train_aii.slurm
 ```bash
 # FB15K-237
 PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.inspect_gan_lp \
-  --ckpt experiments/kgsage/outputs/checkpoints/kgsage_aii_fb15k237_s0.pt \
+  --ckpt experiments/kgsage/outputs/checkpoints/kgsage_fb15k237_s0.pt \
   --data data/FB15K-237 \
   --lp_ckpt experiments/kgsage/outputs/lp/fb15k-237-complex.pt \
   --lp_ids  experiments/kgsage/outputs/lp/fb15k-237 --n 40
 
 # WN18RR
 PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.inspect_gan_lp \
-  --ckpt experiments/kgsage/outputs/checkpoints/kgsage_aii_wn18rr_s0.pt \
+  --ckpt experiments/kgsage/outputs/checkpoints/kgsage_wn18rr_s0.pt \
   --data data/WN18RR \
   --lp_ckpt experiments/kgsage/outputs/lp/wnrr-complex.pt \
   --lp_ids  experiments/kgsage/outputs/lp/wnrr --n 40
@@ -94,7 +94,7 @@ PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.inspect_gan_lp \
 # FB15K-237 — grab a relation you can reason about, then corrupt it
 grep place_of_birth data/FB15K-237/train.txt | head -8 > my_triples_fb.tsv
 PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.corrupt \
-  --ckpt experiments/kgsage/outputs/checkpoints/kgsage_aii_fb15k237_s0.pt \
+  --ckpt experiments/kgsage/outputs/checkpoints/kgsage_fb15k237_s0.pt \
   --triples my_triples_fb.tsv \
   --lp_ckpt experiments/kgsage/outputs/lp/fb15k-237-complex.pt \
   --lp_ids  experiments/kgsage/outputs/lp/fb15k-237
@@ -102,7 +102,7 @@ PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.corrupt \
 # WN18RR — e.g. hypernym relation
 grep _hypernym data/WN18RR/train.txt | head -8 > my_triples_wn.tsv
 PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.corrupt \
-  --ckpt experiments/kgsage/outputs/checkpoints/kgsage_aii_wn18rr_s0.pt \
+  --ckpt experiments/kgsage/outputs/checkpoints/kgsage_wn18rr_s0.pt \
   --triples my_triples_wn.tsv \
   --lp_ckpt experiments/kgsage/outputs/lp/wnrr-complex.pt \
   --lp_ids  experiments/kgsage/outputs/lp/wnrr
@@ -118,7 +118,7 @@ Negative `gap` / `ABOVE TRUE` flag = possible false negative.
 ### FB15K-237
 
 ```bash
-CKPT=experiments/kgsage/outputs/checkpoints/kgsage_aii_fb15k237_s0.pt
+CKPT=experiments/kgsage/outputs/checkpoints/kgsage_fb15k237_s0.pt
 
 # ① baseline      — train random, test random   (no GAN needed)
 NEG_SOURCE=random TEST_SOURCE=random DATASET=FB15K-237 SEED=0 \
@@ -140,7 +140,7 @@ NEG_SOURCE=gan TEST_SOURCE=gan DATASET=FB15K-237 SEED=0 GAN_CKPT=$CKPT \
 ### WN18RR
 
 ```bash
-CKPT=experiments/kgsage/outputs/checkpoints/kgsage_aii_wn18rr_s0.pt
+CKPT=experiments/kgsage/outputs/checkpoints/kgsage_wn18rr_s0.pt
 
 # ① baseline      — train random, test random   (no GAN needed)
 NEG_SOURCE=random TEST_SOURCE=random DATASET=WN18RR SEED=0 \
@@ -184,7 +184,7 @@ problem) → ③ stays near ① (no downside) → ④ climbs back up (GAN helps)
 
 | Script | Knob | Default | Notes |
 |---|---|---|---|
-| `train_aii.slurm` | `DATASET` | `fb15k237` | `fb15k237` \| `wn18rr` |
+| `train.slurm` | `DATASET` | `fb15k237` | `fb15k237` \| `wn18rr` |
 | | `SEED` | `0` | |
 | | `WARMUP_EPOCHS` | `10` | |
 | | `WARMSTART_EPOCHS` | `2` | |

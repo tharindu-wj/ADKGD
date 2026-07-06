@@ -3,7 +3,7 @@
 Self-contained (imports nothing outside `kgsage.*`). ADKGD integration lives
 exclusively in `experiments/kgsage_bridge/`.
 
-## Two generator arms, one frozen scorer
+## Two negative sources, one frozen scorer
 
 - **Frozen LP (Option B):** `lp_scorer.py` loads the published LibKGE
   ICLR-2020 ComplEx checkpoints as raw tensors (no libkge/pykeen install) and
@@ -12,7 +12,7 @@ exclusively in `experiments/kgsage_bridge/`.
   into the close-but-false `lp_band` source: type-valid (train pools), false
   by construction (all-splits known-true masks + self-loop bans), plausible
   (top-k by rank below s(true)); counted fallbacks, never a null.
-- **A-ii GAN (primary):** `gan/train_aii.py` — RGCN LP-warmup → **freeze E'**
+- **KGSAGE GAN:** `gan/train.py` — RGCN LP-warmup → **freeze E'**
   → generator warm-start toward band-teacher draws → adversarial phase where
   D = per-relation z-scored frozen ComplEx **+ trainable contextual residual**
   (`gan/residual_d.py`, candidate-only input, β·tanh-bounded) and G samples
@@ -25,7 +25,7 @@ exclusively in `experiments/kgsage_bridge/`.
 `inference.py` (PyG-free; conditions on the checkpoint's cached E'): one
 negative per input triple; head/tail slot by corruptibility (relation slot is
 never chosen); decode masked by the true value + every known-true filler +
-self-loop (+ the type pool on A-ii checkpoints); seeded `torch.Generator`
+self-loop (+ the type pool when present); seeded `torch.Generator`
 (bit-reproducible per seed); bounded resample, then a flagged null
 (`stats["null_indices"]`) — callers must never train on nulls (the
 bridge/Reader handles this).
@@ -34,9 +34,9 @@ bridge/Reader handles this).
 
 ```
 python -m kgsage.cli.fetch_lp             # download LP ckpts + MRR gate
-python -m kgsage.gan.train_aii            # PRIMARY trainer (A-ii)
+python -m kgsage.gan.train               # the trainer
 python -m kgsage.cli.inspect_band         # lp_band diagnostics (gap/rank/FN)
-python -m kgsage.cli.inspect_gan_lp       # GAN-arm diagnostics via deployed decode
+python -m kgsage.cli.inspect_gan_lp       # GAN diagnostics via deployed decode
 python  experiments/kgsage/smoke_test.py  # package + bridge smoke
 ```
 

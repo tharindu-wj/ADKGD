@@ -13,7 +13,7 @@ Pick guaranteed-valid triples straight from the data:
 
 Then corrupt them (repo root, PYTHONPATH=experiments):
     python -m kgsage.cli.corrupt \
-        --ckpt experiments/kgsage/outputs/checkpoints/kgsage_aii_fb15k237_s0.pt \
+        --ckpt experiments/kgsage/outputs/checkpoints/kgsage_fb15k237_s0.pt \
         --triples my_triples.tsv \
         --lp_ckpt experiments/kgsage/outputs/lp/fb15k-237-complex.pt \
         --lp_ids  experiments/kgsage/outputs/lp/fb15k-237
