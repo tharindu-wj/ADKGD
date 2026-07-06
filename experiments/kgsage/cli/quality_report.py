@@ -16,12 +16,13 @@ falseness, diversity / mode-collapse, and slot distribution. A collapsed
 generator (e.g. WN18RR at default settings) shows up as very low distinct-
 entity coverage and entropy.
 
-Usage (repo root, PYTHONPATH=experiments):
+entity2text.txt and relation2text.txt are auto-detected inside --data, so the
+usual call is just (repo root, PYTHONPATH=experiments):
   python -m kgsage.cli.quality_report \
       --ckpt experiments/kgsage/outputs/checkpoints/kgsage_aii_fb15k237_all_s0.pt \
       --data data/FB15K-237 \
-      --entity2text data/FB15K-237/entity2text.txt \
       --sample_frac 0.05 --out reports/quality_fb15k237.md
+(pass --entity2text / --relation2text explicitly to override the auto-detected files.)
 """
 
 from __future__ import annotations
@@ -73,8 +74,10 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--data", required=True, help="dataset dir (train/valid/test.txt)")
-    ap.add_argument("--entity2text", default=None, help="TSV id<TAB>name (falls back to raw ids)")
-    ap.add_argument("--relation2text", default=None, help="optional TSV relation<TAB>text")
+    ap.add_argument("--entity2text", default=None,
+                    help="TSV id<TAB>name; auto-detected as <data>/entity2text.txt if omitted")
+    ap.add_argument("--relation2text", default=None,
+                    help="TSV relation<TAB>text; auto-detected as <data>/relation2text.txt if omitted")
     ap.add_argument("--sample_frac", type=float, default=0.05)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--max_shown", type=int, default=120, help="pairs listed in the .md (all go to the .tsv)")
@@ -86,9 +89,20 @@ def main() -> int:
     id2e, id2r = payload["id2ent"], payload["id2rel"]
     real_all = payload["real_triple_set"]
 
+    # auto-detect the text maps inside --data unless overridden
+    if args.entity2text is None:
+        cand = Path(args.data) / "entity2text.txt"
+        args.entity2text = str(cand) if cand.exists() else None
+    if args.relation2text is None:
+        cand = Path(args.data) / "relation2text.txt"
+        args.relation2text = str(cand) if cand.exists() else None
+
     ent_txt = _read_text_map(args.entity2text)
     rel_txt = _read_text_map(args.relation2text)
     named = len(ent_txt) > 0
+    print(f"names: entity2text={'yes' if ent_txt else 'no'} "
+          f"({len(ent_txt):,}), relation2text={'yes' if rel_txt else 'no'} "
+          f"({len(rel_txt):,})")
 
     def ename(gid):
         s = id2e[gid]
@@ -181,7 +195,8 @@ def main() -> int:
     L.append(f"- **dataset:** `{args.data}`  ({len(triples):,} in-vocab triples across all splits"
              + (f", {skipped:,} skipped" if skipped else "") + ")")
     L.append(f"- **sample:** {n_sample:,} triples ({args.sample_frac:.0%}), seed {args.seed}")
-    L.append(f"- **names:** {'entity2text applied' if named else 'RAW IDS (no entity2text)'}")
+    L.append(f"- **names:** entities {'✓' if ent_txt else 'RAW IDS'}, "
+             f"relations {'✓' if rel_txt else 'cleaned strings'}")
     L.append(f"- **full pair list for LLM fact-check:** `{out_tsv.name}`\n")
 
     L.append("## Quality at a glance (model-free — no plausibility scorer)\n")
