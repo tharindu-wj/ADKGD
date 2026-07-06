@@ -1,7 +1,7 @@
 """Eyeball + aggregate diagnostics for GAN negatives under the frozen LP
 (stage A6). The counterpart of cli/inspect_band.py: corrupts N sampled
 positives through the DEPLOYED decode path (kgsage.inference, i.e. exactly
-what ADKGD receives) and scores the emissions with the frozen ComplEx.
+what a downstream detector receives) and scores the emissions with the frozen ComplEx.
 
 Usage (repo root, pytorch env):
   PYTHONPATH=experiments python -m kgsage.cli.inspect_gan_lp \
@@ -48,12 +48,12 @@ def main() -> int:
     picks = rng.choice(len(triples), size=min(args.n, len(triples)), replace=False)
     positives_str = [triples[i] for i in picks]
 
-    # the GAN payload's own maps ARE the identity adkgd_maps here
+    # the GAN payload's own maps ARE the identity id_maps here
     e2g, r2g = payload["ent2id"], payload["rel2id"]
     pos_ids = [(e2g[h], r2g[r], e2g[t]) for h, r, t in positives_str]
-    adkgd_maps = {"id2ent": payload["id2ent"], "id2rel": payload["id2rel"],
+    id_maps = {"id2ent": payload["id2ent"], "id2rel": payload["id2rel"],
                   "ent2id": e2g, "rel2id": r2g}
-    negatives, stats = generate_negatives(pos_ids, payload, adkgd_maps,
+    negatives, stats = generate_negatives(pos_ids, payload, id_maps,
                                           rng=np.random.default_rng(args.seed + 1))
 
     e2r, r2b = scorer.ent2row, scorer.rel2base

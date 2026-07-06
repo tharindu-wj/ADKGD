@@ -7,9 +7,9 @@ anomaly detectors such as ADKGD.
 A conditional GAN consumes a real triple + noise and produces a fake-but-
 plausible triple (one ENTITY slot — head or tail — corrupted; the relation
 head exists but is never chosen at generation time, see inference STEP 3). Lives in
-`kgsage.gan`. ADKGD integration (the bridge that calls KGSAGE from ADKGD's
-training pipeline) lives in `experiments/kgsage_bridge/`, keeping `kgsage/`
-ADKGD-agnostic.
+`kgsage.gan`. Downstream-detector integration (e.g. the ADKGD bridge that
+calls KGSAGE from a detector's training pipeline) lives in
+`experiments/kgsage_bridge/`, keeping `kgsage/` detector-agnostic.
 
 Public API (stable across versions; suitable for the future pip release):
   load_kg(path)                - load a KG from a TSV directory

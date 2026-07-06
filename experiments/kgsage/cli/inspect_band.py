@@ -30,7 +30,7 @@ from kgsage.band_sampler import (BandSampler, _read_triples,  # noqa: E402
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--data", required=True, help="ADKGD dataset dir (train/valid/test.txt)")
+    ap.add_argument("--data", required=True, help="KG dataset dir (train/valid/test.txt)")
     ap.add_argument("--lp_ckpt", required=True)
     ap.add_argument("--lp_ids", required=True)
     ap.add_argument("--split", default="train", choices=["train", "valid", "test"])

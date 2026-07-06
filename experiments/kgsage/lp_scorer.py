@@ -5,7 +5,7 @@ close-but-false negative sampling is a *pretrained, citable* ComplEx -- the
 ICLR-2020 "You CAN Teach an Old Dog New Tricks!" best-config checkpoints
 (Ruffinelli, Broscheit & Gemulla). We load raw tensors only: no libkge
 install (env is Python 3.13), no training, no fine-tuning. This module is
-kgsage-internal and ADKGD-agnostic.
+kgsage-internal and detector-agnostic.
 
 Verified checkpoint facts (probed 2026-07-03):
   fb15k-237-complex.pt : reciprocal-relations model. entity emb (14541, 256),

@@ -2,7 +2,7 @@
 
 Feed a file of real (head, relation, tail) triples -- tab-separated, the
 dataset's own string IDs -- and see the single-slot corruption the generator
-makes for each, through the DEPLOYED decode path (exactly what ADKGD receives).
+makes for each, through the DEPLOYED decode path (exactly what a downstream detector receives).
 Optionally score each corruption with the frozen LP (is it actually false?) and
 resolve opaque IDs to readable names.
 

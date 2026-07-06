@@ -1,13 +1,14 @@
 """Use a trained KGSAGE GAN checkpoint to produce one negative per input triple.
 
-This is the public generation API for the KGSAGE package. ADKGD calls it
-(via kgsage_bridge.bridge) every time it builds a training batch with
-`--neg_source gan`. Everything stays in-process — no intermediate file.
+This is the public generation API for the KGSAGE package. A downstream
+detector calls it (via a bridge such as kgsage_bridge.bridge) every time it
+builds a training batch of negatives (e.g. ADKGD's `--neg_source gan`).
+Everything stays in-process — no intermediate file.
 
 The 7-step pipeline (one negative per real triple):
 
-  STEP 1: Translate ADKGD integer IDs -> strings -> GAN integer IDs.
-          (ADKGD and the GAN may number the same entity differently; strings
+  STEP 1: Translate the caller's integer IDs -> strings -> GAN integer IDs.
+          (the caller and the GAN may number the same entity differently; strings
            are the lingua franca that keeps both worlds aligned.)
   STEP 2: Run the generator forward to get 3 logit vectors, CONDITIONED on the
           cached context table E' (loaded from the checkpoint — no PyG needed).
@@ -18,7 +19,7 @@ The 7-step pipeline (one negative per real triple):
           slot (softmax mass on its best WRONG value). The RELATION slot is
           SKIPPED — a fixed head+tail rarely admits a coherent alternative
           relation, so relation corruptions are the weak, type-incoherent ones
-          (confirmed in ADKGD logs). Among the two ENTITY slots the GAN picks
+          (confirmed empirically in downstream-detector logs). Among the two ENTITY slots the GAN picks
           head vs tail, sampled proportional to the score — so the GAN, not a
           coin flip, decides WHERE to corrupt. (Deliberately no longer matches
           the random baseline's uniform 3-slot distribution.)
@@ -36,7 +37,7 @@ The 7-step pipeline (one negative per real triple):
           it in `used_original` AND record its position in `null_indices` so
           callers can drop/replace it -- a null is a real fact and must never
           be trained on as a negative. There is NO hidden random fallback.
-  STEP 7: Translate GAN integer IDs back to ADKGD integer IDs via strings.
+  STEP 7: Translate GAN integer IDs back to the caller's integer IDs via strings.
 """
 import numpy as np
 import torch
@@ -168,15 +169,15 @@ def _corruptibility_scores(head_logits, rel_logits, tail_logits, h_in, r_in, t_i
     ], dim=1)
 
 
-def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
+def generate_negatives(triples, payload, id_maps, rng=None,
                        batch_size=256, max_resample=8):
     """Generate one negative per input triple. Main entry point.
 
-    adkgd_triples : list of (h, r, t) in ADKGD's integer ID space
+    triples       : list of (h, r, t) in the caller's integer ID space
     payload       : the dict returned by load_checkpoint()
-    adkgd_maps    : dict with 'id2ent', 'id2rel', 'ent2id', 'rel2id' from
-                    ADKGD's Reader (round-trip via strings)
-    rng           : numpy random.Generator (per-Reader seeded for reproducibility)
+    id_maps       : dict with 'id2ent', 'id2rel', 'ent2id', 'rel2id' from
+                    the caller's id vocabulary (round-trip via strings)
+    rng           : numpy random.Generator (per-caller seeded for reproducibility)
     max_resample  : bounded redraws before a row degrades to a null corruption
 
     Returns: (negatives_list, stats_dict). stats['null_indices'] lists the
@@ -207,12 +208,12 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
     pool_masks = payload.get("pool_masks")      # [2, n_rel, n_ent] bool or None
     z_dim = payload["z_dim"]
 
-    # STEP 1: Translate ADKGD IDs -> strings -> GAN IDs (once, up front).
+    # STEP 1: Translate the caller's IDs -> strings -> GAN IDs (once, up front).
     gan_triples = []
-    for h_adk, r_adk, t_adk in adkgd_triples:
-        h_s = adkgd_maps["id2ent"][h_adk]
-        r_s = adkgd_maps["id2rel"][r_adk]
-        t_s = adkgd_maps["id2ent"][t_adk]
+    for h_ext, r_ext, t_ext in triples:
+        h_s = id_maps["id2ent"][h_ext]
+        r_s = id_maps["id2rel"][r_ext]
+        t_s = id_maps["id2ent"][t_ext]
         gan_triples.append((ent2id_gan[h_s], rel2id_gan[r_s], ent2id_gan[t_s]))
 
     out = []
@@ -299,11 +300,11 @@ def generate_negatives(adkgd_triples, payload, adkgd_maps, rng=None,
 
             stats["slot_h" if slot == 0 else "slot_t"] += 1
 
-            # STEP 7: Translate GAN IDs -> strings -> ADKGD IDs.
+            # STEP 7: Translate GAN IDs -> strings -> the caller's IDs.
             out.append((
-                adkgd_maps["ent2id"][id2ent_gan[neg_h]],
-                adkgd_maps["rel2id"][id2rel_gan[neg_r]],
-                adkgd_maps["ent2id"][id2ent_gan[neg_t]],
+                id_maps["ent2id"][id2ent_gan[neg_h]],
+                id_maps["rel2id"][id2rel_gan[neg_r]],
+                id_maps["ent2id"][id2ent_gan[neg_t]],
             ))
         stats["processed"] += n
 

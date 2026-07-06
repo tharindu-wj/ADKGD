@@ -10,7 +10,7 @@ WHAT IT DOES
 WHERE IT LIVES IN THE PIPELINE
     PHASE 1 only. The encoder is trained JOINTLY with the generator/discriminator
     on the graph, then the FINAL E' is cached in the checkpoint. Inference
-    (PHASE 2, inside ADKGD) replays that cached E' and never imports PyG.
+    (PHASE 2, inside the downstream detector) replays that cached E' and never imports PyG.
 
 WHY RGCNConv (not FastRGCNConv)
     Both are relation-aware and share the same constructor. FastRGCNConv is

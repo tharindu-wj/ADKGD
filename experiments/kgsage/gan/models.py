@@ -3,7 +3,7 @@
 WHAT THIS GAN DOES
     Given a real triple like (Alice, born_in, Australia), the generator produces
     a fake-but-plausible triple with ONE slot corrupted, e.g.
-    (Alice, born_in, Canada). Those corruptions become ADKGD's training negatives.
+    (Alice, born_in, Canada). Those corruptions become a downstream detector's training negatives.
 
 NEIGHBOURHOOD CONDITIONING
     The generator does NOT learn its own entity embeddings. Instead it is
@@ -11,7 +11,7 @@ NEIGHBOURHOOD CONDITIONING
     (kgsage.gan.encoder), where E'[e] summarises entity e's neighbourhood. So the
     generator sees each entity's surroundings and can pick a corruption that is
     type-valid but contradicts the head's converging context (a "near-miss" the
-    ADKGD neighbourhood channel must then learn to catch).
+    downstream detector's neighbourhood channel must then learn to catch).
 
     The generator's conditioning vector is:
         [ E'[head] | relation_embedding[relation] | E'[tail] | noise ]

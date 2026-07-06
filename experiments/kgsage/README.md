@@ -1,7 +1,7 @@
 # kgsage — the standalone anomaly-generator package
 
-Self-contained (imports nothing outside `kgsage.*`). ADKGD integration lives
-exclusively in `experiments/kgsage_bridge/`.
+Self-contained (imports nothing outside `kgsage.*`). Downstream-detector
+integration lives exclusively in `experiments/kgsage_bridge/`.
 
 ## Two negative sources, one frozen scorer
 
