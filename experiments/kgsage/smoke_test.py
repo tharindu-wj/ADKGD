@@ -65,10 +65,10 @@ def main():
     # ---- SECTION 3: GAN + inference imports ----
     section("SECTION 3: kgsage.gan.* + kgsage.inference imports")
 
-    from kgsage.gan.models import (
+    from kgsage.gan.generator import (
         KGSAGEGenerator, gumbel_softmax,
     )
-    print("OK: kgsage.gan.models.{KGSAGEGenerator, gumbel_softmax}")
+    print("OK: kgsage.gan.generator.{KGSAGEGenerator, gumbel_softmax}")
 
     from kgsage.gan import train as _gan_train
     print("OK: kgsage.gan.train (the training module)")

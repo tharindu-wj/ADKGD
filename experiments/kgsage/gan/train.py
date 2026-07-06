@@ -46,10 +46,10 @@ import torch.nn.functional as F
 
 from kgsage.data.loaders import load_kg, build_edge_index
 from kgsage.gan.encoder import KGSAGEEncoder
-from kgsage.gan.models import KGSAGEGenerator, gumbel_softmax
+from kgsage.gan.generator import KGSAGEGenerator, gumbel_softmax
 from kgsage.gan.masks import CandidateMasks, HEAD, TAIL
-from kgsage.gan.complex_d import FrozenComplEx
-from kgsage.gan.residual_d import ResidualContextD
+from kgsage.gan.frozen_complex import FrozenComplEx
+from kgsage.gan.discriminator import ResidualContextD
 from kgsage.lp_scorer import ComplExScorer
 
 
@@ -178,34 +178,57 @@ def assemble(h, r, t, fill, slot: int) -> torch.Tensor:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--data", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--lp_ckpt", required=True)
-    ap.add_argument("--lp_ids", required=True)
+
+    # === required inputs & output ===
+    ap.add_argument("--data", required=True)      # dataset dir holding train/valid/test.txt
+    ap.add_argument("--out", required=True)       # path to write the trained checkpoint (.pt)
+    ap.add_argument("--lp_ckpt", required=True)   # frozen LibKGE ComplEx checkpoint -- the "art expert" that rates how real a fact looks
+    ap.add_argument("--lp_ids", required=True)    # the LibKGE archive dir those ids were assigned from
+
+    # 'train' = train split only; 'all' = train+valid+test used as the graph
+    # (denser neighbourhoods for E' and bigger type pools)
     ap.add_argument("--train_split", choices=["train", "all"], default="train")
-    ap.add_argument("--warmup_epochs", type=int, default=10)
-    ap.add_argument("--warmup_batch", type=int, default=4096)
-    ap.add_argument("--warmstart_epochs", type=int, default=2)
-    ap.add_argument("--epochs", type=int, default=30, help="adversarial epochs")
-    ap.add_argument("--batch_size", type=int, default=256)
-    ap.add_argument("--lr_g", type=float, default=1e-4)
-    ap.add_argument("--lr_d", type=float, default=3e-4)
-    ap.add_argument("--dim", type=int, default=64)
-    ap.add_argument("--z_dim", type=int, default=16)
-    ap.add_argument("--tau", type=float, default=0.5)
-    ap.add_argument("--band_k", type=int, default=10)
-    ap.add_argument("--band_temp", type=float, default=0.5)
+
+    # === how long each of the three passes runs ===
+    # PASS 1  warm-up: the neighbourhood reader (RGCN) studies the graph, then E' is frozen
+    ap.add_argument("--warmup_epochs", type=int, default=10)    # number of study epochs
+    ap.add_argument("--warmup_batch", type=int, default=4096)   # facts per warm-up step (large = steadier)
+    # PASS 2  warm-start: the forger copies a close-but-false "teacher" so it starts from sense, not noise
+    ap.add_argument("--warmstart_epochs", type=int, default=2)  # copy epochs; this teacher signal is then dropped forever
+    # PASS 3  adversarial: the real forger-vs-detective game
+    ap.add_argument("--epochs", type=int, default=30, help="adversarial epochs")  # number of game rounds
+    ap.add_argument("--batch_size", type=int, default=256)     # facts practised per step (WN18RR run used 512)
+
+    # === how fast each player learns (step size per mistake) ===
+    ap.add_argument("--lr_g", type=float, default=1e-4)   # forger (generator) learning rate
+    ap.add_argument("--lr_d", type=float, default=3e-4)   # detective (discriminator) learning rate -- 3x faster keeps it a step ahead
+
+    # === how big the networks are ===
+    ap.add_argument("--dim", type=int, default=64)        # size of each entity's neighbourhood fingerprint E'
+    ap.add_argument("--z_dim", type=int, default=16)      # size of the random-noise "creative spark" fed to the forger
+
+    # === the "make a GOOD fake" rules -- the dials actually worth tuning ===
+    ap.add_argument("--tau", type=float, default=0.5)     # Gumbel temperature during TRAINING: low = commits to its favourite, high = explores more
+    ap.add_argument("--band_k", type=int, default=10)     # teacher's shortlist size: the k closest-but-false options (smaller k = harder fakes)
+    ap.add_argument("--band_temp", type=float, default=0.5)  # how the teacher weights that shortlist by rank
+    # the "fence": a fake must score at least this many per-relation sigmas BELOW a real fact.
+    # This is only a CEILING on believability ("almost real, not quite"); there is no matching
+    # floor, which is why fakes can drift far below real and end up easy.
     ap.add_argument("--fence_sigma", type=float, default=0.5,
                     help="fence margin = this many per-relation sigmas below s_f(true)")
-    ap.add_argument("--lambda_fence", type=float, default=1.0)
-    ap.add_argument("--lambda_h", type=float, default=0.01)
-    ap.add_argument("--lambda_res", type=float, default=1e-3)
-    ap.add_argument("--label_smoothing", type=float, default=0.1)
-    ap.add_argument("--beta_residual", type=float, default=1.0)
-    ap.add_argument("--num_bases", type=int, default=30)
-    ap.add_argument("--encoder_layers", type=int, default=2)
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--device", default=None)
+    ap.add_argument("--lambda_fence", type=float, default=1.0)   # how strictly the fence is enforced
+    ap.add_argument("--lambda_h", type=float, default=0.01)      # anti-boredom bonus: rewards VARYING picks; raise to fight mode collapse (WN18RR run used 0.05)
+    ap.add_argument("--lambda_res", type=float, default=1e-3)    # keeps the detective's learnable part small (anti-cheat regulariser)
+    ap.add_argument("--label_smoothing", type=float, default=0.1)  # tells the detective "don't be 100% certain" so the forger can still learn against it
+    ap.add_argument("--beta_residual", type=float, default=1.0)  # hard bound on the detective's residual head so it can't overpower the frozen expert
+
+    # === graph-reader (RGCN encoder) internals ===
+    ap.add_argument("--num_bases", type=int, default=30)      # relation-matrix compression: share weights across relations
+    ap.add_argument("--encoder_layers", type=int, default=2)  # neighbourhood hops the reader sees (2 = neighbours + neighbours-of-neighbours)
+
+    # === housekeeping ===
+    ap.add_argument("--seed", type=int, default=0)   # reproducibility (also seeds the deterministic batch sampler)
+    ap.add_argument("--device", default=None)        # 'cuda' / 'cpu'; auto-detected if left unset
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)

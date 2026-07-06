@@ -20,7 +20,7 @@ NEIGHBOURHOOD CONDITIONING
 
 THE NETWORK
     KGSAGEGenerator - entity context + noise -> corrupted-triple logits (3 heads)
-    (the discriminator lives in kgsage.gan.residual_d + complex_d)
+    (the discriminator lives in kgsage.gan.discriminator + frozen_complex)
 
 The entity embedding table used for conditioning is E'; in the trainer
 (kgsage.gan.train) E' is LP-warmup-trained and then FROZEN for the

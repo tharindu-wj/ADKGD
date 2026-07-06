@@ -49,15 +49,19 @@ Produces `experiments/kgsage/outputs/checkpoints/kgsage_wn18rr_s0.pt`.
 > **Known issue on WN18RR (from the 2026-07-03 run):** default settings
 > mode-collapsed — `D-acc fake=1.00` from epoch 1, `fence-hit=0%`,
 > `distinct-picks` fell from ~18,700 to ~110. If you see the same pattern,
-> **do not use that checkpoint for gan cells.** Retrain with the escalation
-> knobs (cheapest first):
+> **do not use that checkpoint for gan cells.** Retrain with the entropy bonus
+> raised — this is what the 2026-07-06 `all`-split retrain used, and it fixed the
+> *training-time* collapse (`distinct-picks` stayed ~29k):
 >
 > ```bash
 > DATASET=wn18rr SEED=0 LAMBDA_H=0.05 sbatch experiments/kgsage/slurm/train.slurm
-> # if still collapsed, also lower the discriminator's effective learning rate
-> # by editing --lr_d in kgsage/gan/train.py, or raise BAND_TEMP:
-> DATASET=wn18rr SEED=0 LAMBDA_H=0.05 BAND_TEMP=1.0 sbatch experiments/kgsage/slurm/train.slurm
 > ```
+>
+> `LAMBDA_H` is the only escalation knob wired into the SLURM script; the deeper
+> levers are **not** env knobs — edit `experiments/kgsage/gan/train.py` to lower
+> `--lr_d` or raise `--band_temp`. Note that raising `LAMBDA_H` only diversifies
+> the *training* sampler: the deployed decode is near-argmax, so the §2 quality
+> report can still show collapse — always re-check its coverage before use.
 
 ### Second seed (needed later to de-circularize the "recovery" cell — optional for now)
 
@@ -70,46 +74,44 @@ DATASET=wn18rr   SEED=1 sbatch experiments/kgsage/slurm/train.slurm
 
 ## 2. Verify the checkpoint by hand (login node, CPU)
 
-### Random-sample check
+Run the quality report: it samples 5% of the graph, corrupts every triple
+through the DEPLOYED decode path, and writes a readable `.md` (metrics +
+before→after pairs) plus a `.tsv` of every pair for an LLM / by-hand
+fact-check. `entity2text.txt` / `relation2text.txt` are auto-detected inside
+`--data`, and the `reports/` dir is created automatically.
 
 ```bash
 # FB15K-237
-PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.inspect_gan_lp \
+PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.quality_report \
   --ckpt experiments/kgsage/outputs/checkpoints/kgsage_fb15k237_s0.pt \
   --data data/FB15K-237 \
-  --lp_ckpt experiments/kgsage/outputs/lp/fb15k-237-complex.pt \
-  --lp_ids  experiments/kgsage/outputs/lp/fb15k-237 --n 40
+  --sample_frac 0.05 --out reports/quality_fb15k237.md
 
 # WN18RR
-PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.inspect_gan_lp \
+PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.quality_report \
   --ckpt experiments/kgsage/outputs/checkpoints/kgsage_wn18rr_s0.pt \
   --data data/WN18RR \
-  --lp_ckpt experiments/kgsage/outputs/lp/wnrr-complex.pt \
-  --lp_ids  experiments/kgsage/outputs/lp/wnrr --n 40
+  --sample_frac 0.05 --out reports/quality_wn18rr.md
 ```
 
-### Pick-your-own triples check
+Read the `.md` "Quality at a glance" table:
 
-```bash
-# FB15K-237 — grab a relation you can reason about, then corrupt it
-grep place_of_birth data/FB15K-237/train.txt | head -8 > my_triples_fb.tsv
-PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.corrupt \
-  --ckpt experiments/kgsage/outputs/checkpoints/kgsage_fb15k237_s0.pt \
-  --triples my_triples_fb.tsv \
-  --lp_ckpt experiments/kgsage/outputs/lp/fb15k-237-complex.pt \
-  --lp_ids  experiments/kgsage/outputs/lp/fb15k-237
+- **Type-valid** and **Truly false** near 100% — replacements are legal fillers
+  for the relation and not real facts in any split.
+- **Null** near 0% — the generator almost always found a valid corruption.
+- **Distinct-entity coverage** + **Entropy** are the mode-collapse tell. LOW
+  coverage with a few entities dominating "Most-repeated replacements" means the
+  generator collapsed (the WN18RR failure) — **do not use that checkpoint for
+  gan cells.**
 
-# WN18RR — e.g. hypernym relation
-grep _hypernym data/WN18RR/train.txt | head -8 > my_triples_wn.tsv
-PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.corrupt \
-  --ckpt experiments/kgsage/outputs/checkpoints/kgsage_wn18rr_s0.pt \
-  --triples my_triples_wn.tsv \
-  --lp_ckpt experiments/kgsage/outputs/lp/wnrr-complex.pt \
-  --lp_ids  experiments/kgsage/outputs/lp/wnrr
-```
+Then feed the `.tsv` to an LLM (or skim it) to judge how many corruptions are
+believable-but-false vs obviously wrong or accidentally true (a real-world-true
+row is a false negative).
 
-Read: positive `gap` = corruption scores below the truth (good, it's false).
-Negative `gap` / `ABOVE TRUE` flag = possible false negative.
+> Optional — hardness (LP gap): the quality report is model-free by design. For
+> the `s_f(true) − s_f(neg)` gap (positive = false; large = easy, small = hard)
+> or to corrupt your own hand-picked triples, use `kgsage.cli.inspect_gan_lp`
+> or `kgsage.cli.corrupt` (both take `--lp_ckpt`/`--lp_ids`).
 
 ---
 
@@ -159,9 +161,9 @@ NEG_SOURCE=gan TEST_SOURCE=gan DATASET=WN18RR SEED=0 GAN_CKPT=$CKPT \
   sbatch experiments/slurm/exp_cell.slurm
 ```
 
-> Only run the WN18RR gan cells (②③④) once you have a WN18RR checkpoint that
-> passed the quality-gate check above — a collapsed generator will make ②③④
-> meaningless (it emits near-constant/degenerate corruptions).
+> Only run the WN18RR gan cells (②③④) once the WN18RR quality report above
+> shows healthy distinct-entity coverage (not collapsed) — a collapsed generator
+> makes ②③④ meaningless (it emits near-constant/degenerate corruptions).
 
 Optional: add `MAX_EPOCH=5` to any cell above once the 1-epoch numbers look
 sensible, for firmer results.
@@ -186,14 +188,16 @@ problem) → ③ stays near ① (no downside) → ④ climbs back up (GAN helps)
 |---|---|---|---|
 | `train.slurm` | `DATASET` | `fb15k237` | `fb15k237` \| `wn18rr` |
 | | `SEED` | `0` | |
-| | `WARMUP_EPOCHS` | `10` | |
-| | `WARMSTART_EPOCHS` | `2` | |
+| | `TRAIN_SPLIT` | `train` | `train` \| `all` — train on all splits (the WN18RR `all` run used this) |
+| | `WARMUP_EPOCHS` | `10` | RGCN link-prediction warm-up |
+| | `WARMSTART_EPOCHS` | `2` | band-teacher copy epochs |
 | | `EPOCHS` | `30` | adversarial phase |
-| | `BATCH_SIZE` | `512` | |
-| | `TAU` | `0.5` | Gumbel temperature |
-| | `BAND_K` | `10` | band-teacher width |
-| | `FENCE_SIGMA` | `0.5` | truth-fence margin |
-| | `LAMBDA_H` | `0.01` | entropy bonus — raise if mode collapse |
+| | `BATCH_SIZE` | `512` | facts per step |
+| | `TAU` | `0.5` | Gumbel temperature (training) |
+| | `BAND_K` | `10` | band-teacher shortlist — smaller = harder fakes |
+| | `FENCE_SIGMA` | `0.5` | truth-fence margin — a ceiling only, no floor |
+| | `LAMBDA_H` | `0.01` | entropy bonus — raise to fight collapse (WN18RR run used `0.05`) |
+| | `CKPT_PATH` | derived | override the output `.pt` path |
 | `exp_cell.slurm` | `DATASET` | `FB15K-237` | `FB15K-237` \| `WN18RR` |
 | | `SEED` | `0` | |
 | | `MAX_EPOCH` | `1` | ADKGD detector epochs |
@@ -201,3 +205,13 @@ problem) → ③ stays near ① (no downside) → ④ climbs back up (GAN helps)
 | | `NEG_SOURCE` | `random` | `random` \| `lp_band` \| `gan` |
 | | `TEST_SOURCE` | `random` | `random` \| `lp_band` \| `gan` |
 | | `GAN_CKPT` | — | required when either source is `gan` |
+
+> **Not exposed as SLURM env knobs** — change these by editing the `argparse`
+> defaults in `experiments/kgsage/gan/train.py`: `--band_temp` (0.5),
+> `--lr_g` (1e-4), `--lr_d` (3e-4), `--dim` (64), `--z_dim` (16),
+> `--lambda_fence` (1.0), `--lambda_res` (1e-3), `--label_smoothing` (0.1),
+> `--beta_residual` (1.0), `--num_bases` (30), `--encoder_layers` (2),
+> `--warmup_batch` (4096). These are mostly "size & stability" dials; the
+> tuning levers for our two known problems are `LAMBDA_H` and `BAND_K` (both
+> env knobs) plus, for the **deployment** collapse, a decode temperature that
+> is currently hardcoded at `0.5` in `kgsage/inference.py`.

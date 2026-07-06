@@ -10,7 +10,7 @@ Training lives at `kgsage.gan.train` (the trainer). Generation (load checkpoint
 + produce negatives) lives at `kgsage.inference` — the same pipeline `kgsage_bridge`
 uses to feed the downstream detector.
 """
-from kgsage.gan.models import (
+from kgsage.gan.generator import (
     KGSAGEGenerator,
     gumbel_softmax,
 )

@@ -42,7 +42,7 @@ The 7-step pipeline (one negative per real triple):
 import numpy as np
 import torch
 
-from kgsage.gan.models import KGSAGEGenerator
+from kgsage.gan.generator import KGSAGEGenerator
 
 
 def load_checkpoint(ckpt_path, device=None):

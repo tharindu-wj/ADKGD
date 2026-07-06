@@ -35,8 +35,8 @@ from kgsage.data.datasets import resolve_dataset, KNOWN_DATASETS
 # is actually accessed. Lets `import kgsage` succeed without torch installed.
 _LAZY_ATTRS = {
     # GAN (needs torch)
-    "KGSAGEGenerator":      "kgsage.gan.models",
-    "gumbel_softmax":       "kgsage.gan.models",
+    "KGSAGEGenerator":      "kgsage.gan.generator",
+    "gumbel_softmax":       "kgsage.gan.generator",
     # RGCN context encoder (needs torch + torch_geometric)
     "KGSAGEEncoder":        "kgsage.gan.encoder",
     # Inference (needs torch + the GAN models)

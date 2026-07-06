@@ -15,10 +15,10 @@ integration lives exclusively in `experiments/kgsage_bridge/`.
 - **KGSAGE GAN:** `gan/train.py` — RGCN LP-warmup → **freeze E'**
   → generator warm-start toward band-teacher draws → adversarial phase where
   D = per-relation z-scored frozen ComplEx **+ trainable contextual residual**
-  (`gan/residual_d.py`, candidate-only input, β·tanh-bounded) and G samples
+  (`gan/discriminator.py`, candidate-only input, β·tanh-bounded) and G samples
   one entity slot via masked straight-through Gumbel under a frozen fence
   below s(true). Falseness is structural (`gan/masks.py`), plausibility is
-  frozen (`gan/complex_d.py`); only G and f_θ ever train.
+  frozen (`gan/frozen_complex.py`); only G and f_θ ever train.
 
 ## Generation API
 
