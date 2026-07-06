@@ -1,7 +1,13 @@
 # KGSAGE — copy-paste command reference (GAN-only workflow)
 
 Run these from the repo root on DeepThought (`cd ~/ADKGD` first). Each block
-is self-contained — copy the whole block into your terminal.
+is self-contained — copy the whole block into your terminal, **top to bottom**.
+
+**Train on the train split only.** Every training command below sets
+`TRAIN_SPLIT=train`. Never use `TRAIN_SPLIT=all`: it feeds valid+test edges into
+the RGCN encoder and its warm-up link-predictor — that is **test leakage** and
+invalidates any reported result. (All splits *are* still used for the known-true
+falseness filter, but that happens automatically in the code, not via this knob.)
 
 Dataset naming gotcha: the two scripts spell the dataset differently.
 - `train.slurm` wants the short tag: `fb15k237` / `wn18rr`
@@ -13,6 +19,7 @@ Dataset naming gotcha: the two scripts spell the dataset differently.
 
 ```bash
 cd ~/ADKGD
+git pull                     # sync latest scripts (renamed train.slurm + kgsage_<tag>_s0.pt names)
 PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.fetch_lp --dataset all
 # expect: GATE PASS fb15k237 mrr≈0.3477 · wn18rr mrr≈0.4749
 ```
@@ -24,7 +31,7 @@ PYTHONPATH=experiments ~/envs/adkgd/bin/python -m kgsage.cli.fetch_lp --dataset 
 ### FB15K-237
 
 ```bash
-DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train.slurm
+DATASET=fb15k237 SEED=0 TRAIN_SPLIT=train sbatch experiments/kgsage/slurm/train.slurm
 ```
 
 Produces `experiments/kgsage/outputs/checkpoints/kgsage_fb15k237_s0.pt`.
@@ -41,7 +48,7 @@ single digits/low hundreds).
 ### WN18RR
 
 ```bash
-DATASET=wn18rr SEED=0 sbatch experiments/kgsage/slurm/train.slurm
+DATASET=wn18rr SEED=0 TRAIN_SPLIT=train sbatch experiments/kgsage/slurm/train.slurm
 ```
 
 Produces `experiments/kgsage/outputs/checkpoints/kgsage_wn18rr_s0.pt`.
@@ -50,11 +57,10 @@ Produces `experiments/kgsage/outputs/checkpoints/kgsage_wn18rr_s0.pt`.
 > mode-collapsed — `D-acc fake=1.00` from epoch 1, `fence-hit=0%`,
 > `distinct-picks` fell from ~18,700 to ~110. If you see the same pattern,
 > **do not use that checkpoint for gan cells.** Retrain with the entropy bonus
-> raised — this is what the 2026-07-06 `all`-split retrain used, and it fixed the
-> *training-time* collapse (`distinct-picks` stayed ~29k):
+> raised (still train-only):
 >
 > ```bash
-> DATASET=wn18rr SEED=0 LAMBDA_H=0.05 sbatch experiments/kgsage/slurm/train.slurm
+> DATASET=wn18rr SEED=0 TRAIN_SPLIT=train LAMBDA_H=0.05 sbatch experiments/kgsage/slurm/train.slurm
 > ```
 >
 > `LAMBDA_H` is the only escalation knob wired into the SLURM script; the deeper
@@ -62,12 +68,16 @@ Produces `experiments/kgsage/outputs/checkpoints/kgsage_wn18rr_s0.pt`.
 > `--lr_d` or raise `--band_temp`. Note that raising `LAMBDA_H` only diversifies
 > the *training* sampler: the deployed decode is near-argmax, so the §2 quality
 > report can still show collapse — always re-check its coverage before use.
+>
+> ⚠️ If an earlier run left a `kgsage_wn18rr_all_s0.pt` (trained with
+> `TRAIN_SPLIT=all`), **delete it** — it saw valid+test edges (leakage) and must
+> not be reported. Retrain train-only with the command above.
 
 ### Second seed (needed later to de-circularize the "recovery" cell — optional for now)
 
 ```bash
-DATASET=fb15k237 SEED=1 sbatch experiments/kgsage/slurm/train.slurm
-DATASET=wn18rr   SEED=1 sbatch experiments/kgsage/slurm/train.slurm
+DATASET=fb15k237 SEED=1 TRAIN_SPLIT=train sbatch experiments/kgsage/slurm/train.slurm
+DATASET=wn18rr   SEED=1 TRAIN_SPLIT=train sbatch experiments/kgsage/slurm/train.slurm
 ```
 
 ---
@@ -188,7 +198,7 @@ problem) → ③ stays near ① (no downside) → ④ climbs back up (GAN helps)
 |---|---|---|---|
 | `train.slurm` | `DATASET` | `fb15k237` | `fb15k237` \| `wn18rr` |
 | | `SEED` | `0` | |
-| | `TRAIN_SPLIT` | `train` | `train` \| `all` — train on all splits (the WN18RR `all` run used this) |
+| | `TRAIN_SPLIT` | `train` | **keep `train`** — `all` leaks valid+test edges into the encoder; never use for reported results |
 | | `WARMUP_EPOCHS` | `10` | RGCN link-prediction warm-up |
 | | `WARMSTART_EPOCHS` | `2` | band-teacher copy epochs |
 | | `EPOCHS` | `30` | adversarial phase |
