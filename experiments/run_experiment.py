@@ -126,6 +126,14 @@ def main() -> int:
                          "(FB15K* -> fb15k-237-complex.pt, WN18RR -> wnrr-complex.pt under experiments/kgsage/outputs/lp/)")
     ap.add_argument("--lp_ids_dir", default=None,
                     help="LibKGE archive dir for lp_band id maps; derived from --dataset when omitted")
+    # Tuning arms (see experiments/docs/KGSAGE_diagnosis_phase0.md). Forwarded to
+    # both subprocesses so train and test build negatives/anomalies identically.
+    ap.add_argument("--decode_tau", type=float, default=0.5,
+                    help="ARM 2: GAN decode temperature (gumbel scale); 0.5 = original decode")
+    ap.add_argument("--freq_penalty", type=float, default=0.0,
+                    help="ARM 2: GAN decode cross-row frequency penalty (mode-collapse remedy); 0.0 = off")
+    ap.add_argument("--neg_mix", type=float, default=0.0,
+                    help="ARM 1: fraction of learned training negatives replaced by random corruption; 0.0 = off")
     args = ap.parse_args()
 
     # B0 hygiene: encode the experiment cell in the model label so checkpoint
@@ -169,7 +177,11 @@ def main() -> int:
     gan_args = ["--neg_source", args.neg_source,
                 "--test_anomaly_source", args.test_anomaly_source]
     if args.neg_source == "gan" or args.test_anomaly_source == "gan":
-        gan_args += ["--gan_path", args.gan_path]
+        gan_args += ["--gan_path", args.gan_path,
+                     "--decode_tau", str(args.decode_tau),
+                     "--freq_penalty", str(args.freq_penalty)]
+    if args.neg_mix > 0.0:
+        gan_args += ["--neg_mix", str(args.neg_mix)]
     if args.neg_source == "lp_band" or args.test_anomaly_source == "lp_band":
         # Derive the LP checkpoint + id-map dir from the dataset when not given.
         # FB15K-mini reuses the full FB15K-237 scorer (its vocab is a subset).

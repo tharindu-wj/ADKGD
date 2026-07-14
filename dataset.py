@@ -250,6 +250,15 @@ class Reader:
         else:
             bn_triples = self.generate_anomalous_triples(bp_triples)
 
+        # ARM 1 (mixed negatives). Blend a fraction of RANDOM corruptions into a
+        # learned negative set so the detector also sees the easy/random-anomaly
+        # family it is later tested on (diagnosis H4: a gan-only negative set
+        # leaves the random-anomaly score region unshaped). neg_mix in [0,1] is
+        # the fraction of negatives replaced by random corruption; 0.0 = off.
+        neg_mix = float(getattr(self.args, 'neg_mix', 0.0))
+        if neg_source in ('gan', 'lp_band') and neg_mix > 0.0:
+            bn_triples = self._blend_random_negatives(bp_triples, bn_triples, neg_mix)
+
         # 前一半是正常数据，后一半是异常数据
         all_triples = bp_triples + bn_triples
 
@@ -283,6 +292,8 @@ class Reader:
             adkgd_ent2id=self.ent2id,
             adkgd_rel2id=self.rel2id,
             rng=self._gan_rng,
+            decode_tau=float(getattr(self.args, 'decode_tau', 0.5)),
+            freq_penalty=float(getattr(self.args, 'freq_penalty', 0.0)),
         )
         print('[GAN] ' + render_stats(stats))
         null_idx = stats.get('null_indices', [])
@@ -295,6 +306,33 @@ class Reader:
                   'for the training role' % len(null_idx))
         self._print_pair_preview('GAN', pos_triples, negatives)
         return negatives
+
+    def _blend_random_negatives(self, pos_triples, learned_negs, mix):
+        """ARM 1: replace a `mix` fraction of learned negatives with random
+        corruptions of the SAME positives, so the training-negative distribution
+        spans both the learned close-but-false family and the easy/random family
+        the detector is evaluated on (diagnosis H4).
+
+        Deterministic per --seed via a dedicated RNG that does NOT touch the
+        global random/np/torch streams (so the test subprocess's exact-replay
+        contamination stays byte-identical). The chosen positions get a fresh
+        random corruption; positions and picks are reproducible.
+        """
+        n = len(learned_negs)
+        k = int(round(mix * n))
+        if k <= 0:
+            return learned_negs
+        seed = int(getattr(self.args, 'seed', 0)) + 987654321
+        idx = list(range(n))
+        random.Random(seed).shuffle(idx)
+        pick = sorted(idx[:k])
+        rand_fillers = self.generate_anomalous_triples([pos_triples[i] for i in pick])
+        blended = list(learned_negs)
+        for j, i in enumerate(pick):
+            blended[i] = rand_fillers[j]
+        print('[MIX] blended %d/%d (%.0f%%) random negatives into the learned set'
+              % (k, n, 100.0 * mix))
+        return blended
 
     def _lp_negatives(self, pos_triples):
         """Option B: one close-but-false negative per positive from the frozen

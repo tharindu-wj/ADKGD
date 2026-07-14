@@ -41,9 +41,15 @@ ANOMALY_RATIO="${ANOMALY_RATIO:-0.05}"
 NEG_SOURCE="${NEG_SOURCE:-random}"
 TEST_SOURCE="${TEST_SOURCE:-random}"
 GAN_CKPT="${GAN_CKPT:-}"
+# Tuning arms (see experiments/docs/KGSAGE_diagnosis_phase0.md). Defaults = off,
+# so an un-set job reproduces the original cell exactly.
+FREQ_PENALTY="${FREQ_PENALTY:-0.0}"   # ARM 2: GAN decode mode-collapse remedy
+DECODE_TAU="${DECODE_TAU:-0.5}"       # ARM 2: GAN decode temperature
+NEG_MIX="${NEG_MIX:-0.0}"             # ARM 1: fraction of random negatives blended in
 
 echo "Job $SLURM_JOB_ID on $(hostname) starting $(date)"
 echo "Cell: dataset=$DATASET  neg=$NEG_SOURCE  test=$TEST_SOURCE  seed=$SEED  max_epoch=$MAX_EPOCH  ratio=$ANOMALY_RATIO"
+echo "Arms: freq_penalty=$FREQ_PENALTY  decode_tau=$DECODE_TAU  neg_mix=$NEG_MIX"
 echo "----------------------------------------------------------------------"
 
 module load Miniconda3
@@ -61,7 +67,10 @@ CMD=( "$PY" experiments/run_experiment.py
       --max_epoch           "$MAX_EPOCH"
       --anomaly_ratio       "$ANOMALY_RATIO"
       --neg_source          "$NEG_SOURCE"
-      --test_anomaly_source "$TEST_SOURCE" )
+      --test_anomaly_source "$TEST_SOURCE"
+      --freq_penalty        "$FREQ_PENALTY"
+      --decode_tau          "$DECODE_TAU"
+      --neg_mix             "$NEG_MIX" )
 
 if [[ "$NEG_SOURCE" == "gan" || "$TEST_SOURCE" == "gan" ]]; then
     [[ -n "$GAN_CKPT" && -f "$GAN_CKPT" ]] || {

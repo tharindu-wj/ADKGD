@@ -107,7 +107,8 @@ def load_checkpoint(ckpt_path, device=None):
 
 
 def _pick_new_index_with_noise(logits, clean_index, torch_gen,
-                               banned=None, pool_row=None, self_row=None):
+                               banned=None, pool_row=None, self_row=None,
+                               decode_tau=0.5):
     """Implements STEP 4: mask, then Gumbel-sample a new index.
 
     Masks applied (each optional beyond the original value):
@@ -116,9 +117,13 @@ def _pick_new_index_with_noise(logits, clean_index, torch_gen,
       self_row    : the triple's other entity (self-loop ban)
       pool_row    : bool [n_ent] type pool (when present) -- -inf
                     outside the relation's observed slot fillers
-    Sampling adds Gumbel noise at temperature 0.5 (mostly-argmax) drawn from
-    the caller's seeded torch.Generator -- reproducible per seed and per
-    subprocess, unlike the old global-RNG draw.
+    Sampling adds Gumbel noise scaled by `decode_tau` (the decode temperature)
+    drawn from the caller's seeded torch.Generator -- reproducible per seed and
+    per subprocess, unlike the old global-RNG draw. argmax(masked + tau*g) is
+    Gumbel-Max sampling from softmax(masked / tau): tau=0.5 (default) is the
+    original mostly-argmax behaviour; larger tau flattens the pick and lifts
+    filler diversity (mode-collapse remedy), at the cost of picking lower-logit
+    (less confidently-hard) entities.
 
     Returns -1 if masking left no candidate (caller falls back to null).
     """
@@ -142,7 +147,7 @@ def _pick_new_index_with_noise(logits, clean_index, torch_gen,
     u = torch.empty_like(masked)
     u.uniform_(generator=torch_gen).clamp_(1e-10, 1.0 - 1e-10)
     gumbel = -torch.log(-torch.log(u))
-    return int((masked + gumbel * 0.5).argmax().item())
+    return int((masked + gumbel * decode_tau).argmax().item())
 
 
 def _corruptibility_scores(head_logits, rel_logits, tail_logits, h_in, r_in, t_in):
@@ -170,7 +175,8 @@ def _corruptibility_scores(head_logits, rel_logits, tail_logits, h_in, r_in, t_i
 
 
 def generate_negatives(triples, payload, id_maps, rng=None,
-                       batch_size=256, max_resample=8):
+                       batch_size=256, max_resample=8, decode_tau=0.5,
+                       freq_penalty=0.0):
     """Generate one negative per input triple. Main entry point.
 
     triples       : list of (h, r, t) in the caller's integer ID space
@@ -179,6 +185,15 @@ def generate_negatives(triples, payload, id_maps, rng=None,
                     the caller's id vocabulary (round-trip via strings)
     rng           : numpy random.Generator (per-caller seeded for reproducibility)
     max_resample  : bounded redraws before a row degrades to a null corruption
+    decode_tau    : decode temperature (gumbel scale). 0.5 = original mostly-
+                    argmax decode; larger values raise per-row filler diversity.
+    freq_penalty  : cross-row mode-collapse remedy. Subtracts
+                    freq_penalty * (#times already emitted) from each entity's
+                    logit before sampling, so over-used fillers are pushed down
+                    as generation proceeds. 0.0 = off (original behaviour). This
+                    targets the dataset-level filler concentration that
+                    decode_tau alone cannot (per-row temperature leaves the same
+                    few high-logit entities on top of every row).
 
     Returns: (negatives_list, stats_dict). stats['null_indices'] lists the
     positions whose emitted 'negative' is the original triple -- callers
@@ -196,6 +211,13 @@ def generate_negatives(triples, payload, id_maps, rng=None,
     # tensors raises "Expected a 'cuda' device type for generator").
     torch_gen = torch.Generator(device=device)
     torch_gen.manual_seed(int(rng.integers(0, 2**31 - 1)))
+
+    # Cross-row frequency penalty state (mode-collapse remedy). Counts how many
+    # times each entity has been emitted as a filler so far this call; subtracted
+    # (scaled) from logits before each pick. Order-dependent but deterministic
+    # per seed (the pos_triples order is fixed by the caller).
+    emit_counts = (torch.zeros(payload["n_ent"], device=device)
+                   if freq_penalty > 0.0 else None)
 
     entity_context = payload["entity_context"]  # cached E' [n_ent, dim]
     ent2id_gan = payload["ent2id"]
@@ -274,12 +296,18 @@ def generate_negatives(triples, payload, id_maps, rng=None,
             # STEP 5: masked Gumbel pick with a bounded resample loop. With the
             # known-true + self masks a collision is structurally impossible;
             # the residual check guards edge cases (e.g. lifted degenerate pool).
+            # Apply the cross-row frequency penalty (if on) to this slot's logits
+            # before sampling; -inf masks inside _pick stay -inf under subtraction.
+            pick_logits = (logits_for_slot if emit_counts is None
+                           else logits_for_slot - freq_penalty * emit_counts)
+
             neg_h, neg_r, neg_t = h_gan, r_gan, t_gan   # null default
             emitted = False
             for attempt in range(max_resample):
                 new_idx = _pick_new_index_with_noise(
-                    logits_for_slot, clean_value, torch_gen,
-                    banned=banned, pool_row=pool_row, self_row=self_row)
+                    pick_logits, clean_value, torch_gen,
+                    banned=banned, pool_row=pool_row, self_row=self_row,
+                    decode_tau=decode_tau)
                 if new_idx < 0:
                     break                                  # nothing sampleable
                 candidate = ((new_idx, r_gan, t_gan) if slot == 0
@@ -287,6 +315,8 @@ def generate_negatives(triples, payload, id_maps, rng=None,
                 if candidate[0] != candidate[2] and candidate not in real_triple_set:
                     neg_h, neg_r, neg_t = candidate
                     emitted = True
+                    if emit_counts is not None:
+                        emit_counts[new_idx] += 1.0
                     if pool_row is not None and bool(pool_row[new_idx]):
                         stats["type_valid"] += 1
                     break
