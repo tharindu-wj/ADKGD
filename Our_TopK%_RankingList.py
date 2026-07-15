@@ -110,13 +110,6 @@ def main():
                         help="LibKGE archive dir (train/valid/test.txt) the LP checkpoint ids were assigned from; required when either source is 'lp_band'")
     parser.add_argument('--band_k', default=10, type=int, help="lp_band: sample from the top-k candidates below s(true)")
     parser.add_argument('--band_temp', default=0.5, type=float, help="lp_band: softmax temperature within the band")
-    # Tuning arms (see experiments/docs/KGSAGE_diagnosis_phase0.md).
-    parser.add_argument('--decode_tau', default=0.5, type=float,
-                        help="ARM 2: GAN decode temperature (gumbel scale); 0.5 = original")
-    parser.add_argument('--freq_penalty', default=0.0, type=float,
-                        help="ARM 2: GAN decode cross-row frequency penalty (mode-collapse remedy); 0.0 = off")
-    parser.add_argument('--neg_mix', default=0.0, type=float,
-                        help="ARM 1: fraction of learned training negatives replaced by random corruption; 0.0 = off")
     args = parser.parse_args()
 
     # data_name = args.dataset

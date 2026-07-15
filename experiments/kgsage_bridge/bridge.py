@@ -57,14 +57,11 @@ def generate(adkgd_triples, *,
              payload,
              adkgd_id2ent, adkgd_id2rel,
              adkgd_ent2id, adkgd_rel2id,
-             rng=None, decode_tau=0.5, freq_penalty=0.0):
+             rng=None):
     """Produce one ADKGD-ID negative per input ADKGD-ID positive.
 
     Each negative is a single-slot corruption (head, relation, or tail) of the
     input triple, decoded from the trained generator. Returns (negatives, stats).
-
-    decode_tau / freq_penalty tune the deployed decode for diversity (see
-    kgsage.inference.generate_negatives): defaults reproduce the original decode.
     """
     if rng is None:
         rng = np.random.default_rng(0)
@@ -74,8 +71,7 @@ def generate(adkgd_triples, *,
         "ent2id": adkgd_ent2id,
         "rel2id": adkgd_rel2id,
     }
-    return generate_negatives(list(adkgd_triples), payload, adkgd_maps, rng=rng,
-                              decode_tau=decode_tau, freq_penalty=freq_penalty)
+    return generate_negatives(list(adkgd_triples), payload, adkgd_maps, rng=rng)
 
 
 # ---------------------------------------------------------------------------
