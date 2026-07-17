@@ -218,6 +218,21 @@ def main() -> None:
                     help="fence margin = this many per-relation sigmas below s_f(true)")
     ap.add_argument("--lambda_fence", type=float, default=1.0)   # how strictly the fence is enforced
     ap.add_argument("--lambda_h", type=float, default=0.01)      # anti-boredom bonus: rewards VARYING picks; raise to fight mode collapse (WN18RR run used 0.05)
+    # === neighbourhood-contradiction training (see docs/KGSAGE_diagnosis_phase0.md) ===
+    # PHASE 1 -- hard inverted-support mask DURING TRAINING: the generator only
+    # ever samples (and warm-starts toward, and D only ever sees fakes from)
+    # candidates the anchor's neighbourhood does NOT corroborate. Making the
+    # train-time game match the deployed decode mask.
+    ap.add_argument("--support_max", type=int, default=None,
+                    help="None=off. >=0: ban candidates with more than this many "
+                         "shared neighbours with the anchor (plus its direct "
+                         "neighbours) throughout training")
+    # PHASE 2 -- soft LEARNED pressure instead of (or on top of) the hard mask:
+    # penalise the probability mass the generator puts on neighbourhood-
+    # supported candidates. Forces the logits themselves to become
+    # head-dependent (measurable with the knockout test).
+    ap.add_argument("--lambda_support", type=float, default=0.0,
+                    help="0=off. Weight of the expected-support penalty in L_G")
     ap.add_argument("--lambda_res", type=float, default=1e-3)    # keeps the detective's learnable part small (anti-cheat regulariser)
     ap.add_argument("--label_smoothing", type=float, default=0.1)  # tells the detective "don't be 100% certain" so the forger can still learn against it
     ap.add_argument("--beta_residual", type=float, default=1.0)  # hard bound on the detective's residual head so it can't overpower the frozen expert
@@ -250,7 +265,13 @@ def main() -> None:
           f"{len(train_triples):,} '{args.train_split}' triples", flush=True)
 
     frozen = load_frozen_complex(args.lp_ckpt, args.lp_ids, kg).to(device)
-    masks = CandidateMasks(kg, n_ent, n_rel)                   # CPU by design
+    masks = CandidateMasks(kg, n_ent, n_rel,
+                           support_max=args.support_max)       # CPU by design
+    if args.support_max is not None:
+        print(f"Inverted-support mask ON (support_max={args.support_max}) -- "
+              "train-time twin of the decode mask", flush=True)
+    if args.lambda_support > 0:
+        print(f"Support penalty ON (lambda_support={args.lambda_support})", flush=True)
     mu_r, sigma_r = relation_zstats(frozen, real_all, n_rel, seed=args.seed)
     mu_r, sigma_r = mu_r.to(device), sigma_r.to(device)
     print(f"Frozen ComplEx realigned (reciprocal={frozen.reciprocal}); "
@@ -410,8 +431,20 @@ def main() -> None:
             fence = torch.relu(s_soft - (s_true - args.fence_sigma * sigma_r[r_d]))
             probs = torch.softmax(logits_masked, dim=1)
             entropy = -(probs * torch.log(probs.clamp_min(1e-12))).sum(dim=1)
+            # PHASE 2: expected probability mass on neighbourhood-SUPPORTED
+            # candidates (threshold 0 = any corroboration). Differentiable
+            # through probs; minimising it forces the logits to depend on the
+            # anchor's neighbourhood. ~0 by construction when the hard
+            # support mask is on.
+            if args.lambda_support > 0:
+                anchors = h if slot == TAIL else t
+                s_rows = masks.support_rows(anchors, 0).to(device)
+                sup_mass = (probs * s_rows.float()).sum(dim=1)
+            else:
+                sup_mass = torch.zeros_like(fence)
             l_g = (-(z_of(s_soft, r_d) + f_soft)
                    + args.lambda_fence * fence
+                   + args.lambda_support * sup_mass
                    - args.lambda_h * entropy).mean()
             opt_g.zero_grad(); l_g.backward(); opt_g.step()
 
@@ -419,6 +452,7 @@ def main() -> None:
             with torch.no_grad():
                 ep["d_loss"] += l_d.item(); ep["g_loss"] += l_g.item()
                 ep["fence_hit"] += int((fence > 0).sum())
+                ep["sup_mass"] = ep.get("sup_mass", 0.0) + float(sup_mass.detach().mean())
                 ep["above_true"] += int((s_soft.detach() > s_true).sum())
                 pick = g_soft.argmax(dim=1).cpu()
                 true_slot = t if slot == TAIL else h
@@ -431,11 +465,17 @@ def main() -> None:
 
         n, nb = max(ep["n"], 1), max(ep["nb"], 1)
         distinct = sum(len(v) for v in picks_per_slot.values())
+        sup_bits = ""
+        if args.lambda_support > 0:
+            sup_bits = f" sup-mass={ep.get('sup_mass', 0.0) / nb:.3f}"
+        if args.support_max is not None:
+            sup_bits += f" sup-lifted={masks.stat_support_lifted}"
+            masks.stat_support_lifted = 0
         print(f"  epoch {epoch:3d}/{args.epochs}  D={ep['d_loss'] / nb:.4f} "
               f"G={ep['g_loss'] / nb:.4f}  fence-hit={ep['fence_hit'] / n:.1%} "
               f"above-true={ep['above_true'] / n:.1%} copy={ep['copy_argmax'] / n:.2%} "
               f"D-acc real/fake={ep['d_real_ok'] / n:.2f}/{ep['d_fake_ok'] / max(ep['n_fake'], 1):.2f} "
-              f"distinct-picks={distinct}", flush=True)
+              f"distinct-picks={distinct}{sup_bits}", flush=True)
 
     print(f"Adversarial done ({datetime.now() - start_wall}).", flush=True)
 
@@ -446,6 +486,10 @@ def main() -> None:
         "zstats_mu": mu_r.cpu(), "zstats_sigma": sigma_r.cpu(),
         "fence_sigma": args.fence_sigma,
         "tau": args.tau,
+        # provenance for the neighbourhood-contradiction arms + §6.1 claim
+        "train_split": args.train_split,
+        "support_max": args.support_max,
+        "lambda_support": args.lambda_support,
     }
     save_checkpoint(generator, encoder, kg, args.dim, args.z_dim,
                     edge_index, edge_type, args.out, extra=extra)

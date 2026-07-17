@@ -55,11 +55,19 @@ BAND_K="${BAND_K:-10}"
 FENCE_SIGMA="${FENCE_SIGMA:-0.5}"
 LAMBDA_H="${LAMBDA_H:-0.01}"
 TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
+# Neighbourhood-contradiction arms (docs/KGSAGE_diagnosis_phase0.md):
+#   SUPPORT_MAX  empty=off; >=0 = train-time inverted-support mask (Phase 1)
+#   LAMBDA_SUP   0.0=off;   >0  = learned support penalty in L_G (Phase 2)
+SUPPORT_MAX="${SUPPORT_MAX:-}"
+LAMBDA_SUP="${LAMBDA_SUP:-0.0}"
+SUPPORT_ARG=""
+[[ -n "$SUPPORT_MAX" ]] && SUPPORT_ARG="--support_max $SUPPORT_MAX"
 
 echo "Job $SLURM_JOB_ID on $(hostname) starting $(date)"
 echo "Dataset : $DATASET ($DATA_DIR)   Seed: $SEED"
 echo "LP      : $LP_CKPT (ids: $LP_IDS)"
 echo "Phases  : warmup=$WARMUP_EPOCHS warmstart=$WARMSTART_EPOCHS adversarial=$EPOCHS  batch=$BATCH_SIZE"
+echo "Contradiction arms: support_max=${SUPPORT_MAX:-off}  lambda_support=$LAMBDA_SUP"
 echo "Output  : $CKPT_PATH"
 echo "----------------------------------------------------------------------"
 
@@ -104,8 +112,10 @@ $PY -m kgsage.gan.train \
     --band_k           "$BAND_K" \
     --fence_sigma      "$FENCE_SIGMA" \
     --lambda_h         "$LAMBDA_H" \
+    --lambda_support   "$LAMBDA_SUP" \
     --seed             "$SEED" \
-    --device           cuda
+    --device           cuda \
+    $SUPPORT_ARG
 
 echo "----------------------------------------------------------------------"
 echo "Done $(date). Checkpoint: $CKPT_PATH"

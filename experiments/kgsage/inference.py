@@ -106,8 +106,54 @@ def load_checkpoint(ckpt_path, device=None):
     }
 
 
+def support_ban_row(payload, anchor, support_max=0):
+    """Bool [n_ent] torch row: candidates SUPPORTED by `anchor`'s neighbourhood.
+
+    A candidate x is supported when the anchor's surroundings corroborate it:
+      - x is a direct (1-hop) neighbour of the anchor, or
+      - x shares more than `support_max` neighbours with the anchor
+        (equivalently: >support_max two-hop paths anchor -> m -> x).
+
+    The INVERTED-SUPPORT MASK bans exactly these, so an emitted corruption is
+    contradicted by the anchor's neighbourhood BY CONSTRUCTION ("no one around
+    this entity points at the replacement") instead of relying on the learned
+    logits to be context-aware. support_max=0 is the strict reading: a single
+    shared neighbour already counts as corroboration.
+
+    The undirected adjacency is built once per payload from the checkpoint's
+    all-splits real_triple_set and cached; per-anchor rows are also cached.
+    """
+    import scipy.sparse as sp
+
+    cache = payload.setdefault("_support_cache", {})
+    key = (anchor, support_max)
+    if key in cache:
+        return cache[key]
+
+    adj = payload.get("_support_adj")
+    if adj is None:
+        n = payload["n_ent"]
+        rows, cols = [], []
+        for h, _, t in payload["real_triple_set"]:
+            rows.append(h); cols.append(t)
+            rows.append(t); cols.append(h)
+        adj = sp.csr_matrix(
+            (np.ones(len(rows), dtype=np.int32), (rows, cols)), shape=(n, n))
+        adj.data[:] = 1                       # collapse parallel edges to 0/1
+        payload["_support_adj"] = adj
+
+    nbr = adj.getrow(anchor)                  # 1 x n: N(anchor)
+    shared = nbr @ adj                        # 1 x n: |N(anchor) ∩ N(x)|
+    ban_np = (nbr.toarray()[0] > 0) | (shared.toarray()[0] > support_max)
+    ban = torch.from_numpy(ban_np).to(payload["device"])
+    if len(cache) < 20000:
+        cache[key] = ban
+    return ban
+
+
 def _pick_new_index_with_noise(logits, clean_index, torch_gen,
-                               banned=None, pool_row=None, self_row=None):
+                               banned=None, pool_row=None, self_row=None,
+                               support_ban=None):
     """Implements STEP 4: mask, then Gumbel-sample a new index.
 
     Masks applied (each optional beyond the original value):
@@ -116,33 +162,54 @@ def _pick_new_index_with_noise(logits, clean_index, torch_gen,
       self_row    : the triple's other entity (self-loop ban)
       pool_row    : bool [n_ent] type pool (when present) -- -inf
                     outside the relation's observed slot fillers
+      support_ban : bool [n_ent] inverted-support mask (when present) -- -inf
+                    on every candidate the anchor's neighbourhood corroborates
+                    (see support_ban_row), so the pick is neighbourhood-
+                    contradicting by construction
     Sampling adds Gumbel noise at temperature 0.5 (mostly-argmax) drawn from
     the caller's seeded torch.Generator -- reproducible per seed and per
     subprocess, unlike the old global-RNG draw.
 
-    Returns -1 if masking left no candidate (caller falls back to null).
+    Degenerate rows relax masks in order: lift support_ban first, then the
+    type pool (matching the old behaviour) -- the correctness bans (true value,
+    known-true, self-loop) are never lifted.
+
+    Returns (index, lifted_support) where index is -1 if nothing is sampleable
+    and lifted_support flags that the support mask had to be dropped.
     """
-    masked = logits.clone()
-    masked[clean_index] = float("-inf")
-    if banned:
-        masked[banned] = float("-inf")
-    if self_row is not None:
-        masked[self_row] = float("-inf")
+    def _base():
+        m = logits.clone()
+        m[clean_index] = float("-inf")
+        if banned:
+            m[banned] = float("-inf")
+        if self_row is not None:
+            m[self_row] = float("-inf")
+        return m
+
+    lifted_support = False
+    masked = _base()
     if pool_row is not None:
         masked[~pool_row] = float("-inf")
-        if torch.isinf(masked).all():          # degenerate pool: lift pool ban
-            masked = logits.clone()
-            masked[clean_index] = float("-inf")
-            if banned:
-                masked[banned] = float("-inf")
-            if self_row is not None:
-                masked[self_row] = float("-inf")
+    if support_ban is not None:
+        masked[support_ban] = float("-inf")
+        if torch.isinf(masked).all():          # degenerate: lift support first
+            lifted_support = True
+            masked = _base()
+            if pool_row is not None:
+                masked[~pool_row] = float("-inf")
+    if pool_row is not None and torch.isinf(masked).all():
+        masked = _base()                       # degenerate pool: lift pool ban
+        if support_ban is not None and not lifted_support:
+            masked[support_ban] = float("-inf")
+            if torch.isinf(masked).all():
+                lifted_support = True
+                masked = _base()
     if torch.isinf(masked).all():
-        return -1
+        return -1, lifted_support
     u = torch.empty_like(masked)
     u.uniform_(generator=torch_gen).clamp_(1e-10, 1.0 - 1e-10)
     gumbel = -torch.log(-torch.log(u))
-    return int((masked + gumbel * 0.5).argmax().item())
+    return int((masked + gumbel * 0.5).argmax().item()), lifted_support
 
 
 def _corruptibility_scores(head_logits, rel_logits, tail_logits, h_in, r_in, t_in):
@@ -170,7 +237,7 @@ def _corruptibility_scores(head_logits, rel_logits, tail_logits, h_in, r_in, t_i
 
 
 def generate_negatives(triples, payload, id_maps, rng=None,
-                       batch_size=256, max_resample=8):
+                       batch_size=256, max_resample=8, support_max=None):
     """Generate one negative per input triple. Main entry point.
 
     triples       : list of (h, r, t) in the caller's integer ID space
@@ -179,6 +246,14 @@ def generate_negatives(triples, payload, id_maps, rng=None,
                     the caller's id vocabulary (round-trip via strings)
     rng           : numpy random.Generator (per-caller seeded for reproducibility)
     max_resample  : bounded redraws before a row degrades to a null corruption
+    support_max   : None = off (original behaviour). Integer >= 0 turns on the
+                    INVERTED-SUPPORT MASK: candidates corroborated by the
+                    anchor entity's neighbourhood (direct neighbours, or more
+                    than support_max shared neighbours) are unsampleable, so
+                    every emitted corruption is neighbourhood-contradicting by
+                    construction. The anchor is the entity that KEEPS its slot
+                    (head for a tail corruption and vice versa). Degenerate
+                    rows lift this mask first (counted in stats).
 
     Returns: (negatives_list, stats_dict). stats['null_indices'] lists the
     positions whose emitted 'negative' is the original triple -- callers
@@ -226,6 +301,8 @@ def generate_negatives(triples, payload, id_maps, rng=None,
         "slot_h": 0,
         "slot_r": 0,
         "slot_t": 0,
+        # inverted-support mask (support_max is not None):
+        "support_lifted": 0,  # rows whose support ban had to be relaxed
     }
 
     for batch_start in range(0, len(gan_triples), batch_size):
@@ -265,21 +342,32 @@ def generate_negatives(triples, payload, id_maps, rng=None,
                 clean_value, self_row = h_gan, t_gan
                 banned = true_heads.get((r_gan, t_gan))
                 pool_row = pool_masks[0, r_gan] if pool_masks is not None else None
+                anchor = t_gan          # the entity that keeps its slot
             else:              # tail (relation slot is never chosen; see STEP 3)
                 logits_for_slot = tail_logits[i]
                 clean_value, self_row = t_gan, h_gan
                 banned = true_tails.get((h_gan, r_gan))
                 pool_row = pool_masks[1, r_gan] if pool_masks is not None else None
+                anchor = h_gan          # the entity that keeps its slot
+
+            # Inverted-support mask: ban every candidate the anchor's
+            # neighbourhood corroborates, so the corruption contradicts it
+            # by construction.
+            support_ban = (support_ban_row(payload, anchor, support_max)
+                           if support_max is not None else None)
 
             # STEP 5: masked Gumbel pick with a bounded resample loop. With the
             # known-true + self masks a collision is structurally impossible;
             # the residual check guards edge cases (e.g. lifted degenerate pool).
             neg_h, neg_r, neg_t = h_gan, r_gan, t_gan   # null default
             emitted = False
+            row_lifted = False
             for attempt in range(max_resample):
-                new_idx = _pick_new_index_with_noise(
+                new_idx, lifted = _pick_new_index_with_noise(
                     logits_for_slot, clean_value, torch_gen,
-                    banned=banned, pool_row=pool_row, self_row=self_row)
+                    banned=banned, pool_row=pool_row, self_row=self_row,
+                    support_ban=support_ban)
+                row_lifted = row_lifted or lifted
                 if new_idx < 0:
                     break                                  # nothing sampleable
                 candidate = ((new_idx, r_gan, t_gan) if slot == 0
@@ -297,6 +385,8 @@ def generate_negatives(triples, payload, id_maps, rng=None,
             if not emitted:
                 stats["used_original"] += 1
                 stats["null_indices"].append(batch_start + i)
+            if row_lifted:
+                stats["support_lifted"] += 1
 
             stats["slot_h" if slot == 0 else "slot_t"] += 1
 
