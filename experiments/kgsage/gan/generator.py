@@ -150,3 +150,57 @@ def gumbel_softmax(logits, tau=1.0, hard=False, mask=None, generator=None):
     one_hot = torch.zeros_like(soft).scatter_(
         -1, soft.argmax(dim=-1, keepdim=True), 1.0)
     return one_hot - soft.detach() + soft  # forward: one-hot, backward: soft
+
+
+class CandidateScoringGenerator(nn.Module):
+    """KGSAGE-2 generator: scores a per-triple CANDIDATE SET instead of the
+    whole vocabulary. There are deliberately NO per-entity output parameters --
+    the v1 global Linear(hidden, n_ent) head is where the measured popularity
+    prior lived (its ranking survived deleting the anchor context entirely).
+
+    Query side  : q = MLP([E'(h) | rho_r | E'(t) | proj(sketch(anchor))])
+                  -- the Bloom sketch is the set-readable neighbourhood input
+                  that the 64-d pooled E' provably cannot provide.
+    Candidate   : f(x) = MLP(E'(x))          (shared tower, no free per-entity
+                  weights, so a popularity prior has no storage)
+    Logits      : q . f(x) / sqrt(d)  -  logq(x)   (logQ sampling correction)
+    Slot        : one query projection per slot (head / tail), shared trunk.
+    """
+
+    def __init__(self, dim=64, sketch_bits=8192, d_model=128, hidden=256,
+                 n_rel=None):
+        super().__init__()
+        self.relation_embedding = nn.Embedding(n_rel, dim)
+        nn.init.normal_(self.relation_embedding.weight, std=0.1)
+        self.sketch_proj = nn.Linear(sketch_bits, dim, bias=False)
+        self.trunk = nn.Sequential(
+            nn.Linear(4 * dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden), nn.ReLU(),
+        )
+        self.q_head = nn.Linear(hidden, d_model)   # query when corrupting HEAD
+        self.q_tail = nn.Linear(hidden, d_model)   # query when corrupting TAIL
+        self.cand_tower = nn.Sequential(
+            nn.Linear(dim, hidden), nn.ReLU(), nn.Linear(hidden, d_model),
+        )
+        self.d_model = d_model
+        self.sketch_bits = sketch_bits
+
+    def forward(self, h_ids, r_ids, t_ids, entity_context, sketch_rows,
+                cand_ids, cand_logq, slot):
+        """logits [B, K] over the candidate set for one slot.
+
+        sketch_rows : float [B, sketch_bits] -- sketch of the ANCHOR entity
+                      (the slot-keeping one), already gathered by the caller.
+        cand_ids    : long [B, K]; cand_logq: float [B, K].
+        """
+        cond = torch.cat([
+            entity_context[h_ids],
+            self.relation_embedding(r_ids),
+            entity_context[t_ids],
+            self.sketch_proj(sketch_rows),
+        ], dim=1)
+        hid = self.trunk(cond)
+        q = (self.q_tail if slot == 2 else self.q_head)(hid)      # [B, d]
+        f = self.cand_tower(entity_context[cand_ids])             # [B, K, d]
+        logits = torch.einsum("bd,bkd->bk", q, f) / (self.d_model ** 0.5)
+        return logits - cand_logq
