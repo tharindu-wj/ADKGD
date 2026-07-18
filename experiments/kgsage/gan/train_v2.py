@@ -68,6 +68,22 @@ def main() -> None:
                     help="anti-windup clamp: the FB dynamics smoke measured "
                          "alpha winding to 284 while the error signal was "
                          "flat, collapsing diversity")
+    ap.add_argument("--match_margin", type=float, default=0.0,
+                    help="the alienation term is a HINGE: alpha*relu(D_match - "
+                         "margin). Graded -alpha*D_match kept paying for deeper "
+                         "alienation, whose ranking is anchor-independent -- "
+                         "dyn2-4 all collapsed to universal-alien rankings")
+    ap.add_argument("--dreal_pretrain_epochs", type=int, default=2,
+                    help="pretrain D_real (real vs random-fake vs wrong-anchor) "
+                         "BEFORE the game. The dyn3 smoke showed an order-of-"
+                         "learning failure: the alienation signal is exact from "
+                         "epoch 1 while anchor-conditional plausibility develops "
+                         "slowly, so G plunges into the universal-alien basin "
+                         "before D_real can price it out")
+    ap.add_argument("--alpha_warmup_epochs", type=int, default=2,
+                    help="hold alpha=0 for the first N game epochs (MolGAN-style "
+                         "curriculum: learn PLAUSIBLE first, then ramp the "
+                         "contradiction pressure)")
     ap.add_argument("--dreal_mismatch", type=float, default=1.0,
                     help="GAN-CLS matching-aware weight: D_real also sees real "
                          "triples paired with the WRONG anchor, labeled fake, "
@@ -260,12 +276,50 @@ def main() -> None:
     opt_g = torch.optim.Adam(G.parameters(), lr=args.lr_g, betas=(0.5, 0.999))
     opt_d = torch.optim.Adam(dreal.parameters(), lr=args.lr_d)
 
+    # ---- Phase 1b: D_real pretrain (anchor-conditional plausibility must
+    #      exist BEFORE G starts learning, or G falls into the universal-alien
+    #      basin the alienation signal digs on epoch 1) ----
+    for ep_i in range(1, args.dreal_pretrain_epochs + 1):
+        perm = torch.randperm(real_all.shape[0], generator=sample_gen)
+        tot = nb = 0
+        for s in range(0, len(perm), args.batch_size):
+            rows = real_all[perm[s:s + args.batch_size]]
+            if len(rows) < 4:
+                continue
+            h, r, t = rows[:, 0], rows[:, 1], rows[:, 2]
+            h_e = context[h.to(device)]; t_e = context[t.to(device)]
+            rd = r.to(device)
+            rand_t = torch.randint(0, n_ent, (len(rows),), generator=sample_gen)
+            d_r = dreal(h_e, rd, t_e)
+            d_f = dreal(h_e, rd, context[rand_t.to(device)])
+            # SAME-RELATION mismatched anchors: a rolled mixed-relation anchor
+            # is usually type-incompatible, so D_real could win on type alone
+            # and never learn ANCHOR-level conditioning (dyn3/4 lesson)
+            mm_anchor = torch.tensor([
+                by_rel[int(r[i])][rng.randrange(len(by_rel[int(r[i])]))][0]
+                for i in range(len(rows))])
+            d_m = dreal(context[mm_anchor.to(device)], rd, t_e)
+            loss = (F.binary_cross_entropy_with_logits(
+                        d_r, torch.full_like(d_r, 1 - args.label_smoothing))
+                    + F.binary_cross_entropy_with_logits(d_f, torch.zeros_like(d_f))
+                    + args.dreal_mismatch * F.binary_cross_entropy_with_logits(
+                        d_m, torch.zeros_like(d_m)))
+            opt_d.zero_grad(); loss.backward(); opt_d.step()
+            tot += loss.item(); nb += 1
+        print(f"  dreal-pre {ep_i}/{args.dreal_pretrain_epochs} "
+              f"loss={tot/max(nb,1):.4f}", flush=True)
+
     alpha = args.alpha_init
     err_prev = 0.0
     print("-" * 60, flush=True)
     print(f"Dual-critic: {args.epochs} epochs, K={args.cand_k}, tau={args.tau}, "
           f"alpha0={alpha} target={args.alpha_target}", flush=True)
     for epoch in range(1, args.epochs + 1):
+        in_warmup = epoch <= args.alpha_warmup_epochs
+        if in_warmup:
+            alpha = 0.0                       # curriculum: plausible FIRST
+        elif alpha == 0.0:
+            alpha = args.alpha_init           # ramp point: hand over to PID
         perm = torch.randperm(real_all.shape[0], generator=sample_gen)
         ep = defaultdict(float); picks = set(); t0 = time.perf_counter()
         for bi, s in enumerate(range(0, len(perm), args.batch_size)):
@@ -323,13 +377,18 @@ def main() -> None:
                        d_real_out, torch.full_like(d_real_out, 1 - args.label_smoothing))
                    + F.binary_cross_entropy_with_logits(d_fake, torch.zeros_like(d_fake)))
             if args.dreal_mismatch > 0:
-                # GAN-CLS third class: the SAME real filler presented with a
-                # rolled (wrong) anchor -> fake. Popularity is symmetric across
+                # GAN-CLS third class with SAME-RELATION wrong anchors: the
+                # real filler presented with another anchor of the same
+                # relation -> fake. Type/popularity are symmetric across the
                 # real and mismatched classes, so D_real can only win by
-                # scoring plausibility CONDITIONAL on the anchor.
+                # scoring plausibility CONDITIONAL on the individual anchor.
                 filler_emb = context[t.to(device)] if slot == TAIL \
                              else context[h.to(device)]
-                d_mm = dreal(keep_emb.roll(1, dims=0), r.to(device), filler_emb)
+                mm_anchor = torch.tensor([
+                    by_rel[int(r[i])][rng.randrange(len(by_rel[int(r[i])]))][0]
+                    for i in range(B)])
+                d_mm = dreal(context[mm_anchor.to(device)], r.to(device),
+                             filler_emb)
                 l_d = l_d + args.dreal_mismatch * F.binary_cross_entropy_with_logits(
                     d_mm, torch.zeros_like(d_mm))
             opt_d.zero_grad(); l_d.backward(); opt_d.step()
@@ -343,7 +402,12 @@ def main() -> None:
             nid, nmk = nbr_batch(anchor)
             g_match = dmatch(fake_emb[v], context[nid.to(device)][v],
                              nmk.to(device)[v])
-            l_g = (-g_real + alpha * g_match).mean()
+            # HINGE: the alienation term is a constraint, not a graded reward.
+            # Past the margin there is no payoff for deeper alienation, so the
+            # ranking WITHIN the alien set is carried by D_real (the
+            # anchor-conditional signal).
+            l_g = (-g_real
+                   + alpha * torch.relu(g_match - args.match_margin)).mean()
             opt_g.zero_grad(); l_g.backward(); opt_g.step()
 
             # ---- measurement (hard picks = what is actually emitted) ----
@@ -361,8 +425,8 @@ def main() -> None:
             l_dm = bce(dm_logit, pick_sup.float().to(device))
             dm_game_opt.zero_grad(); l_dm.backward(); dm_game_opt.step()
 
-            # ---- PID with anti-windup ----
-            if np.isfinite(corr_frac):
+            # ---- PID with anti-windup (inactive during the alpha warmup) ----
+            if np.isfinite(corr_frac) and not in_warmup:
                 err = corr_frac - args.alpha_target
                 a_new = (alpha + args.alpha_kp * (err - err_prev)
                          + args.alpha_ki * err)

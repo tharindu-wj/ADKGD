@@ -46,6 +46,12 @@ CAND_K="${CAND_K:-256}"
 ALPHA_TARGET="${ALPHA_TARGET:-0.13}"
 ALPHA_MAX="${ALPHA_MAX:-10}"
 DREAL_MISMATCH="${DREAL_MISMATCH:-1.0}"
+# Curriculum (order-of-learning fix): pretrain the anchor-conditional realism
+# critic, and hold alpha=0 for the first game epochs -- plausible FIRST, then
+# ramp the contradiction pressure. Without this the generator dives into a
+# universal-alien global ranking before D_real can price it out.
+DREAL_PRETRAIN="${DREAL_PRETRAIN:-3}"
+ALPHA_WARMUP="${ALPHA_WARMUP:-5}"
 CKPT_PATH="${CKPT_PATH:-experiments/kgsage/outputs/checkpoints/kgsage2_${TAG}_s${SEED}.pt}"
 
 echo "Job $SLURM_JOB_ID on $(hostname) starting $(date)"
@@ -82,6 +88,8 @@ $PY -m kgsage.gan.train_v2 \
     --alpha_target    "$ALPHA_TARGET" \
     --alpha_max       "$ALPHA_MAX" \
     --dreal_mismatch  "$DREAL_MISMATCH" \
+    --dreal_pretrain_epochs "$DREAL_PRETRAIN" \
+    --alpha_warmup_epochs   "$ALPHA_WARMUP" \
     --seed            "$SEED" \
     --device          cuda
 
