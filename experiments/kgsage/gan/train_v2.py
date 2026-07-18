@@ -55,14 +55,26 @@ def main() -> None:
     ap.add_argument("--tau", type=float, default=0.5)
     ap.add_argument("--label_smoothing", type=float, default=0.1)
     # PID on alpha: velocity-form PI controller on corroborated-mass error
-    ap.add_argument("--alpha_target", type=float, default=0.05)
+    ap.add_argument("--alpha_target", type=float, default=0.13,
+                    help="must sit ABOVE the structural floor (~12-13% of rows "
+                         "have no uncorroborated candidate at all): the first "
+                         "FB run used 0.05, alpha railed at max all run, and "
+                         "the generator collapsed to a universal-alien global "
+                         "ranking (knockout J ~0.9-1.0)")
     ap.add_argument("--alpha_kp", type=float, default=2.0)
     ap.add_argument("--alpha_ki", type=float, default=0.2)
     ap.add_argument("--alpha_init", type=float, default=1.0)
-    ap.add_argument("--alpha_max", type=float, default=20.0,
+    ap.add_argument("--alpha_max", type=float, default=10.0,
                     help="anti-windup clamp: the FB dynamics smoke measured "
                          "alpha winding to 284 while the error signal was "
                          "flat, collapsing diversity")
+    ap.add_argument("--dreal_mismatch", type=float, default=1.0,
+                    help="GAN-CLS matching-aware weight: D_real also sees real "
+                         "triples paired with the WRONG anchor, labeled fake, "
+                         "making plausibility ANCHOR-CONDITIONAL. 0 = off. "
+                         "Added after the universal-alien collapse: without it "
+                         "a global ranking can satisfy both critics on average "
+                         "without reading the anchor")
     ap.add_argument("--lr_dmatch", type=float, default=1e-4,
                     help="D_match keeps training DURING the game on the "
                          "generator's picks labeled by EXACT graph support -- "
@@ -154,6 +166,12 @@ def main() -> None:
                               seed=args.seed).float()
     cs = CandidateSampler(train_triples, n_ent, n_rel, k=args.cand_k,
                           seed=args.seed)
+    # type pools for the checkpoint (decode scores the FULL pool; same
+    # train-split pools the v1 masks used)
+    pool_masks = torch.zeros(2, n_rel, n_ent, dtype=torch.bool)
+    for h_, r_, t_ in train_triples:
+        pool_masks[0, r_, h_] = True
+        pool_masks[1, r_, t_] = True
 
     def nbr_batch(anchors, exclude=None):
         """[B, n_nbr] ids + mask from TRAIN adjacency."""
@@ -304,6 +322,16 @@ def main() -> None:
             l_d = (F.binary_cross_entropy_with_logits(
                        d_real_out, torch.full_like(d_real_out, 1 - args.label_smoothing))
                    + F.binary_cross_entropy_with_logits(d_fake, torch.zeros_like(d_fake)))
+            if args.dreal_mismatch > 0:
+                # GAN-CLS third class: the SAME real filler presented with a
+                # rolled (wrong) anchor -> fake. Popularity is symmetric across
+                # real and mismatched classes, so D_real can only win by
+                # scoring plausibility CONDITIONAL on the anchor.
+                filler_emb = context[t.to(device)] if slot == TAIL \
+                             else context[h.to(device)]
+                d_mm = dreal(keep_emb.roll(1, dims=0), r.to(device), filler_emb)
+                l_d = l_d + args.dreal_mismatch * F.binary_cross_entropy_with_logits(
+                    d_mm, torch.zeros_like(d_mm))
             opt_d.zero_grad(); l_d.backward(); opt_d.step()
 
             # ---- G step ----
@@ -364,6 +392,7 @@ def main() -> None:
         "context_embeddings": context.cpu(),
         "sketches": (sketches > 0).to(torch.uint8).cpu(),
         "sketch_bits": args.sketch_bits,
+        "pool_masks": pool_masks,
         "cand_k": args.cand_k, "dim": args.dim, "tau": args.tau,
         "ent2id": kg["ent2id"], "rel2id": kg["rel2id"],
         "id2ent": kg["id2ent"], "id2rel": kg["id2rel"],

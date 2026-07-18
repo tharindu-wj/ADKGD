@@ -46,11 +46,21 @@ from kgsage.gan.generator import KGSAGEGenerator
 
 
 def load_checkpoint(ckpt_path, device=None):
-    """Reconstruct the trained generator + helpers from a .pt file."""
+    """Reconstruct the trained generator + helpers from a .pt file.
+
+    Handles both architectures behind ONE payload contract, so every caller
+    (bridge, CLIs, eval scripts) works unchanged:
+      v1  (no "arch" key)        -- global-head KGSAGEGenerator
+      v2  ("arch"=="candidate_v2") -- CandidateScoringGenerator + sketches;
+          decode scores the FULL type pool per row (no candidate sampling).
+    """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     payload = torch.load(ckpt_path, map_location=device, weights_only=False)
+
+    if payload.get("arch") == "candidate_v2":
+        return _load_checkpoint_v2(payload, ckpt_path, device)
 
     # Checkpoints cache the RGCN context table E' so inference can condition
     # the generator without ever running the encoder (or importing PyG).
@@ -103,6 +113,52 @@ def load_checkpoint(ckpt_path, device=None):
         "n_ent": payload["n_ent"],
         "n_rel": payload["n_rel"],
         "z_dim": payload["z_dim"],
+    }
+
+
+def _load_checkpoint_v2(payload, ckpt_path, device):
+    """candidate_v2 loader: same payload contract as v1 plus arch extras."""
+    from kgsage.gan.generator import CandidateScoringGenerator
+
+    G = CandidateScoringGenerator(
+        dim=payload["dim"], sketch_bits=payload["sketch_bits"],
+        n_rel=payload["n_rel"]).to(device)
+    G.load_state_dict(payload["generator_state"])
+    G.eval()
+
+    entity_context = payload["context_embeddings"].to(device)
+    real_triple_set = set(tuple(t) for t in payload["real_triples"])
+    true_tails, true_heads = {}, {}
+    for h, r, t in real_triple_set:
+        true_tails.setdefault((h, r), []).append(t)
+        true_heads.setdefault((r, t), []).append(h)
+
+    pool_masks = payload.get("pool_masks")
+    if pool_masks is None:
+        # early smoke checkpoints predate pool storage: derive from the
+        # all-splits triples (slightly more permissive than train-only pools)
+        print(f"[v2] {ckpt_path}: no pool_masks in payload -- deriving from "
+              "real_triples (all splits)", flush=True)
+        pool_masks = torch.zeros(2, payload["n_rel"], payload["n_ent"],
+                                 dtype=torch.bool)
+        for h, r, t in real_triple_set:
+            pool_masks[0, r, h] = True
+            pool_masks[1, r, t] = True
+
+    return {
+        "arch": "candidate_v2",
+        "generator": G,
+        "device": device,
+        "entity_context": entity_context,
+        "sketches": payload["sketches"].float(),
+        "ent2id": payload["ent2id"], "rel2id": payload["rel2id"],
+        "id2ent": payload["id2ent"], "id2rel": payload["id2rel"],
+        "real_triple_set": real_triple_set,
+        "true_tails": true_tails, "true_heads": true_heads,
+        "pool_masks": pool_masks,
+        "n_ent": payload["n_ent"], "n_rel": payload["n_rel"],
+        "z_dim": 0,
+        "tau": payload.get("tau", 0.5),
     }
 
 
@@ -262,6 +318,10 @@ def generate_negatives(triples, payload, id_maps, rng=None,
     if rng is None:
         rng = np.random.default_rng(0)
 
+    if payload.get("arch") == "candidate_v2":
+        return _generate_negatives_v2(triples, payload, id_maps, rng,
+                                      max_resample, support_max)
+
     G = payload["generator"]
     device = payload["device"]
     # ALL torch randomness (z + Gumbel) flows from this generator, which is
@@ -397,6 +457,103 @@ def generate_negatives(triples, payload, id_maps, rng=None,
                 id_maps["ent2id"][id2ent_gan[neg_t]],
             ))
         stats["processed"] += n
+
+    return out, stats
+
+
+def _generate_negatives_v2(triples, payload, id_maps, rng, max_resample,
+                           support_max):
+    """candidate_v2 decode: score the FULL type pool per row, then run the
+    IDENTICAL mask ladder as v1 (_pick_new_index_with_noise -- type pool,
+    known-true, self, optional inverted-support) by scattering pool scores
+    into an n_ent-sized vector. Same return contract as the v1 path."""
+    G = payload["generator"]
+    device = payload["device"]
+    entity_context = payload["entity_context"]
+    sketches = payload["sketches"]
+    ent2id_gan, rel2id_gan = payload["ent2id"], payload["rel2id"]
+    id2ent_gan, id2rel_gan = payload["id2ent"], payload["id2rel"]
+    real_triple_set = payload["real_triple_set"]
+    true_tails = payload.get("true_tails", {})
+    true_heads = payload.get("true_heads", {})
+    pool_masks = payload["pool_masks"]
+    n_ent = payload["n_ent"]
+
+    torch_gen = torch.Generator(device=device)
+    torch_gen.manual_seed(int(rng.integers(0, 2**31 - 1)))
+
+    gan_triples = []
+    for h_ext, r_ext, t_ext in triples:
+        gan_triples.append((ent2id_gan[id_maps["id2ent"][h_ext]],
+                            rel2id_gan[id_maps["id2rel"][r_ext]],
+                            ent2id_gan[id_maps["id2ent"][t_ext]]))
+
+    out = []
+    stats = {"processed": 0, "used_original": 0, "null_indices": [],
+             "resampled": 0, "type_valid": 0, "slot_h": 0, "slot_r": 0,
+             "slot_t": 0, "support_lifted": 0}
+
+    for i, (h_gan, r_gan, t_gan) in enumerate(gan_triples):
+        slot = 2 if rng.random() < 0.5 else 0          # 50/50 head-tail
+        if slot == 0:
+            clean_value, self_row, anchor = h_gan, t_gan, t_gan
+            banned = true_heads.get((r_gan, t_gan))
+            pool_row = pool_masks[0, r_gan]
+        else:
+            clean_value, self_row, anchor = t_gan, h_gan, h_gan
+            banned = true_tails.get((h_gan, r_gan))
+            pool_row = pool_masks[1, r_gan]
+
+        pool_ids = torch.nonzero(pool_row).flatten()
+        if len(pool_ids) == 0:
+            pool_ids = torch.arange(n_ent)
+        with torch.no_grad():
+            hi = torch.tensor([h_gan], device=device)
+            ri = torch.tensor([r_gan], device=device)
+            ti = torch.tensor([t_gan], device=device)
+            lg = G(hi, ri, ti, entity_context,
+                   sketches[[anchor]].to(device),
+                   pool_ids.unsqueeze(0).to(device),
+                   torch.zeros(1, len(pool_ids), device=device), slot)[0]
+        # scatter pool scores into full-vocab space; everything else -inf, so
+        # the shared mask ladder applies verbatim (incl. inverted support).
+        full = torch.full((n_ent,), float("-inf"), device=device)
+        full[pool_ids.to(device)] = lg
+
+        sup_ban = (support_ban_row(payload, anchor, support_max)
+                   if support_max is not None else None)
+
+        neg_h, neg_r, neg_t = h_gan, r_gan, t_gan
+        emitted = False
+        row_lifted = False
+        for _ in range(max_resample):
+            new_idx, lifted = _pick_new_index_with_noise(
+                full, clean_value, torch_gen, banned=banned,
+                pool_row=pool_row.to(device), self_row=self_row,
+                support_ban=sup_ban)
+            row_lifted = row_lifted or lifted
+            if new_idx < 0:
+                break
+            candidate = ((new_idx, r_gan, t_gan) if slot == 0
+                         else (h_gan, r_gan, new_idx))
+            if candidate[0] != candidate[2] and candidate not in real_triple_set:
+                neg_h, neg_r, neg_t = candidate
+                emitted = True
+                if bool(pool_row[new_idx]):
+                    stats["type_valid"] += 1
+                break
+            stats["resampled"] += 1
+
+        if not emitted:
+            stats["used_original"] += 1
+            stats["null_indices"].append(i)
+        if row_lifted:
+            stats["support_lifted"] += 1
+        stats["slot_h" if slot == 0 else "slot_t"] += 1
+        out.append((id_maps["ent2id"][id2ent_gan[neg_h]],
+                    id_maps["rel2id"][id2rel_gan[neg_r]],
+                    id_maps["ent2id"][id2ent_gan[neg_t]]))
+        stats["processed"] += 1
 
     return out, stats
 
