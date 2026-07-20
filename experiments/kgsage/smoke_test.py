@@ -11,7 +11,7 @@ Run from repo root:
 Sections:
   1. Imports (kgsage.* only)
   2. Behaviour checks (resolve_dataset)
-  3. GAN + inference imports
+  3. Dual-critic architecture (candidate_v2) + inference imports
   4. load_kg works on dummy_kg
 """
 import os
@@ -62,16 +62,29 @@ def main():
         cfg = resolve_dataset("data/dummy_kg")
         print(f"OK: resolve_dataset(path) -> name={cfg['name']}, path={cfg['path']}")
 
-    # ---- SECTION 3: GAN + inference imports ----
-    section("SECTION 3: kgsage.gan.* + kgsage.inference imports")
+    # ---- SECTION 3: dual-critic architecture imports (candidate_v2) ----
+    section("SECTION 3: kgsage.gan.* (dual-critic) + kgsage.inference imports")
 
+    # Generators: CandidateScoringGenerator is the current (candidate_v2)
+    # architecture; KGSAGEGenerator + gumbel_softmax stay for LOADING the v1
+    # baseline checkpoints that the paper's before/after comparison needs.
     from kgsage.gan.generator import (
-        KGSAGEGenerator, gumbel_softmax,
+        CandidateScoringGenerator, KGSAGEGenerator, gumbel_softmax,
     )
-    print("OK: kgsage.gan.generator.{KGSAGEGenerator, gumbel_softmax}")
+    print("OK: kgsage.gan.generator.{CandidateScoringGenerator, "
+          "KGSAGEGenerator, gumbel_softmax}")
 
-    from kgsage.gan import train as _gan_train
-    print("OK: kgsage.gan.train (the training module)")
+    # The dual-critic training stack.
+    from kgsage.gan.d_real import DReal
+    from kgsage.gan.d_match import DMatch
+    from kgsage.gan.sketch import build_sketches
+    from kgsage.gan.candidates import CandidateSampler
+    print("OK: kgsage.gan.{d_real.DReal, d_match.DMatch, sketch.build_sketches, "
+          "candidates.CandidateSampler}")
+
+    # Importing the trainer transitively verifies the whole v2 dependency graph.
+    from kgsage.gan import train_v2 as _train_v2
+    print("OK: kgsage.gan.train_v2 (the dual-critic trainer)")
 
     from kgsage.inference import load_checkpoint, generate_negatives, render_stats as _rs
     print("OK: kgsage.inference.{load_checkpoint, generate_negatives, render_stats}")

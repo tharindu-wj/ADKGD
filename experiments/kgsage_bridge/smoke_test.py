@@ -39,11 +39,16 @@ def main():
     # ---- SECTION 2: Bridge end-to-end ----
     section("SECTION 2: kgsage_bridge.bridge end-to-end on dummy_kg")
 
+    # A v2 (candidate_v2) OR a legacy v1 checkpoint both work here: the bridge
+    # calls kgsage.inference.generate_negatives, which branches on the payload
+    # arch. The dummy checkpoint just needs to exist.
     ckpt = "experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt"
     if not os.path.isfile(ckpt):
         print(f"SKIP: {ckpt} not found.")
-        print(f"      Run `python -m kgsage.gan.train --data data/dummy_kg "
-              f"--epochs 5 --device cpu --out {ckpt}` first.")
+        print(f"      Make one with the dual-critic trainer:")
+        print(f"      python -m kgsage.gan.train_v2 --data data/dummy_kg "
+              f"--warmup_epochs 2 --dmatch_epochs 1 --epochs 2 --device cpu "
+              f"--out {ckpt}")
         section("ALL CHECKS THAT COULD RUN PASSED")
         return 0
 
