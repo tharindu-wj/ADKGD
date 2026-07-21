@@ -100,6 +100,13 @@ def main() -> None:
     ap.add_argument("--num_bases", type=int, default=30)
     ap.add_argument("--encoder_layers", type=int, default=2)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--snapshot_every", type=int, default=0,
+                    help="save a full loadable checkpoint every N game epochs "
+                         "once the alpha ramp starts (0 = off). P6 showed "
+                         "anchor-awareness peaks a few pressure epochs after "
+                         "the ramp and then erodes, so the final epoch is NOT "
+                         "the best generator -- select by knockout J@10 "
+                         "across snapshots instead.")
     ap.add_argument("--device", default=None)
     ap.add_argument("--init_context_from", default=None,
                     help="load frozen E' from an existing checkpoint instead of "
@@ -309,6 +316,27 @@ def main() -> None:
         print(f"  dreal-pre {ep_i}/{args.dreal_pretrain_epochs} "
               f"loss={tot/max(nb,1):.4f}", flush=True)
 
+    def _save(path):
+        """Full candidate_v2 payload -- every snapshot is independently
+        loadable by kgsage.inference (same contract as the final save)."""
+        torch.save({
+            "arch": "candidate_v2",
+            "generator_state": G.state_dict(),
+            "dmatch_state": dmatch.state_dict(),
+            "dreal_state": dreal.state_dict(),
+            "context_embeddings": context.cpu(),
+            "sketches": (sketches > 0).to(torch.uint8).cpu(),
+            "sketch_bits": args.sketch_bits,
+            "pool_masks": pool_masks,
+            "cand_k": args.cand_k, "dim": args.dim, "tau": args.tau,
+            "ent2id": kg["ent2id"], "rel2id": kg["rel2id"],
+            "id2ent": kg["id2ent"], "id2rel": kg["id2rel"],
+            "real_triples": list(kg["triple_set_all"]),
+            "n_ent": n_ent, "n_rel": n_rel,
+            "train_split": "train", "alpha_final": alpha,
+            "alpha_target": args.alpha_target, "seed": args.seed,
+        }, path)
+
     alpha = args.alpha_init
     err_prev = 0.0
     print("-" * 60, flush=True)
@@ -447,24 +475,17 @@ def main() -> None:
               f"g_match={ep['g_match']/nb:+.2f}  dm-online={ep['dm_online']/nb:.3f} "
               f"distinct={len(picks)} ({time.perf_counter()-t0:.0f}s)", flush=True)
 
+        # Per-epoch snapshots start with the alpha ramp: warmup epochs are not
+        # generator candidates, the pressure epochs around the ramp are.
+        if (args.snapshot_every > 0 and epoch > args.alpha_warmup_epochs
+                and epoch % args.snapshot_every == 0):
+            stem = args.out[:-3] if args.out.endswith(".pt") else args.out
+            snap_path = f"{stem}.ep{epoch:02d}.pt"
+            _save(snap_path)
+            print(f"  snapshot -> {snap_path}", flush=True)
+
     # ---------- checkpoint ----------
-    torch.save({
-        "arch": "candidate_v2",
-        "generator_state": G.state_dict(),
-        "dmatch_state": dmatch.state_dict(),
-        "dreal_state": dreal.state_dict(),
-        "context_embeddings": context.cpu(),
-        "sketches": (sketches > 0).to(torch.uint8).cpu(),
-        "sketch_bits": args.sketch_bits,
-        "pool_masks": pool_masks,
-        "cand_k": args.cand_k, "dim": args.dim, "tau": args.tau,
-        "ent2id": kg["ent2id"], "rel2id": kg["rel2id"],
-        "id2ent": kg["id2ent"], "id2rel": kg["id2rel"],
-        "real_triples": list(kg["triple_set_all"]),
-        "n_ent": n_ent, "n_rel": n_rel,
-        "train_split": "train", "alpha_final": alpha,
-        "alpha_target": args.alpha_target, "seed": args.seed,
-    }, args.out)
+    _save(args.out)
     print(f"Saved KGSAGE-2 checkpoint to {args.out}", flush=True)
 
 

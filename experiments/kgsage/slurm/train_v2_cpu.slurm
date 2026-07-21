@@ -36,16 +36,21 @@ case "$DATASET" in
   *) echo "ERROR: DATASET must be fb15k237 or wn18rr (got '$DATASET')" >&2; exit 1 ;;
 esac
 
+# Recipe defaults follow the dyn5-validated run. P6 on the 20-epoch FB run
+# showed anchor-awareness peaks a few pressure epochs after the alpha ramp and
+# then erodes into per-relation universal-aliens -- train SHORT, snapshot every
+# epoch from the ramp onward, and select the epoch by knockout J@10.
 SEED="${SEED:-0}"
-EPOCHS="${EPOCHS:-20}"
-DMATCH_EPOCHS="${DMATCH_EPOCHS:-3}"
+EPOCHS="${EPOCHS:-8}"
+DMATCH_EPOCHS="${DMATCH_EPOCHS:-2}"
 BATCH="${BATCH:-256}"
 CAND_K="${CAND_K:-256}"
 ALPHA_TARGET="${ALPHA_TARGET:-0.13}"
 ALPHA_MAX="${ALPHA_MAX:-10}"
 DREAL_MISMATCH="${DREAL_MISMATCH:-1.0}"
-DREAL_PRETRAIN="${DREAL_PRETRAIN:-3}"
-ALPHA_WARMUP="${ALPHA_WARMUP:-5}"
+DREAL_PRETRAIN="${DREAL_PRETRAIN:-2}"
+ALPHA_WARMUP="${ALPHA_WARMUP:-2}"
+SNAPSHOT_EVERY="${SNAPSHOT_EVERY:-1}"
 CKPT_PATH="${CKPT_PATH:-experiments/kgsage/outputs/checkpoints/kgsage2_${TAG}_s${SEED}.pt}"
 INIT_E="${INIT_E:-experiments/kgsage/outputs/checkpoints/kgsage_${TAG}_s${SEED}.pt}"
 
@@ -78,6 +83,7 @@ $PY -m kgsage.gan.train_v2 \
     --dmatch_epochs         "$DMATCH_EPOCHS" \
     --dreal_pretrain_epochs "$DREAL_PRETRAIN" \
     --alpha_warmup_epochs   "$ALPHA_WARMUP" \
+    --snapshot_every        "$SNAPSHOT_EVERY" \
     --epochs                "$EPOCHS" \
     --batch_size            "$BATCH" \
     --cand_k                "$CAND_K" \

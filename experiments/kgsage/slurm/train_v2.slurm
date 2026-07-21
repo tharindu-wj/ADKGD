@@ -5,15 +5,19 @@
 #   DATASET=wn18rr   sbatch experiments/kgsage/slurm/train_v2.slurm
 #
 # NO link-predictor artifacts needed (the LP is evaluation-only in v2).
-# Env knobs (defaults follow the CPU-validated dynamics runs):
-#   SEED, EPOCHS (30), DMATCH_EPOCHS (3), WARMUP_EPOCHS (10), BATCH (256),
+# Env knobs (defaults follow the dyn5-validated recipe; the P6 verdict on the
+# 20-epoch run showed anchor-awareness PEAKS a few pressure epochs after the
+# alpha ramp and then erodes into per-relation universal-aliens, so train
+# SHORT with per-epoch snapshots and select the epoch by knockout J@10):
+#   SEED, EPOCHS (8), DMATCH_EPOCHS (2), WARMUP_EPOCHS (10), BATCH (256),
 #   CAND_K (256), ALPHA_TARGET (0.13 -- must stay ABOVE the structural
 #   no-uncorroborated-candidate floor, ~0.12-0.13 on FB15K-237),
 #   ALPHA_MAX (10), DREAL_MISMATCH (1.0 -- anchor-conditional plausibility;
 #   the run without it collapsed to a universal-alien global ranking),
-#   CKPT_PATH.
-# After the run, evaluate LOCALLY (CPU): support_eval (bare + mask),
-# knockout J@10, mask intervention rate -- pass gates before ADKGD cells.
+#   SNAPSHOT_EVERY (1 -- snapshots kgsage2_<tag>_s<seed>.epNN.pt from the
+#   ramp onward), CKPT_PATH.
+# After the run, evaluate LOCALLY (CPU): knockout J@10 across ALL snapshots
+# picks the generator; then support_eval (bare + mask) gates the winner.
 
 #SBATCH --job-name=kgsage2_train
 #SBATCH --output=%x-%j.out.txt
@@ -38,9 +42,10 @@ case "$DATASET" in
 esac
 
 SEED="${SEED:-0}"
-EPOCHS="${EPOCHS:-30}"
-DMATCH_EPOCHS="${DMATCH_EPOCHS:-3}"
+EPOCHS="${EPOCHS:-8}"
+DMATCH_EPOCHS="${DMATCH_EPOCHS:-2}"
 WARMUP_EPOCHS="${WARMUP_EPOCHS:-10}"
+SNAPSHOT_EVERY="${SNAPSHOT_EVERY:-1}"
 BATCH="${BATCH:-256}"
 CAND_K="${CAND_K:-256}"
 ALPHA_TARGET="${ALPHA_TARGET:-0.13}"
@@ -50,8 +55,8 @@ DREAL_MISMATCH="${DREAL_MISMATCH:-1.0}"
 # critic, and hold alpha=0 for the first game epochs -- plausible FIRST, then
 # ramp the contradiction pressure. Without this the generator dives into a
 # universal-alien global ranking before D_real can price it out.
-DREAL_PRETRAIN="${DREAL_PRETRAIN:-3}"
-ALPHA_WARMUP="${ALPHA_WARMUP:-5}"
+DREAL_PRETRAIN="${DREAL_PRETRAIN:-2}"
+ALPHA_WARMUP="${ALPHA_WARMUP:-2}"
 CKPT_PATH="${CKPT_PATH:-experiments/kgsage/outputs/checkpoints/kgsage2_${TAG}_s${SEED}.pt}"
 
 echo "Job $SLURM_JOB_ID on $(hostname) starting $(date)"
@@ -90,6 +95,7 @@ $PY -m kgsage.gan.train_v2 \
     --dreal_mismatch  "$DREAL_MISMATCH" \
     --dreal_pretrain_epochs "$DREAL_PRETRAIN" \
     --alpha_warmup_epochs   "$ALPHA_WARMUP" \
+    --snapshot_every  "$SNAPSHOT_EVERY" \
     --seed            "$SEED" \
     --device          cuda
 
