@@ -412,8 +412,13 @@ def main() -> None:
                 # scoring plausibility CONDITIONAL on the individual anchor.
                 filler_emb = context[t.to(device)] if slot == TAIL \
                              else context[h.to(device)]
+                # The wrong anchor must come from the ANCHOR slot: heads when
+                # the tail is corrupted, tails when the head is corrupted --
+                # otherwise head-slot batches pair a tail-type filler with a
+                # head-type anchor and D_real can reject by slot type alone.
+                mm_slot = 0 if slot == TAIL else 2
                 mm_anchor = torch.tensor([
-                    by_rel[int(r[i])][rng.randrange(len(by_rel[int(r[i])]))][0]
+                    by_rel[int(r[i])][rng.randrange(len(by_rel[int(r[i])]))][mm_slot]
                     for i in range(B)])
                 d_mm = dreal(context[mm_anchor.to(device)], r.to(device),
                              filler_emb)
