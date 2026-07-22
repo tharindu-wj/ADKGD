@@ -1,13 +1,13 @@
 """P2 KILL-SWITCH for KGSAGE-2: can D_match learn corroboration at all?
 
-Trains the D_match critic ALONE (no GAN) on pairs built purely from data:
+Trains the D_match discriminator ALONE (no GAN) on pairs built purely from data:
   positive  (anchor h, its true slot filler t)            -> 1
   negative  (anchor h, SAME-RELATION filler of another h') -> 0   [strict form]
 with the direct h--candidate edge excluded from the neighbour sample.
 
 Reports held-out AUC. GO if AUC >= 0.75 (the untrained max-cos proxy already
 reaches 0.80 on the LOOSE mismatch form; the same-relation form here is
-strictly harder, which is why it is the honest gate). NO-GO means the critic
+strictly harder, which is why it is the honest gate). NO-GO means the discriminator
 architecture cannot read the neighbourhood and the adversarial build must not
 proceed.
 

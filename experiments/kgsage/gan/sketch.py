@@ -10,7 +10,7 @@ WHY THIS EXISTS
     every support-penalty arm (see docs/KGSAGE_learned_contradiction_design.md).
     The sketch is the cheap escape: an m-bit hashed indicator of
     N1(h) ∪ N2(h). A dot-product / linear read of two sketches approximates set
-    intersection, so a generator or critic conditioned on it can LEARN
+    intersection, so a generator or discriminator conditioned on it can LEARN
     corroboration-style signals that are unlearnable from pooled E'.
 
 DESIGN

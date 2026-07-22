@@ -1,4 +1,4 @@
-"""D_real: the plausibility/realism critic of KGSAGE-2 (LP-free).
+"""D_real: the plausibility/realism discriminator of KGSAGE-2 (LP-free).
 
 Replaces the v1 frozen-ComplEx-plus-residual reward. Fully trainable, so the
 adversarial game is live again; spectral normalisation bounds its Lipschitz

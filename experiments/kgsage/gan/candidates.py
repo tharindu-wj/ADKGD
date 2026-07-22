@@ -11,10 +11,10 @@ DESIGN
     - Candidates come from the relation/slot TYPE POOL (same pools the masks
       use), sampled as a mixture: `mix_uniform` of the draws uniform over the
       pool, the rest proportional to in-slot frequency (hard, popular
-      candidates must be present so the critics can push them down -- a
+      candidates must be present so the discriminators can push them down -- a
       candidate the generator never sees, it can never learn to reject).
     - Every batch row also force-includes requested ids (true filler for
-      critic batches; decode-time shortlists).
+      discriminator batches; decode-time shortlists).
     - Returns log q(x) of the ACTUAL mixture per candidate, for the logQ
       correction (Yi et al., RecSys'19): logits' = logits - log q, so the
       sampling frequency of popular candidates cancels out of the softmax and

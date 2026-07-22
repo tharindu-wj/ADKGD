@@ -1,5 +1,5 @@
 #!/bin/bash
-# KGSAGE-2 (dual-critic) training on a CPU node -- for when the GPU partition is
+# KGSAGE-2 (dual-discriminator) training on a CPU node -- for when the GPU partition is
 # blocked. The one GPU-hungry phase (RGCN warm-up -> E') is SKIPPED by reusing
 # the frozen E' already stored in the v1 checkpoint (--init_context_from); E' is
 # a frozen input in v2, so this is equivalent to (better than) a fresh warm-up.

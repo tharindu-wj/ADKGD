@@ -1,4 +1,4 @@
-"""KGSAGE-2 trainer: LP-free dual-critic adversarial training.
+"""KGSAGE-2 trainer: LP-free dual-discriminator adversarial training.
 
     D_real  (trainable, spectral-normed)  "is this triple plausible?"  G: HIGH
     D_match (pretrained on real-vs-mismatched pairs, then FROZEN)
@@ -7,7 +7,7 @@
     corroborated probability mass (exact graph support, not D_match's opinion).
 
 No pretrained link predictor anywhere. Learned components (sketches, candidate
-pools, neighbour lists, both critics) see the TRAIN SPLIT ONLY; the all-splits
+pools, neighbour lists, both discriminators) see the TRAIN SPLIT ONLY; the all-splits
 falseness guarantee remains where it always was -- the decode-time masks.
 
 Usage (repo root, pytorch env):
@@ -89,7 +89,7 @@ def main() -> None:
                          "triples paired with the WRONG anchor, labeled fake, "
                          "making plausibility ANCHOR-CONDITIONAL. 0 = off. "
                          "Added after the universal-alien collapse: without it "
-                         "a global ranking can satisfy both critics on average "
+                         "a global ranking can satisfy both discriminators on average "
                          "without reading the anchor")
     ap.add_argument("--lr_dmatch", type=float, default=1e-4,
                     help="D_match keeps training DURING the game on the "
@@ -273,10 +273,10 @@ def main() -> None:
     # (G converges onto its false negatives). It keeps training during the game
     # on the generator's own picks with ORACLE labels (exact graph support), so
     # every blind spot G finds is corrected on the next batch. The oracle only
-    # supplies labels -- D_match remains a learned critic.
+    # supplies labels -- D_match remains a learned discriminator.
     dm_game_opt = torch.optim.AdamW(dmatch.parameters(), lr=args.lr_dmatch)
 
-    # ---------- Phase 2: the dual-critic game ----------
+    # ---------- Phase 2: the dual-discriminator game ----------
     G = CandidateScoringGenerator(dim=args.dim, sketch_bits=args.sketch_bits,
                                   n_rel=n_rel).to(device)
     dreal = DReal(dim=args.dim, n_rel=n_rel).to(device)
@@ -340,7 +340,7 @@ def main() -> None:
     alpha = args.alpha_init
     err_prev = 0.0
     print("-" * 60, flush=True)
-    print(f"Dual-critic: {args.epochs} epochs, K={args.cand_k}, tau={args.tau}, "
+    print(f"Dual-discriminator: {args.epochs} epochs, K={args.cand_k}, tau={args.tau}, "
           f"alpha0={alpha} target={args.alpha_target}", flush=True)
     for epoch in range(1, args.epochs + 1):
         in_warmup = epoch <= args.alpha_warmup_epochs

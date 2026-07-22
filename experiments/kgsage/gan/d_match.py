@@ -1,4 +1,4 @@
-"""D_match: the neighbourhood-consistency critic of KGSAGE-2.
+"""D_match: the neighbourhood-consistency discriminator of KGSAGE-2.
 
 Answers "does candidate x belong to anchor a's world?" by CROSS-ATTENDING the
 candidate embedding against a sample of the anchor's ACTUAL neighbour
@@ -11,11 +11,11 @@ pairs built purely from data:
 Hubs occur in both classes symmetrically, so global popularity carries no
 label signal by construction -- the only winning strategy is genuine
 set-comparison. The generator will be trained to DRIVE THIS SCORE DOWN
-(produce candidates alien to the anchor's world) while the realism critic
+(produce candidates alien to the anchor's world) while the realism discriminator
 keeps them plausible.
 
 The direct edge anchor--candidate is EXCLUDED from the neighbour sample by the
-data builder (otherwise membership is trivial string-matching); the critic
+data builder (otherwise membership is trivial string-matching); the discriminator
 must detect co-neighbourhood structure, which is exactly the corroboration
 signal (untrained max-cosine proxy on E' already reaches AUC 0.80).
 """

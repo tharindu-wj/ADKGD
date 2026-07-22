@@ -1,5 +1,5 @@
 #!/bin/bash
-# KGSAGE-2 (dual-critic, LP-free) GAN training. One job per dataset.
+# KGSAGE-2 (dual-discriminator, LP-free) GAN training. One job per dataset.
 #
 #   DATASET=fb15k237 sbatch experiments/kgsage/slurm/train_v2.slurm
 #   DATASET=wn18rr   sbatch experiments/kgsage/slurm/train_v2.slurm
@@ -52,7 +52,7 @@ ALPHA_TARGET="${ALPHA_TARGET:-0.13}"
 ALPHA_MAX="${ALPHA_MAX:-10}"
 DREAL_MISMATCH="${DREAL_MISMATCH:-1.0}"
 # Curriculum (order-of-learning fix): pretrain the anchor-conditional realism
-# critic, and hold alpha=0 for the first game epochs -- plausible FIRST, then
+# discriminator, and hold alpha=0 for the first game epochs -- plausible FIRST, then
 # ramp the contradiction pressure. Without this the generator dives into a
 # universal-alien global ranking before D_real can price it out.
 DREAL_PRETRAIN="${DREAL_PRETRAIN:-2}"
