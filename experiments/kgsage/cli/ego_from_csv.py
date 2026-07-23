@@ -26,8 +26,9 @@ import argparse
 import csv
 import math
 import random
+import re
 import sys
-from collections import deque
+from collections import defaultdict, deque
 from pathlib import Path
 
 import matplotlib
@@ -53,6 +54,13 @@ C_CORR_EDGE = "#c0392b"
 # --------------------------------------------------------------------------
 # graph helpers (loaded once, reused for every row)
 # --------------------------------------------------------------------------
+
+def _clean(name: str) -> str:
+    """Same label cleaning gen_corruptions_csv applies, so CSV names resolve."""
+    name = re.sub(r"-GB\b", "", name)
+    name = re.sub(r"\bLanguage\b", "", name).strip()
+    return re.sub(r"\s{2,}", " ", name)
+
 
 def _read_text_map(path: Path) -> dict:
     """id -> readable name (entity2text.txt / relation2text.txt: 'id<TAB>text')."""
@@ -345,40 +353,96 @@ def main() -> int:
         return 2
     adj = _build_adjacency(triples)          # built ONCE, reused for every row
 
-    rows = list(csv.DictReader(open(args.csv, encoding="utf-8-sig")))
+    # The CSV holds only readable triples. Resolve names -> graph ids by matching
+    # against the real graph (which disambiguates any repeated display name), and
+    # recompute the ranking metrics here.
+    triple_set = set(triples)
+    name2ids = defaultdict(set)              # readable name (raw + cleaned) -> ids
+    for e, txt in ent_txt.items():
+        name2ids[txt].add(e)
+        name2ids[_clean(txt)].add(e)         # the form gen_corruptions_csv writes
+    for e in adj:                            # ids with no text map resolve to themselves
+        name2ids.setdefault(e, set()).add(e)
+    label2rels = defaultdict(set)            # readable relation -> paths
+    all_rels = {r for _, r, _ in triples}
+    for rp in all_rels:
+        label2rels[rp].add(rp)
+        label2rels[rp.rstrip("/").split("/")[-1]].add(rp)
+        if rp in rel_txt:
+            label2rels[rel_txt[rp]].add(rp)
+    head_pool, tail_pool = defaultdict(set), defaultdict(set)
+    for h, r, t in triples:
+        head_pool[r].add(h); tail_pool[r].add(t)
+
+    def resolve(o_head, o_rel, o_tail, c_head, c_rel, c_tail):
+        """(orig readable, corr readable) -> (orig ids, corr ids) or None."""
+        rels = label2rels.get(o_rel, set())
+        # the original is a real edge -> the (h, r, t) that exists pins everything
+        for r in rels:
+            for h in name2ids.get(o_head, ()):
+                for t in name2ids.get(o_tail, ()):
+                    if (h, r, t) in triple_set:
+                        # the corruption changes exactly one slot
+                        if c_head != o_head:          # head corrupted
+                            for nh in _prefer(name2ids.get(c_head, ()), head_pool[r]):
+                                return (h, r, t), (nh, r, t)
+                        else:                          # tail corrupted
+                            for nt in _prefer(name2ids.get(c_tail, ()), tail_pool[r]):
+                                return (h, r, t), (h, r, nt)
+        return None
+
+    csv_rows = list(csv.DictReader(open(args.csv, encoding="utf-8-sig")))
+    resolved = []
+    for r in csv_rows:
+        got = resolve(r["orig_head"], r["orig_relation"], r["orig_tail"],
+                      r["corr_head"], r["corr_relation"], r["corr_tail"])
+        if got is None:
+            continue
+        (h, rp, t), (ch, cr, ct) = got
+        slot = "head" if ch != h else "tail"
+        anchor, filler = (h, ct) if slot == "tail" else (t, ch)
+        nb = lambda e: {x[0] for x in adj.get(e, [])}
+        resolved.append({
+            "orig": (h, rp, t), "corr": (ch, cr, ct), "slot": slot,
+            "shared": len(nb(anchor) & nb(filler)),
+            "direct": filler in nb(anchor), "degree": len(adj.get(anchor, [])),
+            "rel_seg": rp.rstrip("/").split("/")[-1],
+            "label": f"({r['corr_head']}, {r['corr_relation']}, {r['corr_tail']})",
+        })
+
     if not args.all_rows:
-        def rank_key(r):
-            zero = (int(r["shared_neighbours"]) == 0 and r["direct_neighbour"] == "0")
-            deg = int(r["anchor_degree"])
-            legible = args.deg_min <= deg <= args.deg_max
-            return (r["slot"] != "tail", not zero, not legible, deg)
-        rows = sorted(rows, key=rank_key)
+        resolved.sort(key=lambda x: (x["slot"] != "tail", not (x["shared"] == 0 and not x["direct"]),
+                                     not (args.deg_min <= x["degree"] <= args.deg_max), x["degree"]))
     if args.limit:
-        rows = rows[:args.limit]
+        resolved = resolved[:args.limit]
 
     out_dir = Path(args.out_dir) if args.out_dir else (_EVAL_ROOT / "ego_graphs")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ok = 0
-    for r in rows:
-        stem = f"ego_{r['idx']}_{r['relation'].split('/')[-1]}"
-        out = out_dir / f"{stem}.{args.ext}"
-        stats = render_ego(
-            adj, ent_txt, rel_txt,
-            (r["orig_h_id"], r["orig_r_id"], r["orig_t_id"]),
-            (r["corr_h_id"], r["corr_r_id"], r["corr_t_id"]),
-            out, hops=args.hops, max_neighbors=args.max_neighbors,
-            edge_labels=args.edge_labels, short_relations=args.short_relations)
+    for i, x in enumerate(resolved):
+        out = out_dir / f"ego_{i}_{x['rel_seg']}.{args.ext}"
+        stats = render_ego(adj, ent_txt, rel_txt, x["orig"], x["corr"], out,
+                           hops=args.hops, max_neighbors=args.max_neighbors,
+                           edge_labels=args.edge_labels, short_relations=args.short_relations)
         if stats is None:
-            print(f"SKIP {stem}: could not draw (identical triple or missing entity)",
-                  file=sys.stderr)
+            print(f"SKIP {x['label']}: could not draw", file=sys.stderr)
             continue
         ok += 1
-        print(f"OK  {out}   {r['corr_statement']}   "
+        print(f"OK  {out}   {x['label']}   "
               f"[shared true={stats['shared_true']} repl={stats['shared_corr']}]")
 
-    print(f"\nrendered {ok}/{len(rows)} ego graphs -> {out_dir}")
+    print(f"\nrendered {ok}/{len(resolved)} ego graphs "
+          f"({len(csv_rows) - len(resolved) if not args.limit else '...'} "
+          f"unresolved) -> {out_dir}")
     return 0
+
+
+def _prefer(cands, pool):
+    """Yield candidate ids, those observed in the relation's slot pool first."""
+    cands = list(cands)
+    inpool = [c for c in cands if c in pool]
+    return inpool + [c for c in cands if c not in pool]
 
 
 if __name__ == "__main__":

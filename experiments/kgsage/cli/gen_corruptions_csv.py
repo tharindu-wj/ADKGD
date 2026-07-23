@@ -106,7 +106,11 @@ def main() -> int:
                 and h in e2g and t in e2g and h in ent_txt and t in ent_txt):
             by_rel[r].append((h, r, t))
 
+    # The CSV is deliberately simple: the two triples, head/relation/tail each,
+    # in readable labels. ego_from_csv re-derives ids and metrics by matching
+    # these names against the graph, so nothing else needs to be stored here.
     rows = []
+    n_tail = n_zero = 0
     for r_str in args.relations:
         pool = by_rel.get(r_str, [])
         if not pool:
@@ -115,30 +119,19 @@ def main() -> int:
         pos = [(e2g[h], r2g[r], e2g[t]) for h, r, t in sample]
         negs, _ = generate_negatives(pos, P, maps,
                                      rng=np.random.default_rng(args.seed))
+        rl = rel_label(r_str)
         for (h, r, t), (nh, nr, nt) in zip(pos, negs):
             if (nh, nt) == (h, t):
                 continue
             slot = "tail" if nt != t else "head"
-            anchor = h if slot == "tail" else t
-            filler = nt if slot == "tail" else nh
-            tpl = TEMPLATES[r_str]
-            # Readable columns first, machine ids last (ego_from_csv reads by
-            # name, so column order is free to optimise for a human reader).
+            anchor, filler = (h, nt) if slot == "tail" else (t, nh)
             rows.append({
-                "idx": len(rows),
-                "relation_label": rel_label(r_str),
-                "slot": slot,
-                "orig_statement": tpl.format(h=nm(h), t=nm(t)),
-                "corr_statement": tpl.format(h=nm(nh), t=nm(nt)),
-                "orig_h_name": nm(h), "orig_t_name": nm(t),
-                "corr_h_name": nm(nh), "corr_t_name": nm(nt),
-                "shared_neighbours": len(adj.get(anchor, set()) & adj.get(filler, set())),
-                "direct_neighbour": int(filler in adj.get(anchor, set())),
-                "anchor_degree": len(adj.get(anchor, set())),
-                "relation": r_str,
-                "orig_h_id": id2e[h], "orig_r_id": r_str, "orig_t_id": id2e[t],
-                "corr_h_id": id2e[nh], "corr_r_id": r_str, "corr_t_id": id2e[nt],
+                "orig_head": nm(h), "orig_relation": rl, "orig_tail": nm(t),
+                "corr_head": nm(nh), "corr_relation": rl, "corr_tail": nm(nt),
             })
+            n_tail += (slot == "tail")
+            n_zero += (len(adj.get(anchor, set()) & adj.get(filler, set())) == 0
+                       and filler not in adj.get(anchor, set()))
 
     if args.out:
         out_path = Path(args.out)
@@ -146,7 +139,8 @@ def main() -> int:
         ds = Path(args.data).name
         out_path = _EVAL_ROOT / "gen_corruptions" / f"{ds}_{args.split}_corruptions.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fields = list(rows[0].keys()) if rows else []
+    fields = ["orig_head", "orig_relation", "orig_tail",
+              "corr_head", "corr_relation", "corr_tail"]
     with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
@@ -154,8 +148,7 @@ def main() -> int:
 
     print(f"wrote {len(rows)} corruptions -> {out_path}")
     print(f"  split={args.split}  relations={len(by_rel)}  "
-          f"tail-slot={sum(1 for r in rows if r['slot']=='tail')}  "
-          f"0-shared={sum(1 for r in rows if r['shared_neighbours']==0 and not r['direct_neighbour'])}")
+          f"tail-slot={n_tail}  0-shared={n_zero}")
     return 0
 
 
