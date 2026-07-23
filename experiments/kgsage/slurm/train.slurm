@@ -1,8 +1,8 @@
 #!/bin/bash
 # KGSAGE-2 (dual-discriminator, LP-free) GAN training. One job per dataset.
 #
-#   DATASET=fb15k237 sbatch experiments/kgsage/slurm/train_v2.slurm
-#   DATASET=wn18rr   sbatch experiments/kgsage/slurm/train_v2.slurm
+#   DATASET=fb15k237 sbatch experiments/kgsage/slurm/train.slurm
+#   DATASET=wn18rr   sbatch experiments/kgsage/slurm/train.slurm
 #
 # NO link-predictor artifacts needed (the LP is evaluation-only in v2).
 # Env knobs (defaults follow the dyn5-validated recipe; the P6 verdict on the
@@ -82,7 +82,7 @@ $PY -c "import torch; assert torch.cuda.is_available(), 'no GPU'; print('GPU:', 
 $PY -c "from torch_geometric.nn import RGCNConv; print('PyG OK')"
 mkdir -p "$(dirname "$CKPT_PATH")"
 
-$PY -m kgsage.gan.train_v2 \
+$PY -m kgsage.gan.train \
     --data            "$DATA_DIR" \
     --out             "$CKPT_PATH" \
     --warmup_epochs   "$WARMUP_EPOCHS" \

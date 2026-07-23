@@ -14,7 +14,7 @@ One run = one cell of `(--neg_source × --test_anomaly_source)`, sources:
 |---|---|
 | `random`  | ADKGD's original corruption (baseline; bit-identical to the paper) |
 | `lp_band` | Option B: a frozen pretrained ComplEx ranks the relation's type pool; sample the top-k band **below** s(true), masked against every known-true filler (all splits) — no GAN; doubles as the `sampler_direct` control |
-| `gan`     | a trained KGSAGE checkpoint (`kgsage.gan.train`: frozen ComplEx backbone + trainable contextual residual D) |
+| `gan`     | a trained KGSAGE checkpoint (`kgsage.gan.train`: dual-discriminator `candidate_v2` generator; use the locked `generator_<dataset>.pt` artifacts) |
 
 The PoC read-out (pre-registered in `docs/OPTION_B_PLAN.md` §0):
 `random×random` (baseline) vs `random×lp_band` (**the gap**) vs
@@ -44,8 +44,8 @@ override) — both are no-ops on the GPU cluster.
 ## HPC workflow (DeepThought — details in RUNNING_ON_DEEPTHOUGHT.md)
 
 1. `PYTHONPATH=experiments python -m kgsage.cli.fetch_lp --dataset all` (login node, once).
-2. Train the generator: `DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train.slurm` (× datasets × seeds).
-3. Inspect each checkpoint: `python -m kgsage.cli.inspect_gan_lp --ckpt ... --n 40`.
+2. Train the generator: `DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train.slurm` (per-epoch snapshots).
+3. Select the snapshot: `python -m kgsage.cli.knockout_eval --ckpt <each .epNN.pt> --data ...` (lowest mean knockout J@10 wins); optional LP audit via `inspect_gan_lp`.
 4. Run cells: `NEG_SOURCE=... TEST_SOURCE=... SEED=... DATASET=... [GAN_CKPT=...] sbatch experiments/slurm/exp_cell.slurm`
    (`exp_cell.slurm` is the single cell launcher — all source pairings, incl. `lp_band`).
 5. `python experiments/aggregate_results.py --dataset <ds>`.

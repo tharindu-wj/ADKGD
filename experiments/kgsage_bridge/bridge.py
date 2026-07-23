@@ -42,13 +42,12 @@ def load_gan(ckpt_path, device=None):
     """Load a trained KGSAGE GAN checkpoint once; returns a payload to reuse.
 
     Returns a dict with keys:
-      generator        - the trained KGSAGEGenerator (torch.nn.Module)
+      generator        - the trained CandidateScoringGenerator (torch.nn.Module)
       device           - torch.device the model is on
       ent2id, rel2id   - GAN's string -> int vocab maps
       id2ent, id2rel   - inverse maps
       real_triple_set  - set of (h, r, t) tuples (for collision filtering)
       n_ent, n_rel     - vocabulary sizes
-      z_dim            - noise dimension
     """
     return load_checkpoint(ckpt_path, device=device)
 

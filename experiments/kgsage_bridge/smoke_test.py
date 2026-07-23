@@ -46,7 +46,7 @@ def main():
     if not os.path.isfile(ckpt):
         print(f"SKIP: {ckpt} not found.")
         print(f"      Make one with the dual-discriminator trainer:")
-        print(f"      python -m kgsage.gan.train_v2 --data data/dummy_kg "
+        print(f"      python -m kgsage.gan.train --data data/dummy_kg "
               f"--warmup_epochs 2 --dmatch_epochs 1 --epochs 2 --device cpu "
               f"--out {ckpt}")
         section("ALL CHECKS THAT COULD RUN PASSED")

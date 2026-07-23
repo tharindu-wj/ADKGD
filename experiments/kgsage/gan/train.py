@@ -11,7 +11,7 @@ pools, neighbour lists, both discriminators) see the TRAIN SPLIT ONLY; the all-s
 falseness guarantee remains where it always was -- the decode-time masks.
 
 Usage (repo root, pytorch env):
-  PYTHONPATH=experiments python -m kgsage.gan.train_v2 \
+  PYTHONPATH=experiments python -m kgsage.gan.train \
       --data data/FB15K-mini --out experiments/kgsage/outputs/checkpoints/v2_mini.pt \
       [--warmup_epochs 2 --dmatch_epochs 2 --epochs 4 --alpha_target 0.05]
 """

@@ -42,17 +42,15 @@ The 7-step pipeline (one negative per real triple):
 import numpy as np
 import torch
 
-from kgsage.gan.generator import KGSAGEGenerator
-
 
 def load_checkpoint(ckpt_path, device=None):
     """Reconstruct the trained generator + helpers from a .pt file.
 
-    Handles both architectures behind ONE payload contract, so every caller
-    (bridge, CLIs, eval scripts) works unchanged:
-      v1  (no "arch" key)        -- global-head KGSAGEGenerator
-      v2  ("arch"=="candidate_v2") -- CandidateScoringGenerator + sketches;
-          decode scores the FULL type pool per row (no candidate sampling).
+    Only candidate_v2 payloads (CandidateScoringGenerator + sketches) are
+    loadable; the decode scores the FULL type pool per row. Legacy v1
+    checkpoints cannot be decoded any more, but they remain valid as
+    --init_context_from E' donors for the trainer (which reads the payload
+    tensors directly and never calls this function).
     """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -62,62 +60,16 @@ def load_checkpoint(ckpt_path, device=None):
     if payload.get("arch") == "candidate_v2":
         return _load_checkpoint_v2(payload, ckpt_path, device)
 
-    # Checkpoints cache the RGCN context table E' so inference can condition
-    # the generator without ever running the encoder (or importing PyG).
-    if "context_embeddings" not in payload:
-        raise KeyError(
-            f"Checkpoint {ckpt_path!r} has no 'context_embeddings' (E'). It looks "
-            "like an old checkpoint without cached E'. Retrain with `python -m "
-            "kgsage.gan.train ...` — the current pipeline caches E' automatically."
-        )
-
-    gen_kwargs = dict(
-        n_ent=payload["n_ent"],
-        n_rel=payload["n_rel"],
-        dim=payload["dim"],
-        z_dim=payload["z_dim"],
+    raise ValueError(
+        f"Checkpoint {ckpt_path!r} is not a candidate_v2 payload "
+        f"(arch={payload.get('arch')!r}). Legacy v1 checkpoints are no longer "
+        "loadable; use one of the canonical generator_*.pt artifacts or "
+        "retrain with `python -m kgsage.gan.train`."
     )
-    if "hidden" in payload:
-        gen_kwargs["hidden"] = payload["hidden"]
-    G = KGSAGEGenerator(**gen_kwargs).to(device)
-    G.load_state_dict(payload["generator_state"])
-    G.eval()
-
-    # Cached context table E' [n_ent, dim]. Move to `device` ONCE here; the
-    # generator conditions on it every forward. This is the "PyG-free" firewall.
-    entity_context = payload["context_embeddings"].to(device)
-
-    # The set of real triples (in the GAN's ID space) for collision filtering.
-    real_triple_set = set(tuple(t) for t in payload["real_triples"])
-
-    # A5: known-true filler bans per query direction (1-N safe masking at
-    # decode time -- collisions become structurally impossible, not retried).
-    true_tails, true_heads = {}, {}
-    for h, r, t in real_triple_set:
-        true_tails.setdefault((h, r), []).append(t)
-        true_heads.setdefault((r, t), []).append(h)
-
-    return {
-        "generator": G,
-        "device": device,
-        "entity_context": entity_context,
-        "ent2id": payload["ent2id"],
-        "rel2id": payload["rel2id"],
-        "id2ent": payload["id2ent"],
-        "id2rel": payload["id2rel"],
-        "real_triple_set": real_triple_set,
-        "true_tails": true_tails,
-        "true_heads": true_heads,
-        # Checkpoints carry the train-split type pools.
-        "pool_masks": payload.get("pool_masks"),
-        "n_ent": payload["n_ent"],
-        "n_rel": payload["n_rel"],
-        "z_dim": payload["z_dim"],
-    }
 
 
 def _load_checkpoint_v2(payload, ckpt_path, device):
-    """candidate_v2 loader: same payload contract as v1 plus arch extras."""
+    """candidate_v2 loader: the one and only payload contract."""
     from kgsage.gan.generator import CandidateScoringGenerator
 
     G = CandidateScoringGenerator(
@@ -157,7 +109,6 @@ def _load_checkpoint_v2(payload, ckpt_path, device):
         "true_tails": true_tails, "true_heads": true_heads,
         "pool_masks": pool_masks,
         "n_ent": payload["n_ent"], "n_rel": payload["n_rel"],
-        "z_dim": 0,
         "tau": payload.get("tau", 0.5),
     }
 
@@ -268,30 +219,6 @@ def _pick_new_index_with_noise(logits, clean_index, torch_gen,
     return int((masked + gumbel * 0.5).argmax().item()), lifted_support
 
 
-def _corruptibility_scores(head_logits, rel_logits, tail_logits, h_in, r_in, t_in):
-    """Implements STEP 3's per-slot score: the generator's confidence in its best
-    WRONG value for each slot.
-
-    For each triple and slot, this is the softmax mass the generator puts on its
-    top NON-true value. High = the generator confidently prefers a wrong value
-    (a good slot to corrupt); low = it believes the true value, or is unsure
-    (e.g. no coherent relation exists) — so that slot is rarely chosen. Trained
-    on random relation targets, the relation head stays comparatively flat, which
-    is exactly what steers corruption away from the weak relation slot.
-
-    Returns a [n, 3] tensor, columns = (head, relation, tail).
-    """
-    def best_wrong(logits, true_idx):
-        probs = torch.softmax(logits, dim=1)
-        probs.scatter_(1, true_idx.unsqueeze(1), 0.0)   # drop the true value's mass
-        return probs.max(dim=1).values                  # top remaining (wrong) value
-    return torch.stack([
-        best_wrong(head_logits, h_in),
-        best_wrong(rel_logits, r_in),
-        best_wrong(tail_logits, t_in),
-    ], dim=1)
-
-
 def generate_negatives(triples, payload, id_maps, rng=None,
                        batch_size=256, max_resample=8, support_max=None):
     """Generate one negative per input triple. Main entry point.
@@ -322,149 +249,16 @@ def generate_negatives(triples, payload, id_maps, rng=None,
         return _generate_negatives_v2(triples, payload, id_maps, rng,
                                       max_resample, support_max)
 
-    G = payload["generator"]
-    device = payload["device"]
-    # ALL torch randomness (z + Gumbel) flows from this generator, which is
-    # derived from the caller's numpy rng -- the whole call is reproducible
-    # per seed with no dependence on global torch RNG state. It MUST live on
-    # the same device as the tensors it fills (a CPU generator against CUDA
-    # tensors raises "Expected a 'cuda' device type for generator").
-    torch_gen = torch.Generator(device=device)
-    torch_gen.manual_seed(int(rng.integers(0, 2**31 - 1)))
-
-    entity_context = payload["entity_context"]  # cached E' [n_ent, dim]
-    ent2id_gan = payload["ent2id"]
-    rel2id_gan = payload["rel2id"]
-    id2ent_gan = payload["id2ent"]
-    id2rel_gan = payload["id2rel"]
-    real_triple_set = payload["real_triple_set"]
-    true_tails = payload.get("true_tails", {})
-    true_heads = payload.get("true_heads", {})
-    pool_masks = payload.get("pool_masks")      # [2, n_rel, n_ent] bool or None
-    z_dim = payload["z_dim"]
-
-    # STEP 1: Translate the caller's IDs -> strings -> GAN IDs (once, up front).
-    gan_triples = []
-    for h_ext, r_ext, t_ext in triples:
-        h_s = id_maps["id2ent"][h_ext]
-        r_s = id_maps["id2rel"][r_ext]
-        t_s = id_maps["id2ent"][t_ext]
-        gan_triples.append((ent2id_gan[h_s], rel2id_gan[r_s], ent2id_gan[t_s]))
-
-    out = []
-    stats = {
-        "processed": 0,
-        "used_original": 0,   # generation failed -> kept original (see null_indices)
-        "null_indices": [],   # positions of null corruptions in the output
-        "resampled": 0,       # extra draws consumed by the bounded retry loop
-        "type_valid": 0,      # emitted negatives inside the relation's type pool
-        "slot_h": 0,
-        "slot_r": 0,
-        "slot_t": 0,
-        # inverted-support mask (support_max is not None):
-        "support_lifted": 0,  # rows whose support ban had to be relaxed
-    }
-
-    for batch_start in range(0, len(gan_triples), batch_size):
-        batch = gan_triples[batch_start:batch_start + batch_size]
-        n = len(batch)
-
-        # STEP 2: Generator forward pass on the whole batch.
-        h_in = torch.tensor([row[0] for row in batch], dtype=torch.long, device=device)
-        r_in = torch.tensor([row[1] for row in batch], dtype=torch.long, device=device)
-        t_in = torch.tensor([row[2] for row in batch], dtype=torch.long, device=device)
-
-        with torch.no_grad():
-            z = torch.empty(n, z_dim, device=device).normal_(generator=torch_gen)
-            # Condition on the cached context table E' (STEP 2).
-            head_logits, rel_logits, tail_logits = G(h_in, r_in, t_in, z, entity_context)
-
-        # STEP 3: GAN-chosen slot. Score how confidently the generator can corrupt
-        # each slot (its best wrong value; see _corruptibility_scores), then choose
-        # WHERE to corrupt. The relation slot is skipped: a fixed head+tail rarely
-        # admits a coherent alternative relation, so those are the weak, type-
-        # incoherent corruptions. The GAN picks which ENTITY slot (head or tail),
-        # weighted by its confidence there.
-        with torch.no_grad():
-            scores = _corruptibility_scores(
-                head_logits, rel_logits, tail_logits, h_in, r_in, t_in).cpu().numpy()
-        entity_scores = scores[:, [0, 2]] + 1e-9        # columns: head, tail
-        p_tail = entity_scores[:, 1] / entity_scores.sum(axis=1)
-        slots = np.where(rng.random(n) < p_tail, 2, 0)  # 2 = tail, 0 = head (never 1 = rel)
-
-        for i in range(n):
-            h_gan, r_gan, t_gan = batch[i]
-            slot = int(slots[i])
-
-            # STEP 4: slot logits + the full mask set for this query.
-            if slot == 0:      # head
-                logits_for_slot = head_logits[i]
-                clean_value, self_row = h_gan, t_gan
-                banned = true_heads.get((r_gan, t_gan))
-                pool_row = pool_masks[0, r_gan] if pool_masks is not None else None
-                anchor = t_gan          # the entity that keeps its slot
-            else:              # tail (relation slot is never chosen; see STEP 3)
-                logits_for_slot = tail_logits[i]
-                clean_value, self_row = t_gan, h_gan
-                banned = true_tails.get((h_gan, r_gan))
-                pool_row = pool_masks[1, r_gan] if pool_masks is not None else None
-                anchor = h_gan          # the entity that keeps its slot
-
-            # Inverted-support mask: ban every candidate the anchor's
-            # neighbourhood corroborates, so the corruption contradicts it
-            # by construction.
-            support_ban = (support_ban_row(payload, anchor, support_max)
-                           if support_max is not None else None)
-
-            # STEP 5: masked Gumbel pick with a bounded resample loop. With the
-            # known-true + self masks a collision is structurally impossible;
-            # the residual check guards edge cases (e.g. lifted degenerate pool).
-            neg_h, neg_r, neg_t = h_gan, r_gan, t_gan   # null default
-            emitted = False
-            row_lifted = False
-            for attempt in range(max_resample):
-                new_idx, lifted = _pick_new_index_with_noise(
-                    logits_for_slot, clean_value, torch_gen,
-                    banned=banned, pool_row=pool_row, self_row=self_row,
-                    support_ban=support_ban)
-                row_lifted = row_lifted or lifted
-                if new_idx < 0:
-                    break                                  # nothing sampleable
-                candidate = ((new_idx, r_gan, t_gan) if slot == 0
-                             else (h_gan, r_gan, new_idx))
-                if candidate[0] != candidate[2] and candidate not in real_triple_set:
-                    neg_h, neg_r, neg_t = candidate
-                    emitted = True
-                    if pool_row is not None and bool(pool_row[new_idx]):
-                        stats["type_valid"] += 1
-                    break
-                stats["resampled"] += 1
-
-            # STEP 6: every redraw failed -> null corruption, flagged for the
-            # caller (a null is a real fact; it must never train as a negative).
-            if not emitted:
-                stats["used_original"] += 1
-                stats["null_indices"].append(batch_start + i)
-            if row_lifted:
-                stats["support_lifted"] += 1
-
-            stats["slot_h" if slot == 0 else "slot_t"] += 1
-
-            # STEP 7: Translate GAN IDs -> strings -> the caller's IDs.
-            out.append((
-                id_maps["ent2id"][id2ent_gan[neg_h]],
-                id_maps["rel2id"][id2rel_gan[neg_r]],
-                id_maps["ent2id"][id2ent_gan[neg_t]],
-            ))
-        stats["processed"] += n
-
-    return out, stats
+    raise ValueError(
+        "generate_negatives requires a candidate_v2 payload; legacy v1 "
+        "checkpoints are no longer supported."
+    )
 
 
 def _generate_negatives_v2(triples, payload, id_maps, rng, max_resample,
                            support_max):
     """candidate_v2 decode: score the FULL type pool per row, then run the
-    IDENTICAL mask ladder as v1 (_pick_new_index_with_noise -- type pool,
+    shared mask ladder (_pick_new_index_with_noise -- type pool,
     known-true, self, optional inverted-support) by scattering pool scores
     into an n_ent-sized vector. Same return contract as the v1 path."""
     G = payload["generator"]

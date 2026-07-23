@@ -4,8 +4,8 @@
 # the frozen E' already stored in the v1 checkpoint (--init_context_from); E' is
 # a frozen input in v2, so this is equivalent to (better than) a fresh warm-up.
 #
-#   CPU_PARTITION=<name> DATASET=fb15k237 sbatch experiments/kgsage/slurm/train_v2_cpu.slurm
-#   CPU_PARTITION=<name> DATASET=wn18rr   sbatch experiments/kgsage/slurm/train_v2_cpu.slurm
+#   CPU_PARTITION=<name> DATASET=fb15k237 sbatch experiments/kgsage/slurm/train_cpu.slurm
+#   CPU_PARTITION=<name> DATASET=wn18rr   sbatch experiments/kgsage/slurm/train_cpu.slurm
 #
 # !! Set CPU_PARTITION to a real non-GPU partition -- run `sinfo -s` to list them
 #    (Flinders DeepThought commonly has a 'general'/'hpc' CPU partition).
@@ -20,7 +20,7 @@
 #SBATCH --account=cse
 # NOTE: --partition is set from $CPU_PARTITION below via `scontrol`-free re-exec
 #       is not possible; instead pass it at submit time:
-#         sbatch --partition="$CPU_PARTITION" experiments/kgsage/slurm/train_v2_cpu.slurm
+#         sbatch --partition="$CPU_PARTITION" experiments/kgsage/slurm/train_cpu.slurm
 #       (SBATCH directives can't read env vars, so the partition MUST be on the
 #        sbatch command line.)
 
@@ -76,7 +76,7 @@ cd "$PROJECT_DIR"
 export PYTHONPATH="$PROJECT_DIR/experiments:$PYTHONPATH"
 mkdir -p "$(dirname "$CKPT_PATH")"
 
-$PY -m kgsage.gan.train_v2 \
+$PY -m kgsage.gan.train \
     --data                  "$DATA_DIR" \
     --out                   "$CKPT_PATH" \
     --init_context_from     "$INIT_E" \

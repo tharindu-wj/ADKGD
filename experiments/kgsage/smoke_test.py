@@ -65,14 +65,10 @@ def main():
     # ---- SECTION 3: dual-discriminator architecture imports (candidate_v2) ----
     section("SECTION 3: kgsage.gan.* (dual-discriminator) + kgsage.inference imports")
 
-    # Generators: CandidateScoringGenerator is the current (candidate_v2)
-    # architecture; KGSAGEGenerator + gumbel_softmax stay for LOADING the v1
-    # baseline checkpoints that the paper's before/after comparison needs.
-    from kgsage.gan.generator import (
-        CandidateScoringGenerator, KGSAGEGenerator, gumbel_softmax,
-    )
-    print("OK: kgsage.gan.generator.{CandidateScoringGenerator, "
-          "KGSAGEGenerator, gumbel_softmax}")
+    # CandidateScoringGenerator is the one and only architecture;
+    # gumbel_softmax is the trainer's straight-through selection helper.
+    from kgsage.gan.generator import CandidateScoringGenerator, gumbel_softmax
+    print("OK: kgsage.gan.generator.{CandidateScoringGenerator, gumbel_softmax}")
 
     # The dual-discriminator training stack.
     from kgsage.gan.d_real import DReal
@@ -83,8 +79,8 @@ def main():
           "candidates.CandidateSampler}")
 
     # Importing the trainer transitively verifies the whole v2 dependency graph.
-    from kgsage.gan import train_v2 as _train_v2
-    print("OK: kgsage.gan.train_v2 (the dual-discriminator trainer)")
+    from kgsage.gan import train as _train
+    print("OK: kgsage.gan.train (the dual-discriminator trainer)")
 
     from kgsage.inference import load_checkpoint, generate_negatives, render_stats as _rs
     print("OK: kgsage.inference.{load_checkpoint, generate_negatives, render_stats}")

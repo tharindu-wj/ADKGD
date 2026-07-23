@@ -68,7 +68,7 @@ def main():
 
     P = load_checkpoint(args.ckpt, device=torch.device("cpu"))
     if P.get("arch") != "candidate_v2":
-        raise SystemExit("not a candidate_v2 checkpoint -- use head_dependence.py for v1")
+        raise SystemExit("not a candidate_v2 checkpoint")
     G, ctx, sk = P["generator"], P["entity_context"], P["sketches"]
     e2g, r2g, id2e = P["ent2id"], P["rel2id"], P["id2ent"]
     ent_txt = _text(Path(args.data) / "entity2text.txt")

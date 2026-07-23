@@ -15,7 +15,7 @@ Public API (stable across versions; suitable for the future pip release):
   load_kg(path)                - load a KG from a TSV directory
   resolve_dataset(name_or_path)- look up known dataset defaults
   KNOWN_DATASETS               - dict of pre-configured datasets
-  KGSAGEGenerator              - GAN generator (3-head; conditioned on cached RGCN E')
+  CandidateScoringGenerator    - the generator (candidate scoring; conditioned on E' + sketches)
   generate_negatives           - inference API: one negative per input triple
   load_checkpoint              - load a trained GAN checkpoint for inference
 
@@ -35,7 +35,7 @@ from kgsage.data.datasets import resolve_dataset, KNOWN_DATASETS
 # is actually accessed. Lets `import kgsage` succeed without torch installed.
 _LAZY_ATTRS = {
     # GAN (needs torch)
-    "KGSAGEGenerator":      "kgsage.gan.generator",
+    "CandidateScoringGenerator": "kgsage.gan.generator",
     "gumbel_softmax":       "kgsage.gan.generator",
     # RGCN context encoder (needs torch + torch_geometric)
     "KGSAGEEncoder":        "kgsage.gan.encoder",
@@ -65,7 +65,7 @@ __all__ = [
     "resolve_dataset",
     "KNOWN_DATASETS",
     # GAN - lazy-loaded; requires torch at access time
-    "KGSAGEGenerator",
+    "CandidateScoringGenerator",
     "gumbel_softmax",
     # RGCN encoder - lazy-loaded; requires torch + torch_geometric at access time
     "KGSAGEEncoder",
