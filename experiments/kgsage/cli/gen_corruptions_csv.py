@@ -29,6 +29,10 @@ import torch
 sys.path.insert(0, "experiments")
 from kgsage.inference import load_checkpoint, generate_negatives  # noqa: E402
 
+# Each eval script writes into its own subfolder under outputs/eval/, resolved
+# relative to this file so the location is correct regardless of cwd.
+_EVAL_ROOT = Path(__file__).resolve().parents[1] / "outputs" / "eval"
+
 # Human-phraseable relations -> a natural-language template. Extend for YAGO.
 TEMPLATES = {
     "/people/person/place_of_birth": "{h} was born in {t}.",
@@ -68,7 +72,9 @@ def main() -> int:
     ap.add_argument("--relations", nargs="*", default=list(TEMPLATES),
                     help="restrict to these relations (default: all templated)")
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out", default=None,
+                    help="output CSV path; default: "
+                         "outputs/eval/gen_corruptions/<dataset>_<split>_corruptions.csv")
     args = ap.parse_args()
 
     P = load_checkpoint(args.ckpt, device=torch.device("cpu"))
@@ -127,7 +133,11 @@ def main() -> int:
                 "anchor_degree": len(adj.get(anchor, set())),
             })
 
-    out_path = Path(args.out)
+    if args.out:
+        out_path = Path(args.out)
+    else:
+        ds = Path(args.data).name
+        out_path = _EVAL_ROOT / "gen_corruptions" / f"{ds}_{args.split}_corruptions.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fields = list(rows[0].keys()) if rows else []
     with open(out_path, "w", newline="", encoding="utf-8-sig") as f:

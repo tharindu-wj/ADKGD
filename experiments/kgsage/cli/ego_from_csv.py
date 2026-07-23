@@ -35,6 +35,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import networkx as nx  # noqa: E402
 
+# Each eval script writes into its own subfolder under outputs/eval/, resolved
+# relative to this file so the location is correct regardless of cwd.
+_EVAL_ROOT = Path(__file__).resolve().parents[1] / "outputs" / "eval"
+
 # --- palette (matches the KGSAGE figures) ---
 C_HEAD = "#6c8ebf"
 C_TAIL = "#82b366"
@@ -312,7 +316,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", required=True)
     ap.add_argument("--data", required=True)
-    ap.add_argument("--out_dir", required=True)
+    ap.add_argument("--out_dir", default=None,
+                    help="output dir for the PNGs; default: outputs/eval/ego_graphs/")
     ap.add_argument("--limit", type=int, default=6,
                     help="max ego graphs to render (0 = all rows)")
     ap.add_argument("--all_rows", action="store_true",
@@ -351,7 +356,7 @@ def main() -> int:
     if args.limit:
         rows = rows[:args.limit]
 
-    out_dir = Path(args.out_dir)
+    out_dir = Path(args.out_dir) if args.out_dir else (_EVAL_ROOT / "ego_graphs")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ok = 0

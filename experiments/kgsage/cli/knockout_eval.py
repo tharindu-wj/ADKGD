@@ -22,6 +22,7 @@ Run from repo root (any env with torch):
 """
 from __future__ import annotations
 import argparse
+import json
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -31,6 +32,10 @@ import torch
 
 sys.path.insert(0, "experiments")
 from kgsage.inference import load_checkpoint  # noqa: E402
+
+# Each eval script writes into its own subfolder under outputs/eval/, resolved
+# relative to this file so the location is correct regardless of cwd.
+_EVAL_ROOT = Path(__file__).resolve().parents[1] / "outputs" / "eval"
 
 
 def _text(p):
@@ -64,6 +69,11 @@ def main():
     ap.add_argument("--per_rel", type=int, default=12)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--topk", type=int, default=10)
+    ap.add_argument("--out", default=None,
+                    help="JSON report path; default: "
+                         "outputs/eval/knockout/<ckpt-stem>_knockout.json")
+    ap.add_argument("--no_save", action="store_true",
+                    help="print the table only, write no JSON")
     args = ap.parse_args()
 
     P = load_checkpoint(args.ckpt, device=torch.device("cpu"))
@@ -109,6 +119,7 @@ def main():
     print("-" * 108)
 
     rel_means = {}
+    per_rel = []
     for r_str in args.relations:
         rows = by_rel.get(r_str, [])
         if len(rows) < 4:
@@ -134,18 +145,40 @@ def main():
                   for i in range(len(tops)) for j in range(i + 1, len(tops))]
         dom, domn = Counter(top1s).most_common(1)[0]
         rel_means[r_str] = float(np.mean(kos))
+        per_rel.append({
+            "relation": r_str, "n": len(sample),
+            "xhead_j10": round(float(np.mean(pair_j)), 4),
+            "same_top1_pct": round(100 * sum(1 for x in top1s if x == dom) / len(top1s), 1),
+            "knockout_j10": round(float(np.mean(kos)), 4),
+            "dominant_pick": nm(dom), "dominant_count": domn,
+        })
         print(f"{r_str[:34]:<34} {len(sample):>3} {np.mean(pair_j):>12.3f} "
               f"{sum(1 for x in top1s if x == dom)/len(top1s):>9.0%} "
               f"{np.mean(kos):>14.3f}   {nm(dom)} ({domn}/{len(sample)})")
 
+    mean_j = float(np.mean(list(rel_means.values()))) if rel_means else None
     if rel_means:
         print("-" * 108)
-        print(f"MEAN knockout J@10 over {len(rel_means)} relations: "
-              f"{np.mean(list(rel_means.values())):.3f}")
+        print(f"MEAN knockout J@10 over {len(rel_means)} relations: {mean_j:.3f}")
     print()
     print("READING: knockout J@10 ~1 = deleting the anchor's neighbourhood does not")
     print("change the list (anchor ignored); x-head J@10 ~1 = one shared ranking for")
     print("every head (popularity/universal-alien collapse).")
+
+    if not args.no_save and per_rel:
+        if args.out:
+            out = Path(args.out)
+        else:
+            stem = Path(args.ckpt).stem
+            out = _EVAL_ROOT / "knockout" / f"{stem}_knockout.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps({
+            "checkpoint": args.ckpt, "data": args.data, "seed": args.seed,
+            "per_rel": args.per_rel, "topk": k,
+            "mean_knockout_j10": round(mean_j, 4) if mean_j is not None else None,
+            "relations": per_rel,
+        }, indent=2), encoding="utf-8")
+        print(f"report -> {out}")
     return 0
 
 
