@@ -81,9 +81,13 @@ def main() -> int:
     e2g, r2g = P["ent2id"], P["rel2id"]
     id2e, id2r = P["id2ent"], P["id2rel"]
     maps = {"id2ent": id2e, "id2rel": id2r, "ent2id": e2g, "rel2id": r2g}
+    # Readable labels where a mapping file exists; otherwise fall back to the
+    # raw id (entities) or the last path segment (relations). Datasets without
+    # these files (e.g. YAGO, whose ids are already human-readable) just use ids.
     ent_txt = _text_map(Path(args.data) / "entity2text.txt")
+    rel_txt = _text_map(Path(args.data) / "relation2text.txt")
     nm = lambda gid: _clean(ent_txt.get(id2e[gid], id2e[gid]))
-    raw_name = lambda gid: ent_txt.get(id2e[gid], id2e[gid])
+    rel_label = lambda r_str: rel_txt.get(r_str) or r_str.rstrip("/").split("/")[-1]
 
     # undirected adjacency (all splits, from the checkpoint) for the shared-nbr check
     adj = {}
@@ -118,19 +122,22 @@ def main() -> int:
             anchor = h if slot == "tail" else t
             filler = nt if slot == "tail" else nh
             tpl = TEMPLATES[r_str]
+            # Readable columns first, machine ids last (ego_from_csv reads by
+            # name, so column order is free to optimise for a human reader).
             rows.append({
                 "idx": len(rows),
-                "relation": r_str,
+                "relation_label": rel_label(r_str),
                 "slot": slot,
-                "orig_h_id": id2e[h], "orig_r_id": r_str, "orig_t_id": id2e[t],
-                "corr_h_id": id2e[nh], "corr_r_id": r_str, "corr_t_id": id2e[nt],
-                "orig_h_name": nm(h), "orig_t_name": nm(t),
-                "corr_h_name": nm(nh), "corr_t_name": nm(nt),
                 "orig_statement": tpl.format(h=nm(h), t=nm(t)),
                 "corr_statement": tpl.format(h=nm(nh), t=nm(nt)),
+                "orig_h_name": nm(h), "orig_t_name": nm(t),
+                "corr_h_name": nm(nh), "corr_t_name": nm(nt),
                 "shared_neighbours": len(adj.get(anchor, set()) & adj.get(filler, set())),
                 "direct_neighbour": int(filler in adj.get(anchor, set())),
                 "anchor_degree": len(adj.get(anchor, set())),
+                "relation": r_str,
+                "orig_h_id": id2e[h], "orig_r_id": r_str, "orig_t_id": id2e[t],
+                "corr_h_id": id2e[nh], "corr_r_id": r_str, "corr_t_id": id2e[nt],
             })
 
     if args.out:
