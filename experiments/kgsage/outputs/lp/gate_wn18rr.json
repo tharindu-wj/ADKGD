@@ -1,9 +1,0 @@
-{
-  "split": "test",
-  "n_queries": 6268,
-  "skipped_triples": 0,
-  "mrr": 0.4749187872374826,
-  "hits@10": 0.5473835354179962,
-  "n_ent": 40943,
-  "reciprocal": false
-}

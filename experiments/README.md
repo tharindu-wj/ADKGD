@@ -1,36 +1,30 @@
 # KGSAGE experiments — operator guide
 
-Everything under `experiments/` implements the staged PoC pipeline
-(design records in `docs/OPTION_B_PLAN.md`,
-`docs/OPTION_A_PLAN.md`, destination in `docs/KGSAGE_IMPLEMENTATION_PLAN.md`):
-generate **close-but-false** KG anomalies and evaluate whether training the
-ADKGD detector on them beats random corruption.
+Everything under `experiments/` implements the KGSAGE pipeline: train a learned,
+neighbourhood-aware generator of hard KG anomalies, and evaluate whether
+training the ADKGD detector on them beats rule-based random corruption.
 
 ## The experiment matrix
 
-One run = one cell of `(--neg_source × --test_anomaly_source)`, sources:
+One run = one cell of `(--neg_source × --test_anomaly_source)`, two sources:
 
 | source | what it is |
 |---|---|
 | `random`  | ADKGD's original corruption (baseline; bit-identical to the paper) |
-| `lp_band` | Option B: a frozen pretrained ComplEx ranks the relation's type pool; sample the top-k band **below** s(true), masked against every known-true filler (all splits) — no GAN; doubles as the `sampler_direct` control |
 | `gan`     | a trained KGSAGE checkpoint (`kgsage.gan.train`: dual-discriminator `candidate_v2` generator; use the locked `generator_<dataset>.pt` artifacts) |
 
-The PoC read-out (pre-registered in `docs/OPTION_B_PLAN.md` §0):
-`random×random` (baseline) vs `random×lp_band` (**the gap**) vs
-`lp_band×lp_band` (**the recovery**) vs `lp_band×random` (**no regression**)
-vs `gan×lp_band` (**the GAN receipt** — must beat the band-sampler control).
+The 2×2 matrix (rule-based = `random`, KGSAGE = `gan`): `random×random`
+(baseline) · `random×gan` (**the gap** — are KGSAGE anomalies harder?) ·
+`gan×gan` (**proposed** — recovery by training on them) · `gan×random`
+(**cross-check** — can it still catch the easy ones?).
 
 ## Quickstart (local, CPU, FB15K-mini smoke set)
 
 ```bash
-# once: fetch the frozen LP checkpoints + run the MRR loader gates
-PYTHONPATH=experiments python -m kgsage.cli.fetch_lp --dataset all
-#   expect: GATE PASS fb15k237 mrr≈0.3477 · wn18rr mrr≈0.4749
-
 # one matrix cell end-to-end (~2 min)
 python experiments/run_experiment.py --dataset FB15K-mini \
-    --neg_source lp_band --test_anomaly_source lp_band
+    --neg_source gan --test_anomaly_source gan \
+    --gan_path experiments/kgsage/outputs/checkpoints/generator_fb15k237.pt
 
 # aggregate every cell run so far (mean±std over seeds)
 python experiments/aggregate_results.py --dataset FB15K-mini
@@ -43,12 +37,10 @@ override) — both are no-ops on the GPU cluster.
 
 ## HPC workflow (DeepThought — details in RUNNING_ON_DEEPTHOUGHT.md)
 
-1. `PYTHONPATH=experiments python -m kgsage.cli.fetch_lp --dataset all` (login node, once).
-2. Train the generator: `DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train.slurm` (per-epoch snapshots).
-3. Select the snapshot: `python -m kgsage.cli.knockout_eval --ckpt <each .epNN.pt> --data ...` (lowest mean knockout J@10 wins); optional LP audit via `inspect_gan_lp`.
-4. Run cells: `NEG_SOURCE=... TEST_SOURCE=... SEED=... DATASET=... [GAN_CKPT=...] sbatch experiments/slurm/exp_cell.slurm`
-   (`exp_cell.slurm` is the single cell launcher — all source pairings, incl. `lp_band`).
-5. `python experiments/aggregate_results.py --dataset <ds>`.
+1. Train the generator: `DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train.slurm` (per-epoch snapshots).
+2. Select the snapshot: `python experiments/kgsage/cli/knockout_eval.py --ckpt <each .epNN.pt> --data ...` (lowest mean knockout J@10 wins); promote to `generator_<dataset>.pt`.
+3. Run cells: `NEG_SOURCE=... TEST_SOURCE=... SEED=... DATASET=... [GAN_CKPT=...] sbatch experiments/slurm/exp_cell.slurm`.
+4. `python experiments/aggregate_results.py --dataset <ds>`.
 
 ## What a run produces
 
@@ -60,9 +52,9 @@ override) — both are no-ops on the GPU cluster.
   machine-readable `…_run.json` for the aggregator.
 
 Generation diagnostics printed per run: `[GAN] processed=… used_original=…
-type_valid=… resampled=… slot_distribution: …` (nulls are impossible for
-`lp_band`; for `gan` they are flagged and replaced in the training role) and
-a capped `(positive -> negative)` pair preview (`GAN_PAIR_PREVIEW` to raise).
+type_valid=… resampled=… slot_distribution: …` (nulls are flagged and replaced
+in the training role) plus a capped `(positive -> negative)` pair preview
+(`GAN_PAIR_PREVIEW` to raise).
 
 ## Layout
 
@@ -71,11 +63,10 @@ a capped `(positive -> negative)` pair preview (`GAN_PAIR_PREVIEW` to raise).
 | `run_experiment.py` | one matrix cell (train + test subprocess, metrics, run JSON) |
 | `aggregate_results.py` | mean±std tables per cell over seeds |
 | `kgsage/` | the standalone generator package (ADKGD-agnostic) — see its README |
-| `kgsage_bridge/` | the ONLY ADKGD-aware glue (six-function API) — see its README |
+| `kgsage_bridge/` | the ONLY ADKGD-aware glue (three-function API) — see its README |
 | `slurm/exp_cell.slurm` | the single generic cell launcher |
-| `docs/` | plans of record + research library (gitignored except the three plan files) |
+| `docs/` | plans of record + research library (gitignored) |
 
 Smoke tests: `python experiments/kgsage/smoke_test.py` (package + bridge);
 `data/FB15K-mini` (first 2000/300/300 lines of FB15K-237) is the local
-ADKGD-cycle smoke dataset — full `dummy_kg` ADKGD training crashes natively
-on Windows for reasons unrelated to this code.
+ADKGD-cycle smoke dataset.

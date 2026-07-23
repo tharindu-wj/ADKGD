@@ -3,13 +3,6 @@
 Run from the repo root (`cd ~/ADKGD` on DeepThought; local Windows works the
 same with the pytorch conda env). `PYTHONPATH=experiments` throughout.
 
-## 0. One-time: LP auditor checkpoints (evaluation only — training needs no LP)
-
-```bash
-PYTHONPATH=experiments python -m kgsage.cli.fetch_lp --dataset all
-# expect GATE PASS: fb15k237 MRR ~0.3477, wn18rr ~0.4749
-```
-
 ## 1. Train (per-epoch snapshots; short runs on purpose)
 
 ```bash
@@ -55,10 +48,6 @@ PYTHONPATH=experiments python experiments/kgsage/cli/gen_corruptions_csv.py \
 PYTHONPATH=experiments python experiments/kgsage/cli/ego_from_csv.py \
     --csv experiments/kgsage/outputs/eval/fb_corruptions.csv \
     --data data/FB15K-237 --out_dir experiments/kgsage/outputs/eval/ego --limit 6
-
-# Optional LP audit of generated negatives:
-PYTHONPATH=experiments python -m kgsage.cli.inspect_gan_lp \
-    --ckpt experiments/kgsage/outputs/checkpoints/generator_fb15k237.pt --n 40
 ```
 
 ## 4. Downstream 2x2 matrix (ADKGD)

@@ -5,10 +5,7 @@
 Submission order (details + env knobs in each script header and
 [README.md](README.md)):
 
-1. **Once, login node** — fetch the frozen LP checkpoints and pass the MRR
-   gates: `PYTHONPATH=experiments python -m kgsage.cli.fetch_lp --dataset all`
-   (expect `GATE PASS` for fb15k237 ≈0.3477 and wn18rr ≈0.4749).
-2. **Train the generator** (GPU `train.slurm`, or CPU `train_cpu.slurm` with
+1. **Train the generator** (GPU `train.slurm`, or CPU `train_cpu.slurm` with
    E' reuse): `DATASET=fb15k237 SEED=0 sbatch
    experiments/kgsage/slurm/train.slurm`. Saves a snapshot after every
    adversarial epoch (`.epNN.pt`).
@@ -16,9 +13,9 @@ Submission order (details + env knobs in each script header and
    wins): `PYTHONPATH=experiments python -m kgsage.cli.knockout_eval --ckpt
    <each .epNN.pt> --data data/FB15K-237` (WN18RR: pass `--relations _hypernym
    _derivationally_related_form _member_meronym _has_part`). Promote the winner
-   to `generator_<dataset>.pt`; optional LP audit via `inspect_gan_lp`.
-4. **Run matrix cells** (GPU): `NEG_SOURCE=<random|lp_band|gan>
-   TEST_SOURCE=<random|lp_band|gan> DATASET=<FB15K-237|WN18RR> SEED=<n>
+   to `generator_<dataset>.pt`.
+4. **Run matrix cells** (GPU): `NEG_SOURCE=<random|gan>
+   TEST_SOURCE=<random|gan> DATASET=<FB15K-237|WN18RR> SEED=<n>
    [MAX_EPOCH=<n>] [GAN_CKPT=<pt>] sbatch experiments/slurm/exp_cell.slurm`.
 5. **Aggregate**: `python experiments/aggregate_results.py --dataset <ds>`.
 

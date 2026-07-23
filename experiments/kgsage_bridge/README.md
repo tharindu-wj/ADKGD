@@ -1,7 +1,7 @@
 # KGSAGE <-> ADKGD bridge
 
 The **only ADKGD-aware module** in `experiments/`: `dataset.py` (repo root)
-imports this six-function API; `kgsage/` itself never imports ADKGD code.
+imports this three-function API; `kgsage/` itself never imports ADKGD code.
 
 ## Contract (`bridge.py`)
 
@@ -13,15 +13,6 @@ generate(triples, payload=…, …)     -> (negatives, stats)   # ADKGD-id in/ou
 render_stats(stats)                  -> log line
 ```
 
-lp_band source — used for `--neg_source lp_band` / `--test_anomaly_source lp_band`
-(Option B, frozen-LP band sampler; no checkpoint, no nulls):
-
-```
-load_lp(lp_ckpt, lp_ids_dir, adkgd_data_dir, band_k=…, band_temp=…) -> payload
-generate_band(triples, payload=…, …) -> (negatives, stats)
-render_band_stats(stats)             -> log line
-```
-
 Key semantics the Reader relies on:
 
 - **String round-trip**: ADKGD ids → strings → generator ids and back, so the
@@ -30,8 +21,4 @@ Key semantics the Reader relies on:
   `i+n`).
 - **Null handling**: `generate`'s `stats["null_indices"]` flags rows whose
   emitted "negative" is the original triple; the Reader replaces those in the
-  training role and filters them in the eval role. `generate_band` never
-  emits nulls (counted fallback ladder instead).
-- `load_lp`'s masks/pools are built from **ADKGD's own data dir** (the graph
-  being trained on), while the scorer's id maps come from the LibKGE archive
-  dir — two different directories by design.
+  training role and filters them in the eval role.

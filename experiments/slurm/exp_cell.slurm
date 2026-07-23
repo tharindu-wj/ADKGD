@@ -3,19 +3,17 @@
 # The single matrix-cell launcher (former exp1-4 named cells map to
 # NEG_SOURCE/TEST_SOURCE pairs below; those scripts were removed).
 #
-#   NEG_SOURCE  in {random, lp_band, gan}   -- training negatives
-#   TEST_SOURCE in {random, lp_band, gan}   -- injected eval anomalies
+#   NEG_SOURCE  in {random, gan}   -- training negatives
+#   TEST_SOURCE in {random, gan}   -- injected eval anomalies
 #
-# Examples (the PoC readout grid; see OPTION_B_PLAN.md pre-registered criteria):
-#   NEG_SOURCE=random  TEST_SOURCE=random  SEED=0 sbatch experiments/slurm/exp_cell.slurm
-#   NEG_SOURCE=random  TEST_SOURCE=lp_band SEED=0 sbatch ...   # "the gap"
-#   NEG_SOURCE=lp_band TEST_SOURCE=lp_band SEED=0 sbatch ...   # "the recovery"
-#   NEG_SOURCE=lp_band TEST_SOURCE=random  SEED=0 sbatch ...   # "no regression"
-#   NEG_SOURCE=gan     TEST_SOURCE=lp_band SEED=0 GAN_CKPT=... sbatch ...  # GAN off-diagonal
+# The 2x2 matrix (rule-based = random, KGSAGE = gan):
+#   NEG_SOURCE=random TEST_SOURCE=random SEED=0 sbatch experiments/slurm/exp_cell.slurm   # baseline
+#   NEG_SOURCE=random TEST_SOURCE=gan    SEED=0 GAN_CKPT=... sbatch ...                    # the gap
+#   NEG_SOURCE=gan    TEST_SOURCE=gan    SEED=0 GAN_CKPT=... sbatch ...                    # proposed
+#   NEG_SOURCE=gan    TEST_SOURCE=random SEED=0 GAN_CKPT=... sbatch ...                    # cross-check
 #
 # Env knobs: DATASET (FB15K-237|WN18RR), SEED, MAX_EPOCH, ANOMALY_RATIO,
-#   GAN_CKPT (required when a source is 'gan'). LP paths are derived from
-#   DATASET by run_experiment.py itself.
+#   GAN_CKPT (required when a source is 'gan'; use the locked generator_<ds>.pt).
 # Results: RESULTS table + AUC/AUPRC in this job's .out.txt, plus a per-run
 #   JSON under checkpoints/<dataset>/ for experiments/aggregate_results.py.
 
