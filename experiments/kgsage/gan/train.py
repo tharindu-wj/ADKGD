@@ -10,10 +10,13 @@ No pretrained link predictor anywhere. Learned components (sketches, candidate
 pools, neighbour lists, both discriminators) see the TRAIN SPLIT ONLY; the all-splits
 falseness guarantee remains where it always was -- the decode-time masks.
 
+The locked hyperparameters live as module-level constants below (edit there to
+re-tune); only operational flags stay on the CLI.
+
 Usage (repo root, pytorch env):
   PYTHONPATH=experiments python -m kgsage.gan.train \
-      --data data/FB15K-mini --out experiments/kgsage/outputs/checkpoints/v2_mini.pt \
-      [--warmup_epochs 2 --dmatch_epochs 2 --epochs 4 --alpha_target 0.05]
+      --data data/FB15K-237 --out experiments/kgsage/outputs/checkpoints/run.pt \
+      --epochs 8 --snapshot_every 1 [--init_context_from <v1_ckpt> --device cpu]
 """
 
 from __future__ import annotations
@@ -37,81 +40,67 @@ from kgsage.gan.candidates import CandidateSampler
 
 HEAD, TAIL = 0, 2
 
+# ==========================================================================
+# Locked configuration. Tuned during the KGSAGE-2 diagnosis and fixed for
+# every run; only operational args (data/out/device/seed/epochs/snapshots/
+# E'-reuse) stay on the CLI. Re-tune by editing here.
+# ==========================================================================
+
+# -- architecture (E', sketches, candidate set) --
+DIM             = 64      # context-vector / embedding width
+NUM_BASES       = 30      # RGCN basis decomposition
+ENCODER_LAYERS  = 2       # RGCN depth -> 2-hop context
+SKETCH_BITS     = 8192    # Bloom membership-sketch length
+N_NBR           = 32      # neighbours D_match attends over
+CAND_K          = 256     # candidates scored per triple (decode = full pool)
+
+# -- E' warm-up (skipped when --init_context_from is given) --
+WARMUP_EPOCHS   = 10
+WARMUP_BATCH    = 4096
+
+# -- curriculum: pretrain both discriminators, then alpha=0 warm-up --
+DMATCH_EPOCHS         = 2
+DREAL_PRETRAIN_EPOCHS = 2
+ALPHA_WARMUP_EPOCHS   = 2
+
+# -- game optimisation --
+BATCH_SIZE      = 256
+TAU             = 0.5     # Gumbel-Softmax temperature (train + decode)
+LR_G            = 1e-4
+LR_D            = 3e-4    # D_real
+LR_DMATCH       = 1e-4    # D_match online hardening on G's picks (oracle labels);
+                          # a frozen D_match was exploited (48% of picks corroborated)
+LABEL_SMOOTHING = 0.1
+
+# -- contradiction-pressure controller (alpha) --
+ALPHA_TARGET    = 0.13    # PID set-point; MUST stay above the ~0.12-0.13 structural
+                          # floor or alpha rails and G collapses to universal-aliens
+ALPHA_INIT      = 1.0     # value alpha is released at when the warm-up ends
+ALPHA_MAX       = 10.0    # anti-windup clamp (a smoke wound alpha to 284)
+ALPHA_KP        = 2.0     # PID proportional gain
+ALPHA_KI        = 0.2     # PID integral gain
+MATCH_MARGIN    = 0.0     # hinge: alpha*relu(D_match - margin); constraint, not reward
+DREAL_MISMATCH  = 1.0     # GAN-CLS wrong-anchor weight -> anchor-conditional D_real
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--warmup_epochs", type=int, default=10)
-    ap.add_argument("--warmup_batch", type=int, default=4096)
-    ap.add_argument("--dmatch_epochs", type=int, default=3)
-    ap.add_argument("--epochs", type=int, default=30)
-    ap.add_argument("--batch_size", type=int, default=256)
-    ap.add_argument("--cand_k", type=int, default=256)
-    ap.add_argument("--sketch_bits", type=int, default=8192)
-    ap.add_argument("--n_nbr", type=int, default=32)
-    ap.add_argument("--lr_g", type=float, default=1e-4)
-    ap.add_argument("--lr_d", type=float, default=3e-4)
-    ap.add_argument("--tau", type=float, default=0.5)
-    ap.add_argument("--label_smoothing", type=float, default=0.1)
-    # PID on alpha: velocity-form PI controller on corroborated-mass error
-    ap.add_argument("--alpha_target", type=float, default=0.13,
-                    help="must sit ABOVE the structural floor (~12-13% of rows "
-                         "have no uncorroborated candidate at all): the first "
-                         "FB run used 0.05, alpha railed at max all run, and "
-                         "the generator collapsed to a universal-alien global "
-                         "ranking (knockout J ~0.9-1.0)")
-    ap.add_argument("--alpha_kp", type=float, default=2.0)
-    ap.add_argument("--alpha_ki", type=float, default=0.2)
-    ap.add_argument("--alpha_init", type=float, default=1.0)
-    ap.add_argument("--alpha_max", type=float, default=10.0,
-                    help="anti-windup clamp: the FB dynamics smoke measured "
-                         "alpha winding to 284 while the error signal was "
-                         "flat, collapsing diversity")
-    ap.add_argument("--match_margin", type=float, default=0.0,
-                    help="the alienation term is a HINGE: alpha*relu(D_match - "
-                         "margin). Graded -alpha*D_match kept paying for deeper "
-                         "alienation, whose ranking is anchor-independent -- "
-                         "dyn2-4 all collapsed to universal-alien rankings")
-    ap.add_argument("--dreal_pretrain_epochs", type=int, default=2,
-                    help="pretrain D_real (real vs random-fake vs wrong-anchor) "
-                         "BEFORE the game. The dyn3 smoke showed an order-of-"
-                         "learning failure: the alienation signal is exact from "
-                         "epoch 1 while anchor-conditional plausibility develops "
-                         "slowly, so G plunges into the universal-alien basin "
-                         "before D_real can price it out")
-    ap.add_argument("--alpha_warmup_epochs", type=int, default=2,
-                    help="hold alpha=0 for the first N game epochs (MolGAN-style "
-                         "curriculum: learn PLAUSIBLE first, then ramp the "
-                         "contradiction pressure)")
-    ap.add_argument("--dreal_mismatch", type=float, default=1.0,
-                    help="GAN-CLS matching-aware weight: D_real also sees real "
-                         "triples paired with the WRONG anchor, labeled fake, "
-                         "making plausibility ANCHOR-CONDITIONAL. 0 = off. "
-                         "Added after the universal-alien collapse: without it "
-                         "a global ranking can satisfy both discriminators on average "
-                         "without reading the anchor")
-    ap.add_argument("--lr_dmatch", type=float, default=1e-4,
-                    help="D_match keeps training DURING the game on the "
-                         "generator's picks labeled by EXACT graph support -- "
-                         "the frozen variant was exploited (48% of emitted "
-                         "picks corroborated while D_match scored them alien)")
-    ap.add_argument("--dim", type=int, default=64)
-    ap.add_argument("--num_bases", type=int, default=30)
-    ap.add_argument("--encoder_layers", type=int, default=2)
-    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--epochs", type=int, default=8,
+                    help="adversarial game epochs (locked recipe: 8; use 2 for a "
+                         "quick smoke). Anchor-awareness peaks a few pressure "
+                         "epochs after the alpha ramp and then erodes, so keep "
+                         "runs short and select across snapshots by knockout J@10.")
     ap.add_argument("--snapshot_every", type=int, default=0,
-                    help="save a full loadable checkpoint every N game epochs "
-                         "once the alpha ramp starts (0 = off). P6 showed "
-                         "anchor-awareness peaks a few pressure epochs after "
-                         "the ramp and then erodes, so the final epoch is NOT "
-                         "the best generator -- select by knockout J@10 "
-                         "across snapshots instead.")
+                    help="save a full loadable checkpoint every N game epochs once "
+                         "the alpha ramp starts (0 = off). Select the reported "
+                         "generator across snapshots by knockout J@10.")
+    ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default=None)
     ap.add_argument("--init_context_from", default=None,
                     help="load frozen E' from an existing checkpoint instead of "
-                         "running the RGCN warm-up (CPU dynamics tests; the "
-                         "vocabularies must match)")
+                         "running the RGCN warm-up (CPU path; vocabularies must match)")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -131,7 +120,7 @@ def main() -> None:
     if args.init_context_from:
         payload = torch.load(args.init_context_from, map_location=device,
                              weights_only=False)
-        assert payload["n_ent"] == n_ent and payload["dim"] == args.dim, \
+        assert payload["n_ent"] == n_ent and payload["dim"] == DIM, \
             "context table from --init_context_from does not match this KG"
         # vocab must match too (string-keyed check on a sample)
         for k in list(kg["ent2id"])[:50]:
@@ -145,19 +134,19 @@ def main() -> None:
     else:
         _skip_warmup = False
     edge_index, edge_type = KGSAGEEncoder.to_tensors(kg["edge_index"], kg["edge_type"], device)
-    encoder = KGSAGEEncoder(n_ent, n_rel, dim=args.dim, num_bases=args.num_bases,
-                            num_layers=args.encoder_layers).to(device)
+    encoder = KGSAGEEncoder(n_ent, n_rel, dim=DIM, num_bases=NUM_BASES,
+                            num_layers=ENCODER_LAYERS).to(device)
     if _skip_warmup:
         encoder = None
     if not _skip_warmup:
-        dec_rel = torch.nn.Parameter(torch.randn(n_rel, args.dim, device=device) * 0.1)
+        dec_rel = torch.nn.Parameter(torch.randn(n_rel, DIM, device=device) * 0.1)
         warm_opt = torch.optim.Adam(list(encoder.parameters()) + [dec_rel], lr=1e-3)
         sample_gen = torch.Generator().manual_seed(args.seed + 1)
-        for epoch in range(1, args.warmup_epochs + 1):
+        for epoch in range(1, WARMUP_EPOCHS + 1):
             perm = torch.randperm(real_all.shape[0], generator=sample_gen)
             tot = nb = 0
-            for s in range(0, len(perm), args.warmup_batch):
-                rows = real_all[perm[s:s + args.warmup_batch]].to(device)
+            for s in range(0, len(perm), WARMUP_BATCH):
+                rows = real_all[perm[s:s + WARMUP_BATCH]].to(device)
                 h, r, t = rows[:, 0], rows[:, 1], rows[:, 2]
                 t_neg = torch.randint(0, n_ent, (len(rows),), generator=sample_gen).to(device)
                 ctx = encoder(edge_index, edge_type)
@@ -167,7 +156,7 @@ def main() -> None:
                         + F.binary_cross_entropy_with_logits(neg, torch.zeros_like(neg)))
                 warm_opt.zero_grad(); loss.backward(); warm_opt.step()
                 tot += loss.item(); nb += 1
-            print(f"  warmup {epoch}/{args.warmup_epochs} LP_loss={tot/max(nb,1):.4f}", flush=True)
+            print(f"  warmup {epoch}/{WARMUP_EPOCHS} LP_loss={tot/max(nb,1):.4f}", flush=True)
         encoder.eval(); encoder.requires_grad_(False)
         with torch.no_grad():
             context = encoder(edge_index, edge_type).detach()
@@ -185,9 +174,9 @@ def main() -> None:
         by_rel[r].append((h, r, t))
 
     print("building sketches (train split)...", flush=True)
-    sketches = build_sketches(train_triples, n_ent, m=args.sketch_bits,
+    sketches = build_sketches(train_triples, n_ent, m=SKETCH_BITS,
                               seed=args.seed).float()
-    cs = CandidateSampler(train_triples, n_ent, n_rel, k=args.cand_k,
+    cs = CandidateSampler(train_triples, n_ent, n_rel, k=CAND_K,
                           seed=args.seed)
     # type pools for the checkpoint (decode scores the FULL pool; same
     # train-split pools the v1 masks used)
@@ -199,15 +188,15 @@ def main() -> None:
     def nbr_batch(anchors, exclude=None):
         """[B, n_nbr] ids + mask from TRAIN adjacency."""
         B = len(anchors)
-        ids = torch.zeros(B, args.n_nbr, dtype=torch.long)
-        msk = torch.zeros(B, args.n_nbr, dtype=torch.bool)
+        ids = torch.zeros(B, N_NBR, dtype=torch.long)
+        msk = torch.zeros(B, N_NBR, dtype=torch.bool)
         for i, a in enumerate(anchors):
             ns = adj.get(int(a), ())
             ns = [n for n in ns if exclude is None or n != int(exclude[i])]
             if not ns:
                 continue
-            if len(ns) > args.n_nbr:
-                ns = rng.sample(ns, args.n_nbr)
+            if len(ns) > N_NBR:
+                ns = rng.sample(ns, N_NBR)
             ids[i, :len(ns)] = torch.tensor(ns)
             msk[i, :len(ns)] = True
         return ids, msk
@@ -244,15 +233,15 @@ def main() -> None:
         return out
 
     # ---------- Phase 1: pretrain D_match (real vs same-relation mismatch), freeze ----------
-    dmatch = DMatch(dim=args.dim).to(device)
+    dmatch = DMatch(dim=DIM).to(device)
     dm_opt = torch.optim.AdamW(dmatch.parameters(), lr=1e-3)
     bce = torch.nn.BCEWithLogitsLoss()
-    print(f"D_match pretraining ({args.dmatch_epochs} epochs)...", flush=True)
-    for ep in range(1, args.dmatch_epochs + 1):
+    print(f"D_match pretraining ({DMATCH_EPOCHS} epochs)...", flush=True)
+    for ep in range(1, DMATCH_EPOCHS + 1):
         perm = rng.sample(train_triples, len(train_triples))
         tot = nb = 0
-        for s in range(0, len(perm), args.batch_size):
-            chunk = perm[s:s + args.batch_size]
+        for s in range(0, len(perm), BATCH_SIZE):
+            chunk = perm[s:s + BATCH_SIZE]
             anchors, cands, ys = [], [], []
             for h, r, t in chunk:
                 anchors.append(h); cands.append(t); ys.append(1.0)
@@ -268,29 +257,29 @@ def main() -> None:
             loss = bce(logit, torch.tensor(ys, device=device))
             dm_opt.zero_grad(); loss.backward(); dm_opt.step()
             tot += loss.item(); nb += 1
-        print(f"  dmatch {ep}/{args.dmatch_epochs} bce={tot/max(nb,1):.4f}", flush=True)
+        print(f"  dmatch {ep}/{DMATCH_EPOCHS} bce={tot/max(nb,1):.4f}", flush=True)
     # NOT frozen: the FB dynamics smoke proved a frozen D_match gets exploited
     # (G converges onto its false negatives). It keeps training during the game
     # on the generator's own picks with ORACLE labels (exact graph support), so
     # every blind spot G finds is corrected on the next batch. The oracle only
     # supplies labels -- D_match remains a learned discriminator.
-    dm_game_opt = torch.optim.AdamW(dmatch.parameters(), lr=args.lr_dmatch)
+    dm_game_opt = torch.optim.AdamW(dmatch.parameters(), lr=LR_DMATCH)
 
     # ---------- Phase 2: the dual-discriminator game ----------
-    G = CandidateScoringGenerator(dim=args.dim, sketch_bits=args.sketch_bits,
+    G = CandidateScoringGenerator(dim=DIM, sketch_bits=SKETCH_BITS,
                                   n_rel=n_rel).to(device)
-    dreal = DReal(dim=args.dim, n_rel=n_rel).to(device)
-    opt_g = torch.optim.Adam(G.parameters(), lr=args.lr_g, betas=(0.5, 0.999))
-    opt_d = torch.optim.Adam(dreal.parameters(), lr=args.lr_d)
+    dreal = DReal(dim=DIM, n_rel=n_rel).to(device)
+    opt_g = torch.optim.Adam(G.parameters(), lr=LR_G, betas=(0.5, 0.999))
+    opt_d = torch.optim.Adam(dreal.parameters(), lr=LR_D)
 
     # ---- Phase 1b: D_real pretrain (anchor-conditional plausibility must
     #      exist BEFORE G starts learning, or G falls into the universal-alien
     #      basin the alienation signal digs on epoch 1) ----
-    for ep_i in range(1, args.dreal_pretrain_epochs + 1):
+    for ep_i in range(1, DREAL_PRETRAIN_EPOCHS + 1):
         perm = torch.randperm(real_all.shape[0], generator=sample_gen)
         tot = nb = 0
-        for s in range(0, len(perm), args.batch_size):
-            rows = real_all[perm[s:s + args.batch_size]]
+        for s in range(0, len(perm), BATCH_SIZE):
+            rows = real_all[perm[s:s + BATCH_SIZE]]
             if len(rows) < 4:
                 continue
             h, r, t = rows[:, 0], rows[:, 1], rows[:, 2]
@@ -307,13 +296,13 @@ def main() -> None:
                 for i in range(len(rows))])
             d_m = dreal(context[mm_anchor.to(device)], rd, t_e)
             loss = (F.binary_cross_entropy_with_logits(
-                        d_r, torch.full_like(d_r, 1 - args.label_smoothing))
+                        d_r, torch.full_like(d_r, 1 - LABEL_SMOOTHING))
                     + F.binary_cross_entropy_with_logits(d_f, torch.zeros_like(d_f))
-                    + args.dreal_mismatch * F.binary_cross_entropy_with_logits(
+                    + DREAL_MISMATCH * F.binary_cross_entropy_with_logits(
                         d_m, torch.zeros_like(d_m)))
             opt_d.zero_grad(); loss.backward(); opt_d.step()
             tot += loss.item(); nb += 1
-        print(f"  dreal-pre {ep_i}/{args.dreal_pretrain_epochs} "
+        print(f"  dreal-pre {ep_i}/{DREAL_PRETRAIN_EPOCHS} "
               f"loss={tot/max(nb,1):.4f}", flush=True)
 
     def _save(path):
@@ -326,32 +315,32 @@ def main() -> None:
             "dreal_state": dreal.state_dict(),
             "context_embeddings": context.cpu(),
             "sketches": (sketches > 0).to(torch.uint8).cpu(),
-            "sketch_bits": args.sketch_bits,
+            "sketch_bits": SKETCH_BITS,
             "pool_masks": pool_masks,
-            "cand_k": args.cand_k, "dim": args.dim, "tau": args.tau,
+            "cand_k": CAND_K, "dim": DIM, "tau": TAU,
             "ent2id": kg["ent2id"], "rel2id": kg["rel2id"],
             "id2ent": kg["id2ent"], "id2rel": kg["id2rel"],
             "real_triples": list(kg["triple_set_all"]),
             "n_ent": n_ent, "n_rel": n_rel,
             "train_split": "train", "alpha_final": alpha,
-            "alpha_target": args.alpha_target, "seed": args.seed,
+            "alpha_target": ALPHA_TARGET, "seed": args.seed,
         }, path)
 
-    alpha = args.alpha_init
+    alpha = ALPHA_INIT
     err_prev = 0.0
     print("-" * 60, flush=True)
-    print(f"Dual-discriminator: {args.epochs} epochs, K={args.cand_k}, tau={args.tau}, "
-          f"alpha0={alpha} target={args.alpha_target}", flush=True)
+    print(f"Dual-discriminator: {args.epochs} epochs, K={CAND_K}, tau={TAU}, "
+          f"alpha0={alpha} target={ALPHA_TARGET}", flush=True)
     for epoch in range(1, args.epochs + 1):
-        in_warmup = epoch <= args.alpha_warmup_epochs
+        in_warmup = epoch <= ALPHA_WARMUP_EPOCHS
         if in_warmup:
             alpha = 0.0                       # curriculum: plausible FIRST
         elif alpha == 0.0:
-            alpha = args.alpha_init           # ramp point: hand over to PID
+            alpha = ALPHA_INIT           # ramp point: hand over to PID
         perm = torch.randperm(real_all.shape[0], generator=sample_gen)
         ep = defaultdict(float); picks = set(); t0 = time.perf_counter()
-        for bi, s in enumerate(range(0, len(perm), args.batch_size)):
-            rows = real_all[perm[s:s + args.batch_size]]
+        for bi, s in enumerate(range(0, len(perm), BATCH_SIZE)):
+            rows = real_all[perm[s:s + BATCH_SIZE]]
             if len(rows) < 4:
                 continue
             h, r, t = rows[:, 0], rows[:, 1], rows[:, 2]
@@ -389,7 +378,7 @@ def main() -> None:
             # ---- D_real step ----
             with torch.no_grad():
                 lg0, valid = g_logits()
-                onehot = gumbel_softmax(lg0, tau=args.tau, hard=True)
+                onehot = gumbel_softmax(lg0, tau=TAU, hard=True)
                 fake_emb = torch.einsum("bk,bkd->bd", onehot,
                                         context[cand.to(device)])
             if not bool(valid.any()):
@@ -402,9 +391,9 @@ def main() -> None:
                          dreal(context[t.to(device)], r.to(device),
                                context[h.to(device)])
             l_d = (F.binary_cross_entropy_with_logits(
-                       d_real_out, torch.full_like(d_real_out, 1 - args.label_smoothing))
+                       d_real_out, torch.full_like(d_real_out, 1 - LABEL_SMOOTHING))
                    + F.binary_cross_entropy_with_logits(d_fake, torch.zeros_like(d_fake)))
-            if args.dreal_mismatch > 0:
+            if DREAL_MISMATCH > 0:
                 # GAN-CLS third class with SAME-RELATION wrong anchors: the
                 # real filler presented with another anchor of the same
                 # relation -> fake. Type/popularity are symmetric across the
@@ -422,14 +411,14 @@ def main() -> None:
                     for i in range(B)])
                 d_mm = dreal(context[mm_anchor.to(device)], r.to(device),
                              filler_emb)
-                l_d = l_d + args.dreal_mismatch * F.binary_cross_entropy_with_logits(
+                l_d = l_d + DREAL_MISMATCH * F.binary_cross_entropy_with_logits(
                     d_mm, torch.zeros_like(d_mm))
             opt_d.zero_grad(); l_d.backward(); opt_d.step()
 
             # ---- G step ----
             lg, valid = g_logits()
             v = valid
-            onehot = gumbel_softmax(lg, tau=args.tau, hard=True)
+            onehot = gumbel_softmax(lg, tau=TAU, hard=True)
             fake_emb = torch.einsum("bk,bkd->bd", onehot, context[cand.to(device)])
             g_real = dreal(keep_emb[v], r.to(device)[v], fake_emb[v])
             nid, nmk = nbr_batch(anchor)
@@ -440,7 +429,7 @@ def main() -> None:
             # ranking WITHIN the alien set is carried by D_real (the
             # anchor-conditional signal).
             l_g = (-g_real
-                   + alpha * torch.relu(g_match - args.match_margin)).mean()
+                   + alpha * torch.relu(g_match - MATCH_MARGIN)).mean()
             opt_g.zero_grad(); l_g.backward(); opt_g.step()
 
             # ---- measurement (hard picks = what is actually emitted) ----
@@ -460,10 +449,10 @@ def main() -> None:
 
             # ---- PID with anti-windup (inactive during the alpha warmup) ----
             if np.isfinite(corr_frac) and not in_warmup:
-                err = corr_frac - args.alpha_target
-                a_new = (alpha + args.alpha_kp * (err - err_prev)
-                         + args.alpha_ki * err)
-                alpha = float(min(max(a_new, 0.0), args.alpha_max))
+                err = corr_frac - ALPHA_TARGET
+                a_new = (alpha + ALPHA_KP * (err - err_prev)
+                         + ALPHA_KI * err)
+                alpha = float(min(max(a_new, 0.0), ALPHA_MAX))
                 if a_new == alpha:            # integrate only when unsaturated
                     err_prev = err
             with torch.no_grad():
@@ -482,7 +471,7 @@ def main() -> None:
 
         # Per-epoch snapshots start with the alpha ramp: warmup epochs are not
         # generator candidates, the pressure epochs around the ramp are.
-        if (args.snapshot_every > 0 and epoch > args.alpha_warmup_epochs
+        if (args.snapshot_every > 0 and epoch > ALPHA_WARMUP_EPOCHS
                 and epoch % args.snapshot_every == 0):
             stem = args.out[:-3] if args.out.endswith(".pt") else args.out
             snap_path = f"{stem}.ep{epoch:02d}.pt"

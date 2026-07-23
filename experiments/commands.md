@@ -16,7 +16,6 @@ PYTHONPATH=experiments nohup python -m kgsage.gan.train \
     --data data/FB15K-237 \
     --out experiments/kgsage/outputs/checkpoints/run_fb15k237_s0.pt \
     --init_context_from experiments/kgsage/outputs/checkpoints/kgsage_fb15k237_s0.pt \
-    --dmatch_epochs 2 --dreal_pretrain_epochs 2 --alpha_warmup_epochs 2 \
     --epochs 8 --snapshot_every 1 --device cpu > run_fb.log 2>&1 &
 ```
 

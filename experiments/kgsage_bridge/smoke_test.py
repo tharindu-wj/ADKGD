@@ -47,8 +47,7 @@ def main():
         print(f"SKIP: {ckpt} not found.")
         print(f"      Make one with the dual-discriminator trainer:")
         print(f"      python -m kgsage.gan.train --data data/dummy_kg "
-              f"--warmup_epochs 2 --dmatch_epochs 1 --epochs 2 --device cpu "
-              f"--out {ckpt}")
+              f"--epochs 2 --device cpu --out {ckpt}")
         section("ALL CHECKS THAT COULD RUN PASSED")
         return 0
 
