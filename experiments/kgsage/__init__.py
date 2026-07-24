@@ -4,11 +4,11 @@ A standalone-ready Python package for generating synthetic knowledge-graph
 anomalies (single-slot-corruption negatives) to train and evaluate per-triple
 anomaly detectors such as ADKGD.
 
-A conditional GAN consumes a real triple + noise and produces a fake-but-
-plausible triple (one ENTITY slot — head or tail — corrupted; the relation
-head exists but is never chosen at generation time, see inference STEP 3). Lives in
-`kgsage.gan`. Downstream-detector integration (e.g. the ADKGD bridge that
-calls KGSAGE from a detector's training pipeline) lives in
+A conditional GAN takes a real triple and produces a fake-but-plausible one:
+exactly one ENTITY slot (head or tail) is corrupted; the relation is never
+corrupted (see kgsage/corruption_generation.py, STEP 2). The training stack
+lives in `kgsage.gan`. Downstream-detector integration (e.g. the ADKGD bridge
+that calls KGSAGE from a detector's training pipeline) lives in
 `experiments/kgsage_bridge/`, keeping `kgsage/` detector-agnostic.
 
 Public API (stable across versions; suitable for the future pip release):
@@ -16,8 +16,8 @@ Public API (stable across versions; suitable for the future pip release):
   resolve_dataset(name_or_path)- look up known dataset defaults
   KNOWN_DATASETS               - dict of pre-configured datasets
   CandidateScoringGenerator    - the generator (candidate scoring; conditioned on E' + sketches)
-  generate_negatives           - inference API: one negative per input triple
-  load_checkpoint              - load a trained GAN checkpoint for inference
+  generate_negatives           - corruption generation: one negative per input triple
+  load_checkpoint              - load a trained checkpoint for generation
 
 The GAN symbols are lazy-loaded: `import kgsage` works without torch installed
 (so dataset registry lookups + path resolution still run on machines that only
@@ -31,17 +31,17 @@ __version__ = "0.1.0"
 from kgsage.data.loaders import load_kg
 from kgsage.data.datasets import resolve_dataset, KNOWN_DATASETS
 
-# Lazy — defer heavy imports (torch) until a model symbol or inference helper
+# Lazy — defer heavy imports (torch) until a model symbol or generation helper
 # is actually accessed. Lets `import kgsage` succeed without torch installed.
 _LAZY_ATTRS = {
     # GAN (needs torch)
     "CandidateScoringGenerator": "kgsage.gan.generator",
     "gumbel_softmax":       "kgsage.gan.generator",
     # RGCN context encoder (needs torch + torch_geometric)
-    "KGSAGEEncoder":        "kgsage.gan.encoder",
-    # Inference (needs torch + the GAN models)
-    "generate_negatives":   "kgsage.inference",
-    "load_checkpoint":      "kgsage.inference",
+    "NeighbourhoodContextEncoder": "kgsage.gan.neighbourhood_context_encoder",
+    # Corruption generation (needs torch + the GAN models)
+    "generate_negatives":   "kgsage.corruption_generation",
+    "load_checkpoint":      "kgsage.corruption_generation",
 }
 
 
@@ -68,7 +68,7 @@ __all__ = [
     "CandidateScoringGenerator",
     "gumbel_softmax",
     # RGCN encoder - lazy-loaded; requires torch + torch_geometric at access time
-    "KGSAGEEncoder",
+    "NeighbourhoodContextEncoder",
     "generate_negatives",
     "load_checkpoint",
 ]

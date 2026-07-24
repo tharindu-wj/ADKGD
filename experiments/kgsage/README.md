@@ -7,17 +7,17 @@ integration lives exclusively in `experiments/kgsage_bridge/`.
 
 `gan/train.py` trains an LP-free adversarial generator:
 
-1. **Phase 1 — context.** `gan/encoder.py` (RGCN) is warmed up with a DistMult
-   decoder, then the decoder is discarded and the context table **E' is frozen**;
-   `gan/sketch.py` caches a Bloom membership sketch of each entity's 1–2 hop
-   neighbour set.
+1. **Phase 1 — context.** `gan/neighbourhood_context_encoder.py` (RGCN) is
+   warmed up with a DistMult decoder, then the decoder is discarded and the
+   context table **E' is frozen**; `gan/membership_sketch.py` caches a Bloom
+   membership sketch of each entity's 1–2 hop neighbour set.
 2. **Phase 2 — the game.** `gan/generator.py` (`CandidateScoringGenerator`) scores
-   a per-triple candidate set (`gan/candidates.py`, logQ-corrected) and selects
-   one via straight-through Gumbel-Softmax. Two discriminators judge the pick:
-   `gan/d_real.py` (realism, spectral-normed, wrong-anchor class) and
-   `gan/d_match.py` (neighbourhood consistency, cross-attention). The generator
-   raises realism under a hinge penalty whose weight a PI controller holds at a
-   target corroborated-selection rate.
+   a per-triple candidate set (`gan/candidate_sampler.py`, logQ-corrected) and
+   selects one via straight-through Gumbel-Softmax. Two discriminators judge the
+   pick: `gan/realism_discriminator.py` (realism, spectral-normed, wrong-anchor
+   class) and `gan/consistency_discriminator.py` (neighbourhood consistency,
+   cross-attention). The generator raises realism under a hinge penalty whose
+   weight a PI controller holds at a target corroborated-selection rate.
 3. **Snapshots + selection.** A checkpoint is saved every adversarial epoch;
    `cli/knockout_eval.py` picks the snapshot whose ranking depends most on the
    anchor's neighbourhood (lowest mean knockout J@10).
@@ -27,14 +27,15 @@ decode masks, not by training.
 
 ## Generation API
 
-`inference.py` (PyG-free; conditions on the checkpoint's cached E' + sketches):
-one negative per input triple; head/tail slot; the pick is decoded by scoring
-the full type pool and masking the true value + every known-true filler
-(all splits) + self-loop; seeded `torch.Generator` (bit-reproducible per seed);
-bounded resample, then a flagged null (`stats["null_indices"]`) — callers must
-never train on nulls (the bridge/Reader handles this). Only `candidate_v2`
-checkpoints load; legacy v1 checkpoints remain valid only as
-`--init_context_from` E' donors for the trainer.
+`corruption_generation.py` (PyG-free; conditions on the checkpoint's cached
+E' + sketches): one negative per input triple; head/tail slot; the pick is
+decoded by scoring the full type pool and masking the true value + every
+known-true filler (all splits) + self-loop; seeded `torch.Generator`
+(bit-reproducible per seed); bounded resample, then a flagged null
+(`stats["null_indices"]`) — callers must never train on nulls (the
+bridge/Reader handles this). Only `candidate_v2` checkpoints load; legacy v1
+checkpoints remain valid only as `--init_context_from` E' donors for the
+trainer.
 
 ## CLIs (repo root, `PYTHONPATH=experiments`)
 

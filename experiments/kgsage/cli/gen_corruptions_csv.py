@@ -27,7 +27,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, "experiments")
-from kgsage.inference import load_checkpoint, generate_negatives  # noqa: E402
+from kgsage.corruption_generation import load_checkpoint, generate_negatives  # noqa: E402
 
 # Each eval script writes into its own subfolder under outputs/eval/, resolved
 # relative to this file so the location is correct regardless of cwd.

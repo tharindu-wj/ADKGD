@@ -20,15 +20,15 @@ import sys
 
 import numpy as np
 
-# Put `experiments/` on sys.path so `from kgsage.inference import ...` resolves
-# when dataset.py imports this bridge.
+# Put `experiments/` on sys.path so `from kgsage.corruption_generation import
+# ...` resolves when dataset.py imports this bridge.
 _EXPERIMENTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _EXPERIMENTS_DIR not in sys.path:
     sys.path.insert(0, _EXPERIMENTS_DIR)
 
 # Re-export render_stats unchanged - it's a string formatter that already
 # matches dataset.py's expectation.
-from kgsage.inference import load_checkpoint, generate_negatives, render_stats  # noqa: E402,F401
+from kgsage.corruption_generation import load_checkpoint, generate_negatives, render_stats  # noqa: E402,F401
 
 __all__ = ["load_gan", "generate", "render_stats"]
 

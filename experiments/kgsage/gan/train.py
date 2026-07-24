@@ -1,22 +1,34 @@
-"""KGSAGE-2 trainer: LP-free dual-discriminator adversarial training.
+"""KGSAGE trainer: the dual-discriminator adversarial game (paper: Methodology).
 
-    D_real  (trainable, spectral-normed)  "is this triple plausible?"  G: HIGH
-    D_match (pretrained on real-vs-mismatched pairs, then FROZEN)
-            "does the candidate fit THIS anchor's neighbourhood?"      G: LOW
-    L_G = -D_real + alpha * D_match,  alpha PID-controlled on the MEASURED
-    corroborated probability mass (exact graph support, not D_match's opinion).
+The three phases of the method, in this one file:
 
-No pretrained link predictor anywhere. Learned components (sketches, candidate
-pools, neighbour lists, both discriminators) see the TRAIN SPLIT ONLY; the all-splits
-falseness guarantee remains where it always was -- the decode-time masks.
+  1. Neighbourhood Context Encoding — the RGCN encoder is warmed up with a
+     DistMult decoder on link prediction, then its output E' (one context
+     vector per entity) is FROZEN. Bloom membership sketches of every
+     entity's 1-2 hop neighbourhood are built alongside.
+  2. Adversarial Generator Training — the candidate-scoring generator plays
+     against two discriminators over the frozen E':
+       realism discriminator      "could this triple be real?"   G pushes HIGH
+       consistency discriminator  "does the filler fit THIS
+                                   anchor's neighbourhood?"       G pushes LOW
+     Generator loss:  L_G = -D_real + alpha * relu(D_match - margin).
+     alpha is set by a PI controller so that the fraction of generated picks
+     the training graph actually corroborates stays at ALPHA_TARGET.
+  3. Corruption Generation lives in kgsage/corruption_generation.py — it
+     replays the checkpoint saved here.
 
-The locked hyperparameters live as module-level constants below (edit there to
-re-tune); only operational flags stay on the CLI.
+Everything learned (E', sketches, candidate pools, neighbour lists, both
+discriminators) sees the TRAIN split only. The guarantee that emitted
+corruptions are false against ALL splits comes from the masks applied at
+corruption time, not from anything learned here.
+
+The locked hyperparameters live as module-level constants below (edit there
+to re-tune); only operational flags are on the CLI.
 
 Usage (repo root, pytorch env):
   PYTHONPATH=experiments python -m kgsage.gan.train \
       --data data/FB15K-237 --out experiments/kgsage/outputs/checkpoints/run.pt \
-      --epochs 8 --snapshot_every 1 [--init_context_from <v1_ckpt> --device cpu]
+      --epochs 8 --snapshot_every 1 [--init_context_from <ckpt> --device cpu]
 """
 
 from __future__ import annotations
@@ -31,19 +43,19 @@ import torch
 import torch.nn.functional as F
 
 from kgsage.data.loaders import load_kg, build_edge_index
-from kgsage.gan.encoder import KGSAGEEncoder
+from kgsage.gan.neighbourhood_context_encoder import NeighbourhoodContextEncoder
 from kgsage.gan.generator import CandidateScoringGenerator, gumbel_softmax
-from kgsage.gan.d_real import DReal
-from kgsage.gan.d_match import DMatch
-from kgsage.gan.sketch import build_sketches
-from kgsage.gan.candidates import CandidateSampler
+from kgsage.gan.realism_discriminator import RealismDiscriminator
+from kgsage.gan.consistency_discriminator import ConsistencyDiscriminator
+from kgsage.gan.membership_sketch import build_membership_sketches
+from kgsage.gan.candidate_sampler import CandidateSampler
 
 HEAD, TAIL = 0, 2
 
 # ==========================================================================
-# Locked configuration. Tuned during the KGSAGE-2 diagnosis and fixed for
-# every run; only operational args (data/out/device/seed/epochs/snapshots/
-# E'-reuse) stay on the CLI. Re-tune by editing here.
+# Locked configuration. Tuned once during development and fixed for every
+# run; only operational args (data/out/device/seed/epochs/snapshots/E'-reuse)
+# stay on the CLI. Re-tune by editing here.
 # ==========================================================================
 
 # -- architecture (E', sketches, candidate set) --
@@ -51,14 +63,14 @@ DIM             = 64      # context-vector / embedding width
 NUM_BASES       = 30      # RGCN basis decomposition
 ENCODER_LAYERS  = 2       # RGCN depth -> 2-hop context
 SKETCH_BITS     = 8192    # Bloom membership-sketch length
-N_NBR           = 32      # neighbours D_match attends over
+N_NBR           = 32      # neighbours the consistency discriminator attends over
 CAND_K          = 256     # candidates scored per triple (decode = full pool)
 
 # -- E' warm-up (skipped when --init_context_from is given) --
 WARMUP_EPOCHS   = 10
 WARMUP_BATCH    = 4096
 
-# -- curriculum: pretrain both discriminators, then alpha=0 warm-up --
+# -- curriculum: pretrain both discriminators, then an alpha=0 warm-up --
 DMATCH_EPOCHS         = 2
 DREAL_PRETRAIN_EPOCHS = 2
 ALPHA_WARMUP_EPOCHS   = 2
@@ -67,254 +79,332 @@ ALPHA_WARMUP_EPOCHS   = 2
 BATCH_SIZE      = 256
 TAU             = 0.5     # Gumbel-Softmax temperature (train + decode)
 LR_G            = 1e-4
-LR_D            = 3e-4    # D_real
-LR_DMATCH       = 1e-4    # D_match online hardening on G's picks (oracle labels);
-                          # a frozen D_match was exploited (48% of picks corroborated)
+LR_D            = 3e-4    # realism discriminator
+LR_DMATCH       = 1e-4    # consistency discriminator's online updates during
+                          # the game (a frozen one gets exploited by G)
 LABEL_SMOOTHING = 0.1
 
 # -- contradiction-pressure controller (alpha) --
-ALPHA_TARGET    = 0.13    # PID set-point; MUST stay above the ~0.12-0.13 structural
-                          # floor or alpha rails and G collapses to universal-aliens
-ALPHA_INIT      = 1.0     # value alpha is released at when the warm-up ends
-ALPHA_MAX       = 10.0    # anti-windup clamp (a smoke wound alpha to 284)
-ALPHA_KP        = 2.0     # PID proportional gain
-ALPHA_KI        = 0.2     # PID integral gain
-MATCH_MARGIN    = 0.0     # hinge: alpha*relu(D_match - margin); constraint, not reward
-DREAL_MISMATCH  = 1.0     # GAN-CLS wrong-anchor weight -> anchor-conditional D_real
+ALPHA_TARGET    = 0.13    # PI set-point; MUST stay above the ~0.12-0.13
+                          # structural floor or alpha saturates and the
+                          # generator collapses to one-alien-fits-all picks
+ALPHA_INIT      = 1.0     # value alpha restarts at when the warm-up ends
+ALPHA_MAX       = 10.0    # anti-windup clamp
+ALPHA_KP        = 2.0     # PI proportional gain
+ALPHA_KI        = 0.2     # PI integral gain
+MATCH_MARGIN    = 0.0     # hinge margin: alpha * relu(D_match - margin)
+DREAL_MISMATCH  = 1.0     # weight of the wrong-anchor class (GAN-CLS style);
+                          # this is what makes D_real anchor-conditional
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--data", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--epochs", type=int, default=8,
-                    help="adversarial game epochs (locked recipe: 8; use 2 for a "
-                         "quick smoke). Anchor-awareness peaks a few pressure "
-                         "epochs after the alpha ramp and then erodes, so keep "
-                         "runs short and select across snapshots by knockout J@10.")
-    ap.add_argument("--snapshot_every", type=int, default=0,
-                    help="save a full loadable checkpoint every N game epochs once "
-                         "the alpha ramp starts (0 = off). Select the reported "
-                         "generator across snapshots by knockout J@10.")
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--device", default=None)
-    ap.add_argument("--init_context_from", default=None,
-                    help="load frozen E' from an existing checkpoint instead of "
-                         "running the RGCN warm-up (CPU path; vocabularies must match)")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--epochs", type=int, default=8,
+                        help="adversarial game epochs (locked recipe: 8; use 2 "
+                             "for a quick smoke). Anchor-awareness peaks a few "
+                             "epochs after the alpha ramp and then erodes, so "
+                             "keep runs short and select across snapshots by "
+                             "knockout J@10.")
+    parser.add_argument("--snapshot_every", type=int, default=0,
+                        help="save a full loadable checkpoint every N game "
+                             "epochs once the alpha ramp starts (0 = off). "
+                             "Select the reported generator across snapshots "
+                             "by knockout J@10.")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--init_context_from", default=None,
+                        help="load a frozen E' from an existing checkpoint "
+                             "instead of running the RGCN warm-up (CPU path; "
+                             "vocabularies must match)")
+    args = parser.parse_args()
 
     torch.manual_seed(args.seed)
-    rng = random.Random(args.seed)
-    nprng = np.random.default_rng(args.seed)
-    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    python_rng = random.Random(args.seed)
+    device = torch.device(args.device
+                          or ("cuda" if torch.cuda.is_available() else "cpu"))
     print(f"Device: {device}", flush=True)
 
     kg = load_kg(args.data)
     train_triples = list(kg["triples_train"])
     n_ent, n_rel = kg["n_ent"], kg["n_rel"]
-    real_all = torch.tensor(train_triples, dtype=torch.long)
+    train_triples_tensor = torch.tensor(train_triples, dtype=torch.long)
     print(f"KG: {n_ent:,} entities, {n_rel:,} relations, "
           f"{len(train_triples):,} train triples", flush=True)
 
-    # ---------- Phase 0: frozen E' (RGCN warm-up, or reuse an existing table) ----------
+    # ---------------------------------------------------------------------
+    # Phase 1: Neighbourhood Context Encoding.
+    # Either reuse a frozen E' from an earlier checkpoint, or warm the RGCN
+    # encoder up with a DistMult decoder on link prediction and freeze its
+    # output. The decoder is a throwaway: it only exists to give the encoder
+    # a training signal, and is deleted once E' is frozen.
+    # ---------------------------------------------------------------------
     if args.init_context_from:
-        payload = torch.load(args.init_context_from, map_location=device,
-                             weights_only=False)
-        assert payload["n_ent"] == n_ent and payload["dim"] == DIM, \
+        donor = torch.load(args.init_context_from, map_location=device,
+                           weights_only=False)
+        assert donor["n_ent"] == n_ent and donor["dim"] == DIM, \
             "context table from --init_context_from does not match this KG"
-        # vocab must match too (string-keyed check on a sample)
-        for k in list(kg["ent2id"])[:50]:
-            assert payload["ent2id"].get(k) == kg["ent2id"][k], \
-                f"vocab mismatch at {k!r}"
-        context = payload["context_embeddings"].to(device).detach()
-        sample_gen = torch.Generator().manual_seed(args.seed + 1)
+        # The vocabulary must match too (string-keyed check on a sample).
+        for entity in list(kg["ent2id"])[:50]:
+            assert donor["ent2id"].get(entity) == kg["ent2id"][entity], \
+                f"vocab mismatch at {entity!r}"
+        context_table = donor["context_embeddings"].to(device).detach()
+        torch_rng = torch.Generator().manual_seed(args.seed + 1)
         print(f"E' loaded from {args.init_context_from} "
-              f"[{context.shape[0]}, {context.shape[1]}]", flush=True)
-        _skip_warmup = True
+              f"[{context_table.shape[0]}, {context_table.shape[1]}]", flush=True)
+        skip_warmup = True
     else:
-        _skip_warmup = False
-    edge_index, edge_type = KGSAGEEncoder.to_tensors(kg["edge_index"], kg["edge_type"], device)
-    encoder = KGSAGEEncoder(n_ent, n_rel, dim=DIM, num_bases=NUM_BASES,
-                            num_layers=ENCODER_LAYERS).to(device)
-    if _skip_warmup:
-        encoder = None
-    if not _skip_warmup:
-        dec_rel = torch.nn.Parameter(torch.randn(n_rel, DIM, device=device) * 0.1)
-        warm_opt = torch.optim.Adam(list(encoder.parameters()) + [dec_rel], lr=1e-3)
-        sample_gen = torch.Generator().manual_seed(args.seed + 1)
+        skip_warmup = False
+    # The encoder is constructed in BOTH branches (and discarded when E' is
+    # reused) so that torch's global RNG advances identically either way —
+    # keeping every later weight init reproducible per seed.
+    edge_index, edge_type = NeighbourhoodContextEncoder.to_tensors(
+        kg["edge_index"], kg["edge_type"], device)
+    context_encoder = NeighbourhoodContextEncoder(
+        n_ent, n_rel, dim=DIM, num_bases=NUM_BASES,
+        num_layers=ENCODER_LAYERS).to(device)
+    if skip_warmup:
+        context_encoder = None
+    if not skip_warmup:
+        # DistMult decoder: score(h, r, t) = sum(E'[h] * w_r * E'[t]).
+        # Real triples should score high, random-tail triples low — the
+        # standard link-prediction warm-up that shapes E' into a meaningful
+        # neighbourhood summary.
+        distmult_relations = torch.nn.Parameter(
+            torch.randn(n_rel, DIM, device=device) * 0.1)
+        warmup_optimizer = torch.optim.Adam(
+            list(context_encoder.parameters()) + [distmult_relations], lr=1e-3)
+        torch_rng = torch.Generator().manual_seed(args.seed + 1)
         for epoch in range(1, WARMUP_EPOCHS + 1):
-            perm = torch.randperm(real_all.shape[0], generator=sample_gen)
-            tot = nb = 0
-            for s in range(0, len(perm), WARMUP_BATCH):
-                rows = real_all[perm[s:s + WARMUP_BATCH]].to(device)
+            shuffled = torch.randperm(train_triples_tensor.shape[0],
+                                      generator=torch_rng)
+            total_loss = num_batches = 0
+            for start in range(0, len(shuffled), WARMUP_BATCH):
+                rows = train_triples_tensor[
+                    shuffled[start:start + WARMUP_BATCH]].to(device)
                 h, r, t = rows[:, 0], rows[:, 1], rows[:, 2]
-                t_neg = torch.randint(0, n_ent, (len(rows),), generator=sample_gen).to(device)
-                ctx = encoder(edge_index, edge_type)
-                pos = (ctx[h] * dec_rel[r] * ctx[t]).sum(-1)
-                neg = (ctx[h] * dec_rel[r] * ctx[t_neg]).sum(-1)
-                loss = (F.binary_cross_entropy_with_logits(pos, torch.ones_like(pos))
-                        + F.binary_cross_entropy_with_logits(neg, torch.zeros_like(neg)))
-                warm_opt.zero_grad(); loss.backward(); warm_opt.step()
-                tot += loss.item(); nb += 1
-            print(f"  warmup {epoch}/{WARMUP_EPOCHS} LP_loss={tot/max(nb,1):.4f}", flush=True)
-        encoder.eval(); encoder.requires_grad_(False)
+                random_tails = torch.randint(0, n_ent, (len(rows),),
+                                             generator=torch_rng).to(device)
+                current_context = context_encoder(edge_index, edge_type)
+                positive_scores = (current_context[h] * distmult_relations[r]
+                                   * current_context[t]).sum(-1)
+                negative_scores = (current_context[h] * distmult_relations[r]
+                                   * current_context[random_tails]).sum(-1)
+                loss = (F.binary_cross_entropy_with_logits(
+                            positive_scores, torch.ones_like(positive_scores))
+                        + F.binary_cross_entropy_with_logits(
+                            negative_scores, torch.zeros_like(negative_scores)))
+                warmup_optimizer.zero_grad(); loss.backward(); warmup_optimizer.step()
+                total_loss += loss.item(); num_batches += 1
+            print(f"  warmup {epoch}/{WARMUP_EPOCHS} "
+                  f"LP_loss={total_loss/max(num_batches,1):.4f}", flush=True)
+        context_encoder.eval(); context_encoder.requires_grad_(False)
         with torch.no_grad():
-            context = encoder(edge_index, edge_type).detach()
-        del dec_rel, warm_opt
-        print(f"E' frozen [{context.shape[0]}, {context.shape[1]}]", flush=True)
+            context_table = context_encoder(edge_index, edge_type).detach()
+        del distmult_relations, warmup_optimizer
+        print(f"E' frozen [{context_table.shape[0]}, {context_table.shape[1]}]",
+              flush=True)
 
-    # ---------- Train-split structures (learned components see TRAIN only) ----------
-    adj: dict[int, set] = {}
-    true_tails: dict[tuple, set] = defaultdict(set)
-    true_heads: dict[tuple, set] = defaultdict(set)
-    by_rel: dict[int, list] = defaultdict(list)
+    # ---------------------------------------------------------------------
+    # Train-split lookup structures (learned components see TRAIN only).
+    # ---------------------------------------------------------------------
+    neighbour_sets: dict[int, set] = {}        # undirected 1-hop adjacency
+    true_tails: dict[tuple, set] = defaultdict(set)   # (h, r) -> known tails
+    true_heads: dict[tuple, set] = defaultdict(set)   # (r, t) -> known heads
+    triples_by_relation: dict[int, list] = defaultdict(list)
     for h, r, t in train_triples:
-        adj.setdefault(h, set()).add(t); adj.setdefault(t, set()).add(h)
-        true_tails[(h, r)].add(t); true_heads[(r, t)].add(h)
-        by_rel[r].append((h, r, t))
+        neighbour_sets.setdefault(h, set()).add(t)
+        neighbour_sets.setdefault(t, set()).add(h)
+        true_tails[(h, r)].add(t)
+        true_heads[(r, t)].add(h)
+        triples_by_relation[r].append((h, r, t))
 
     print("building sketches (train split)...", flush=True)
-    sketches = build_sketches(train_triples, n_ent, m=SKETCH_BITS,
-                              seed=args.seed).float()
-    cs = CandidateSampler(train_triples, n_ent, n_rel, k=CAND_K,
-                          seed=args.seed)
-    # type pools for the checkpoint (decode scores the FULL pool; same
-    # train-split pools the v1 masks used)
+    membership_sketches = build_membership_sketches(
+        train_triples, n_ent, m=SKETCH_BITS, seed=args.seed).float()
+    candidate_sampler = CandidateSampler(train_triples, n_ent, n_rel,
+                                         k=CAND_K, seed=args.seed)
+    # Type pools for the checkpoint: which entities were observed in each
+    # (slot, relation) position. Corruption generation scores the FULL pool.
     pool_masks = torch.zeros(2, n_rel, n_ent, dtype=torch.bool)
-    for h_, r_, t_ in train_triples:
-        pool_masks[0, r_, h_] = True
-        pool_masks[1, r_, t_] = True
+    for h, r, t in train_triples:
+        pool_masks[0, r, h] = True
+        pool_masks[1, r, t] = True
 
-    def nbr_batch(anchors, exclude=None):
-        """[B, n_nbr] ids + mask from TRAIN adjacency."""
-        B = len(anchors)
-        ids = torch.zeros(B, N_NBR, dtype=torch.long)
-        msk = torch.zeros(B, N_NBR, dtype=torch.bool)
-        for i, a in enumerate(anchors):
-            ns = adj.get(int(a), ())
-            ns = [n for n in ns if exclude is None or n != int(exclude[i])]
-            if not ns:
+    def sample_neighbour_batch(anchors, exclude=None):
+        """Sample up to N_NBR neighbours per anchor from TRAIN adjacency.
+
+        Returns (neighbour_ids [B, N_NBR], neighbour_mask [B, N_NBR]); the
+        mask marks which positions hold a real neighbour (rows are padded).
+        """
+        batch_size = len(anchors)
+        neighbour_ids = torch.zeros(batch_size, N_NBR, dtype=torch.long)
+        neighbour_mask = torch.zeros(batch_size, N_NBR, dtype=torch.bool)
+        for i, anchor in enumerate(anchors):
+            neighbours = neighbour_sets.get(int(anchor), ())
+            neighbours = [n for n in neighbours
+                          if exclude is None or n != int(exclude[i])]
+            if not neighbours:
                 continue
-            if len(ns) > N_NBR:
-                ns = rng.sample(ns, N_NBR)
-            ids[i, :len(ns)] = torch.tensor(ns)
-            msk[i, :len(ns)] = True
-        return ids, msk
+            if len(neighbours) > N_NBR:
+                neighbours = python_rng.sample(neighbours, N_NBR)
+            neighbour_ids[i, :len(neighbours)] = torch.tensor(neighbours)
+            neighbour_mask[i, :len(neighbours)] = True
+        return neighbour_ids, neighbour_mask
 
-    _sup_cache: dict[int, torch.Tensor] = {}
+    _support_row_cache: dict[int, torch.Tensor] = {}
 
-    def support_row_train(a: int) -> torch.Tensor:
-        """Cached bool [n_ent]: entities supported by anchor a (1-hop or
-        shared-neighbour), TRAIN adjacency. ~n_ent bits per cached anchor."""
-        row = _sup_cache.get(a)
+    def supported_entities_row(entity: int) -> torch.Tensor:
+        """Cached bool [n_ent] row: which entities the graph CORROBORATES for
+        this entity — its direct neighbours plus anything within two hops
+        (TRAIN adjacency)."""
+        row = _support_row_cache.get(entity)
         if row is None:
-            na = adj.get(a, set())
+            neighbours = neighbour_sets.get(entity, set())
             row = torch.zeros(n_ent, dtype=torch.bool)
-            if na:
-                idx = torch.tensor(sorted(na), dtype=torch.long)
-                row[idx] = True                      # 1-hop
-                two = set()
-                for nb1 in na:
-                    two |= adj.get(nb1, set())
-                if two:
-                    row[torch.tensor(sorted(two), dtype=torch.long)] = True
-            row[a] = False
-            if len(_sup_cache) < 20000:
-                _sup_cache[a] = row
+            if neighbours:
+                index = torch.tensor(sorted(neighbours), dtype=torch.long)
+                row[index] = True                      # 1-hop
+                two_hop = set()
+                for neighbour in neighbours:
+                    two_hop |= neighbour_sets.get(neighbour, set())
+                if two_hop:
+                    row[torch.tensor(sorted(two_hop), dtype=torch.long)] = True
+            row[entity] = False
+            if len(_support_row_cache) < 20000:
+                _support_row_cache[entity] = row
         return row
 
-    def support_flags(anchors, cand_ids):
-        """Exact graph support of candidates wrt anchors (bool [B, K]) --
-        the PID's measurement signal and the epoch diagnostic. Vectorised via
-        the per-anchor cached row (first epoch pays the build, then O(1))."""
-        out = torch.zeros_like(cand_ids, dtype=torch.bool)
-        for i, a in enumerate(anchors.tolist()):
-            out[i] = support_row_train(a)[cand_ids[i]]
-        return out
+    def exact_support_flags(anchors, candidate_ids):
+        """Exact graph support of candidates w.r.t. anchors (bool [B, K]) —
+        the PI controller's measurement signal and the oracle labels for the
+        consistency discriminator's online updates."""
+        flags = torch.zeros_like(candidate_ids, dtype=torch.bool)
+        for i, anchor in enumerate(anchors.tolist()):
+            flags[i] = supported_entities_row(anchor)[candidate_ids[i]]
+        return flags
 
-    # ---------- Phase 1: pretrain D_match (real vs same-relation mismatch), freeze ----------
-    dmatch = DMatch(dim=DIM).to(device)
-    dm_opt = torch.optim.AdamW(dmatch.parameters(), lr=1e-3)
-    bce = torch.nn.BCEWithLogitsLoss()
+    # ---------------------------------------------------------------------
+    # Phase 2a: pretrain the consistency discriminator on pairs built purely
+    # from data — (anchor, its true filler) = fits, (anchor, another anchor's
+    # same-relation filler) = does not fit.
+    # ---------------------------------------------------------------------
+    consistency_discriminator = ConsistencyDiscriminator(dim=DIM).to(device)
+    consistency_pretrain_optimizer = torch.optim.AdamW(
+        consistency_discriminator.parameters(), lr=1e-3)
+    binary_cross_entropy = torch.nn.BCEWithLogitsLoss()
     print(f"D_match pretraining ({DMATCH_EPOCHS} epochs)...", flush=True)
-    for ep in range(1, DMATCH_EPOCHS + 1):
-        perm = rng.sample(train_triples, len(train_triples))
-        tot = nb = 0
-        for s in range(0, len(perm), BATCH_SIZE):
-            chunk = perm[s:s + BATCH_SIZE]
-            anchors, cands, ys = [], [], []
-            for h, r, t in chunk:
-                anchors.append(h); cands.append(t); ys.append(1.0)
-                others = by_rel[r]
+    for epoch in range(1, DMATCH_EPOCHS + 1):
+        shuffled_triples = python_rng.sample(train_triples, len(train_triples))
+        total_loss = num_batches = 0
+        for start in range(0, len(shuffled_triples), BATCH_SIZE):
+            batch_triples = shuffled_triples[start:start + BATCH_SIZE]
+            anchor_list, candidate_list, labels = [], [], []
+            for h, r, t in batch_triples:
+                anchor_list.append(h); candidate_list.append(t); labels.append(1.0)
+                # Negative pair: a tail from ANOTHER triple of the same
+                # relation, provided it is not also a neighbour of h.
+                same_relation = triples_by_relation[r]
                 for _ in range(6):
-                    _, _, t2 = others[rng.randrange(len(others))]
-                    if t2 != t and t2 not in adj.get(h, set()):
-                        anchors.append(h); cands.append(t2); ys.append(0.0)
+                    _, _, other_tail = same_relation[
+                        python_rng.randrange(len(same_relation))]
+                    if (other_tail != t
+                            and other_tail not in neighbour_sets.get(h, set())):
+                        anchor_list.append(h); candidate_list.append(other_tail)
+                        labels.append(0.0)
                         break
-            a_t = torch.tensor(anchors); c_t = torch.tensor(cands)
-            nid, nmk = nbr_batch(a_t, exclude=c_t)
-            logit = dmatch(context[c_t], context[nid], nmk.to(device))
-            loss = bce(logit, torch.tensor(ys, device=device))
-            dm_opt.zero_grad(); loss.backward(); dm_opt.step()
-            tot += loss.item(); nb += 1
-        print(f"  dmatch {ep}/{DMATCH_EPOCHS} bce={tot/max(nb,1):.4f}", flush=True)
-    # NOT frozen: the FB dynamics smoke proved a frozen D_match gets exploited
-    # (G converges onto its false negatives). It keeps training during the game
-    # on the generator's own picks with ORACLE labels (exact graph support), so
-    # every blind spot G finds is corrected on the next batch. The oracle only
-    # supplies labels -- D_match remains a learned discriminator.
-    dm_game_opt = torch.optim.AdamW(dmatch.parameters(), lr=LR_DMATCH)
+            anchor_ids = torch.tensor(anchor_list)
+            candidate_ids = torch.tensor(candidate_list)
+            neighbour_ids, neighbour_mask = sample_neighbour_batch(
+                anchor_ids, exclude=candidate_ids)
+            logits = consistency_discriminator(
+                context_table[candidate_ids], context_table[neighbour_ids],
+                neighbour_mask.to(device))
+            loss = binary_cross_entropy(logits,
+                                        torch.tensor(labels, device=device))
+            consistency_pretrain_optimizer.zero_grad()
+            loss.backward()
+            consistency_pretrain_optimizer.step()
+            total_loss += loss.item(); num_batches += 1
+        print(f"  dmatch {epoch}/{DMATCH_EPOCHS} "
+              f"bce={total_loss/max(num_batches,1):.4f}", flush=True)
+    # The consistency discriminator is NOT frozen after pretraining: a frozen
+    # one gets exploited (the generator converges onto its blind spots). It
+    # keeps training during the game on the generator's own picks, labelled
+    # by EXACT graph support — so every blind spot the generator finds is
+    # corrected on the next batch. The oracle only supplies labels; D_match
+    # remains a learned discriminator.
+    consistency_online_optimizer = torch.optim.AdamW(
+        consistency_discriminator.parameters(), lr=LR_DMATCH)
 
-    # ---------- Phase 2: the dual-discriminator game ----------
-    G = CandidateScoringGenerator(dim=DIM, sketch_bits=SKETCH_BITS,
-                                  n_rel=n_rel).to(device)
-    dreal = DReal(dim=DIM, n_rel=n_rel).to(device)
-    opt_g = torch.optim.Adam(G.parameters(), lr=LR_G, betas=(0.5, 0.999))
-    opt_d = torch.optim.Adam(dreal.parameters(), lr=LR_D)
+    # ---------------------------------------------------------------------
+    # Phase 2b: build the generator and the realism discriminator, then
+    # pretrain the realism discriminator. It must already be
+    # anchor-conditional BEFORE the generator starts learning, or the
+    # generator falls straight into the one-alien-fits-all basin.
+    # ---------------------------------------------------------------------
+    generator = CandidateScoringGenerator(dim=DIM, sketch_bits=SKETCH_BITS,
+                                          n_rel=n_rel).to(device)
+    realism_discriminator = RealismDiscriminator(dim=DIM, n_rel=n_rel).to(device)
+    generator_optimizer = torch.optim.Adam(generator.parameters(), lr=LR_G,
+                                           betas=(0.5, 0.999))
+    realism_optimizer = torch.optim.Adam(realism_discriminator.parameters(),
+                                         lr=LR_D)
 
-    # ---- Phase 1b: D_real pretrain (anchor-conditional plausibility must
-    #      exist BEFORE G starts learning, or G falls into the universal-alien
-    #      basin the alienation signal digs on epoch 1) ----
-    for ep_i in range(1, DREAL_PRETRAIN_EPOCHS + 1):
-        perm = torch.randperm(real_all.shape[0], generator=sample_gen)
-        tot = nb = 0
-        for s in range(0, len(perm), BATCH_SIZE):
-            rows = real_all[perm[s:s + BATCH_SIZE]]
+    for epoch in range(1, DREAL_PRETRAIN_EPOCHS + 1):
+        shuffled = torch.randperm(train_triples_tensor.shape[0],
+                                  generator=torch_rng)
+        total_loss = num_batches = 0
+        for start in range(0, len(shuffled), BATCH_SIZE):
+            rows = train_triples_tensor[shuffled[start:start + BATCH_SIZE]]
             if len(rows) < 4:
                 continue
             h, r, t = rows[:, 0], rows[:, 1], rows[:, 2]
-            h_e = context[h.to(device)]; t_e = context[t.to(device)]
-            rd = r.to(device)
-            rand_t = torch.randint(0, n_ent, (len(rows),), generator=sample_gen)
-            d_r = dreal(h_e, rd, t_e)
-            d_f = dreal(h_e, rd, context[rand_t.to(device)])
-            # SAME-RELATION mismatched anchors: a rolled mixed-relation anchor
-            # is usually type-incompatible, so D_real could win on type alone
-            # and never learn ANCHOR-level conditioning (dyn3/4 lesson)
-            mm_anchor = torch.tensor([
-                by_rel[int(r[i])][rng.randrange(len(by_rel[int(r[i])]))][0]
+            head_context = context_table[h.to(device)]
+            tail_context = context_table[t.to(device)]
+            relation_ids = r.to(device)
+            random_tails = torch.randint(0, n_ent, (len(rows),),
+                                         generator=torch_rng)
+            score_real = realism_discriminator(head_context, relation_ids,
+                                               tail_context)
+            score_random = realism_discriminator(
+                head_context, relation_ids, context_table[random_tails.to(device)])
+            # Third class: the real tail presented with a SAME-RELATION wrong
+            # head. A random wrong head would usually be type-incompatible,
+            # letting D_real win on type alone; same-relation wrong heads
+            # force it to judge the individual anchor.
+            wrong_anchors = torch.tensor([
+                triples_by_relation[int(r[i])][
+                    python_rng.randrange(len(triples_by_relation[int(r[i])]))][0]
                 for i in range(len(rows))])
-            d_m = dreal(context[mm_anchor.to(device)], rd, t_e)
+            score_wrong_anchor = realism_discriminator(
+                context_table[wrong_anchors.to(device)], relation_ids,
+                tail_context)
             loss = (F.binary_cross_entropy_with_logits(
-                        d_r, torch.full_like(d_r, 1 - LABEL_SMOOTHING))
-                    + F.binary_cross_entropy_with_logits(d_f, torch.zeros_like(d_f))
+                        score_real,
+                        torch.full_like(score_real, 1 - LABEL_SMOOTHING))
+                    + F.binary_cross_entropy_with_logits(
+                        score_random, torch.zeros_like(score_random))
                     + DREAL_MISMATCH * F.binary_cross_entropy_with_logits(
-                        d_m, torch.zeros_like(d_m)))
-            opt_d.zero_grad(); loss.backward(); opt_d.step()
-            tot += loss.item(); nb += 1
-        print(f"  dreal-pre {ep_i}/{DREAL_PRETRAIN_EPOCHS} "
-              f"loss={tot/max(nb,1):.4f}", flush=True)
+                        score_wrong_anchor,
+                        torch.zeros_like(score_wrong_anchor)))
+            realism_optimizer.zero_grad(); loss.backward(); realism_optimizer.step()
+            total_loss += loss.item(); num_batches += 1
+        print(f"  dreal-pre {epoch}/{DREAL_PRETRAIN_EPOCHS} "
+              f"loss={total_loss/max(num_batches,1):.4f}", flush=True)
 
-    def _save(path):
-        """Full candidate_v2 payload -- every snapshot is independently
-        loadable by kgsage.inference (same contract as the final save)."""
+    def save_checkpoint(path):
+        """Full candidate_v2 payload — every snapshot is independently
+        loadable by kgsage.corruption_generation (same contract as the final
+        save). Do not rename any key: they are the checkpoint contract."""
         torch.save({
             "arch": "candidate_v2",
-            "generator_state": G.state_dict(),
-            "dmatch_state": dmatch.state_dict(),
-            "dreal_state": dreal.state_dict(),
-            "context_embeddings": context.cpu(),
-            "sketches": (sketches > 0).to(torch.uint8).cpu(),
+            "generator_state": generator.state_dict(),
+            "dmatch_state": consistency_discriminator.state_dict(),
+            "dreal_state": realism_discriminator.state_dict(),
+            "context_embeddings": context_table.cpu(),
+            "sketches": (membership_sketches > 0).to(torch.uint8).cpu(),
             "sketch_bits": SKETCH_BITS,
             "pool_masks": pool_masks,
             "cand_k": CAND_K, "dim": DIM, "tau": TAU,
@@ -326,160 +416,218 @@ def main() -> None:
             "alpha_target": ALPHA_TARGET, "seed": args.seed,
         }, path)
 
+    # ---------------------------------------------------------------------
+    # Phase 2c: the dual-discriminator game.
+    # ---------------------------------------------------------------------
     alpha = ALPHA_INIT
-    err_prev = 0.0
+    previous_error = 0.0
     print("-" * 60, flush=True)
     print(f"Dual-discriminator: {args.epochs} epochs, K={CAND_K}, tau={TAU}, "
           f"alpha0={alpha} target={ALPHA_TARGET}", flush=True)
     for epoch in range(1, args.epochs + 1):
         in_warmup = epoch <= ALPHA_WARMUP_EPOCHS
         if in_warmup:
-            alpha = 0.0                       # curriculum: plausible FIRST
+            alpha = 0.0                  # curriculum: learn "plausible" FIRST
         elif alpha == 0.0:
-            alpha = ALPHA_INIT           # ramp point: hand over to PID
-        perm = torch.randperm(real_all.shape[0], generator=sample_gen)
-        ep = defaultdict(float); picks = set(); t0 = time.perf_counter()
-        for bi, s in enumerate(range(0, len(perm), BATCH_SIZE)):
-            rows = real_all[perm[s:s + BATCH_SIZE]]
+            alpha = ALPHA_INIT           # ramp point: hand over to the PI loop
+        shuffled = torch.randperm(train_triples_tensor.shape[0],
+                                  generator=torch_rng)
+        epoch_metrics = defaultdict(float)
+        distinct_picks = set()
+        epoch_start = time.perf_counter()
+        for batch_index, start in enumerate(
+                range(0, len(shuffled), BATCH_SIZE)):
+            rows = train_triples_tensor[shuffled[start:start + BATCH_SIZE]]
             if len(rows) < 4:
                 continue
             h, r, t = rows[:, 0], rows[:, 1], rows[:, 2]
-            B = len(rows)
-            slot = TAIL if bi % 2 == 0 else HEAD
-            anchor = h if slot == TAIL else t
-            clean = t if slot == TAIL else h
+            num_rows = len(rows)
+            # Alternate the corrupted slot batch by batch. The ANCHOR is the
+            # entity that keeps its slot; the TRUE FILLER is the one being
+            # replaced.
+            slot = TAIL if batch_index % 2 == 0 else HEAD
+            anchor_entities = h if slot == TAIL else t
+            true_fillers = t if slot == TAIL else h
 
-            cand, logq = cs.sample(r.numpy(), slot)
-            # ban the true value, known-true fillers (train), self-loop
-            banned = torch.zeros(B, cand.shape[1], dtype=torch.bool)
-            for i in range(B):
-                key = ((int(h[i]), int(r[i])) if slot == TAIL
-                       else (int(r[i]), int(t[i])))
-                tset = (true_tails if slot == TAIL else true_heads).get(key, set())
-                row = cand[i]
-                banned[i] = torch.tensor(
-                    [(int(x) in tset) or int(x) == int(clean[i])
-                     or int(x) == int(anchor[i]) for x in row.tolist()])
+            candidate_ids, candidate_log_q = candidate_sampler.sample(
+                r.numpy(), slot)
+            # Ban candidates that would make the "corruption" true or
+            # degenerate: every known-true filler of this query (train), the
+            # current true filler, and the anchor itself (self-loop).
+            banned_mask = torch.zeros(num_rows, candidate_ids.shape[1],
+                                      dtype=torch.bool)
+            for i in range(num_rows):
+                query_key = ((int(h[i]), int(r[i])) if slot == TAIL
+                             else (int(r[i]), int(t[i])))
+                known_true = (true_tails if slot == TAIL
+                              else true_heads).get(query_key, set())
+                banned_mask[i] = torch.tensor(
+                    [(int(x) in known_true) or int(x) == int(true_fillers[i])
+                     or int(x) == int(anchor_entities[i])
+                     for x in candidate_ids[i].tolist()])
 
-            def g_logits():
-                lg = G(h.to(device), r.to(device), t.to(device), context,
-                       sketches[anchor].to(device), cand.to(device),
-                       logq.to(device), slot)
-                lg = lg.masked_fill(banned.to(device), float("-inf"))
-                # degenerate-row guard (v1 masks had a lift ladder; here some
-                # mini pools are singletons -> a row can be ALL-banned, and one
-                # -inf row NaN-poisons every weight downstream). Such rows get
-                # finite dummy logits and are EXCLUDED from losses and stats.
-                valid = torch.isfinite(lg).any(dim=1)
-                if not bool(valid.all()):
-                    lg = torch.where(valid.unsqueeze(1), lg, torch.zeros_like(lg))
-                return lg, valid
+            def generator_logits():
+                logits = generator(h.to(device), r.to(device), t.to(device),
+                                   context_table,
+                                   membership_sketches[anchor_entities].to(device),
+                                   candidate_ids.to(device),
+                                   candidate_log_q.to(device), slot)
+                logits = logits.masked_fill(banned_mask.to(device),
+                                            float("-inf"))
+                # Some (slot, relation) pools are singletons, so a whole row
+                # can be banned. One all--inf row would NaN-poison every
+                # weight downstream, so such rows get finite dummy logits and
+                # are EXCLUDED from all losses and stats via `valid_rows`.
+                valid_rows = torch.isfinite(logits).any(dim=1)
+                if not bool(valid_rows.all()):
+                    logits = torch.where(valid_rows.unsqueeze(1), logits,
+                                         torch.zeros_like(logits))
+                return logits, valid_rows
 
-            # ---- D_real step ----
+            # ---- realism discriminator step ----
             with torch.no_grad():
-                lg0, valid = g_logits()
-                onehot = gumbel_softmax(lg0, tau=TAU, hard=True)
-                fake_emb = torch.einsum("bk,bkd->bd", onehot,
-                                        context[cand.to(device)])
-            if not bool(valid.any()):
+                logits, valid_rows = generator_logits()
+                selection = gumbel_softmax(logits, tau=TAU, hard=True)
+                generated_embedding = torch.einsum(
+                    "bk,bkd->bd", selection,
+                    context_table[candidate_ids.to(device)])
+            if not bool(valid_rows.any()):
                 continue
-            v = valid
-            keep_emb = context[anchor.to(device)]
-            d_fake = dreal(keep_emb[v], r.to(device)[v], fake_emb[v])
-            d_real_out = dreal(context[h.to(device)], r.to(device),
-                               context[t.to(device)]) if slot == TAIL else \
-                         dreal(context[t.to(device)], r.to(device),
-                               context[h.to(device)])
-            l_d = (F.binary_cross_entropy_with_logits(
-                       d_real_out, torch.full_like(d_real_out, 1 - LABEL_SMOOTHING))
-                   + F.binary_cross_entropy_with_logits(d_fake, torch.zeros_like(d_fake)))
+            anchor_context = context_table[anchor_entities.to(device)]
+            score_generated = realism_discriminator(
+                anchor_context[valid_rows], r.to(device)[valid_rows],
+                generated_embedding[valid_rows])
+            score_real = realism_discriminator(
+                context_table[h.to(device)], r.to(device),
+                context_table[t.to(device)]) if slot == TAIL else \
+                realism_discriminator(
+                    context_table[t.to(device)], r.to(device),
+                    context_table[h.to(device)])
+            realism_loss = (F.binary_cross_entropy_with_logits(
+                                score_real,
+                                torch.full_like(score_real, 1 - LABEL_SMOOTHING))
+                            + F.binary_cross_entropy_with_logits(
+                                score_generated,
+                                torch.zeros_like(score_generated)))
             if DREAL_MISMATCH > 0:
-                # GAN-CLS third class with SAME-RELATION wrong anchors: the
-                # real filler presented with another anchor of the same
-                # relation -> fake. Type/popularity are symmetric across the
-                # real and mismatched classes, so D_real can only win by
-                # scoring plausibility CONDITIONAL on the individual anchor.
-                filler_emb = context[t.to(device)] if slot == TAIL \
-                             else context[h.to(device)]
-                # The wrong anchor must come from the ANCHOR slot: heads when
-                # the tail is corrupted, tails when the head is corrupted --
-                # otherwise head-slot batches pair a tail-type filler with a
-                # head-type anchor and D_real can reject by slot type alone.
-                mm_slot = 0 if slot == TAIL else 2
-                mm_anchor = torch.tensor([
-                    by_rel[int(r[i])][rng.randrange(len(by_rel[int(r[i])]))][mm_slot]
-                    for i in range(B)])
-                d_mm = dreal(context[mm_anchor.to(device)], r.to(device),
-                             filler_emb)
-                l_d = l_d + DREAL_MISMATCH * F.binary_cross_entropy_with_logits(
-                    d_mm, torch.zeros_like(d_mm))
-            opt_d.zero_grad(); l_d.backward(); opt_d.step()
+                # Wrong-anchor class (GAN-CLS): the TRUE filler presented
+                # with another anchor of the same relation, labelled fake.
+                # Type and popularity are identical across the real and
+                # wrong-anchor classes, so the only winning strategy is to
+                # judge plausibility CONDITIONAL on the individual anchor.
+                true_filler_context = (context_table[t.to(device)]
+                                       if slot == TAIL
+                                       else context_table[h.to(device)])
+                # The wrong anchor must be sampled from the ANCHOR slot:
+                # heads when the tail is corrupted, tails when the head is —
+                # otherwise D_real could reject by slot type alone.
+                wrong_anchor_slot = 0 if slot == TAIL else 2
+                wrong_anchors = torch.tensor([
+                    triples_by_relation[int(r[i])][python_rng.randrange(
+                        len(triples_by_relation[int(r[i])]))][wrong_anchor_slot]
+                    for i in range(num_rows)])
+                score_wrong_anchor = realism_discriminator(
+                    context_table[wrong_anchors.to(device)], r.to(device),
+                    true_filler_context)
+                realism_loss = realism_loss + (
+                    DREAL_MISMATCH * F.binary_cross_entropy_with_logits(
+                        score_wrong_anchor,
+                        torch.zeros_like(score_wrong_anchor)))
+            realism_optimizer.zero_grad()
+            realism_loss.backward()
+            realism_optimizer.step()
 
-            # ---- G step ----
-            lg, valid = g_logits()
-            v = valid
-            onehot = gumbel_softmax(lg, tau=TAU, hard=True)
-            fake_emb = torch.einsum("bk,bkd->bd", onehot, context[cand.to(device)])
-            g_real = dreal(keep_emb[v], r.to(device)[v], fake_emb[v])
-            nid, nmk = nbr_batch(anchor)
-            g_match = dmatch(fake_emb[v], context[nid.to(device)][v],
-                             nmk.to(device)[v])
-            # HINGE: the alienation term is a constraint, not a graded reward.
-            # Past the margin there is no payoff for deeper alienation, so the
-            # ranking WITHIN the alien set is carried by D_real (the
-            # anchor-conditional signal).
-            l_g = (-g_real
-                   + alpha * torch.relu(g_match - MATCH_MARGIN)).mean()
-            opt_g.zero_grad(); l_g.backward(); opt_g.step()
+            # ---- generator step ----
+            logits, valid_rows = generator_logits()
+            selection = gumbel_softmax(logits, tau=TAU, hard=True)
+            generated_embedding = torch.einsum(
+                "bk,bkd->bd", selection, context_table[candidate_ids.to(device)])
+            realism_of_generated = realism_discriminator(
+                anchor_context[valid_rows], r.to(device)[valid_rows],
+                generated_embedding[valid_rows])
+            neighbour_ids, neighbour_mask = sample_neighbour_batch(
+                anchor_entities)
+            consistency_of_generated = consistency_discriminator(
+                generated_embedding[valid_rows],
+                context_table[neighbour_ids.to(device)][valid_rows],
+                neighbour_mask.to(device)[valid_rows])
+            # The alienation term is a HINGE, not a graded reward: past the
+            # margin there is no payoff for deeper alienation, so the ranking
+            # WITHIN the alien set is carried by the realism discriminator.
+            generator_loss = (-realism_of_generated
+                              + alpha * torch.relu(consistency_of_generated
+                                                   - MATCH_MARGIN)).mean()
+            generator_optimizer.zero_grad()
+            generator_loss.backward()
+            generator_optimizer.step()
 
-            # ---- measurement (hard picks = what is actually emitted) ----
+            # ---- measurement (hard picks = what would actually be emitted) ----
             with torch.no_grad():
-                hard = onehot[v].argmax(dim=1)
-                picked = cand[v.cpu()].gather(1, hard.cpu().unsqueeze(1)).squeeze(1)
-                sup_rows = support_flags(anchor[v.cpu()], cand[v.cpu()])
-                pick_sup = sup_rows.gather(1, hard.cpu().unsqueeze(1)).squeeze(1)
-                corr_frac = float(pick_sup.float().mean())
-                picks.update(picked.tolist())
+                picked_columns = selection[valid_rows].argmax(dim=1)
+                picked_entities = candidate_ids[valid_rows.cpu()].gather(
+                    1, picked_columns.cpu().unsqueeze(1)).squeeze(1)
+                support_matrix = exact_support_flags(
+                    anchor_entities[valid_rows.cpu()],
+                    candidate_ids[valid_rows.cpu()])
+                picked_supported = support_matrix.gather(
+                    1, picked_columns.cpu().unsqueeze(1)).squeeze(1)
+                corroborated_fraction = float(picked_supported.float().mean())
+                distinct_picks.update(picked_entities.tolist())
 
-            # ---- online D_match hardening: G's picks with ORACLE labels ----
-            dm_logit = dmatch(context[picked.to(device)],
-                              context[nid.to(device)][v], nmk.to(device)[v])
-            l_dm = bce(dm_logit, pick_sup.float().to(device))
-            dm_game_opt.zero_grad(); l_dm.backward(); dm_game_opt.step()
+            # ---- consistency discriminator online step: the generator's own
+            #      picks, labelled by exact graph support ----
+            consistency_logits = consistency_discriminator(
+                context_table[picked_entities.to(device)],
+                context_table[neighbour_ids.to(device)][valid_rows],
+                neighbour_mask.to(device)[valid_rows])
+            consistency_online_loss = binary_cross_entropy(
+                consistency_logits, picked_supported.float().to(device))
+            consistency_online_optimizer.zero_grad()
+            consistency_online_loss.backward()
+            consistency_online_optimizer.step()
 
-            # ---- PID with anti-windup (inactive during the alpha warmup) ----
-            if np.isfinite(corr_frac) and not in_warmup:
-                err = corr_frac - ALPHA_TARGET
-                a_new = (alpha + ALPHA_KP * (err - err_prev)
-                         + ALPHA_KI * err)
-                alpha = float(min(max(a_new, 0.0), ALPHA_MAX))
-                if a_new == alpha:            # integrate only when unsaturated
-                    err_prev = err
+            # ---- PI controller with anti-windup (inactive during warm-up) ----
+            if np.isfinite(corroborated_fraction) and not in_warmup:
+                error = corroborated_fraction - ALPHA_TARGET
+                alpha_updated = (alpha + ALPHA_KP * (error - previous_error)
+                                 + ALPHA_KI * error)
+                alpha = float(min(max(alpha_updated, 0.0), ALPHA_MAX))
+                if alpha_updated == alpha:   # integrate only when unsaturated
+                    previous_error = error
             with torch.no_grad():
-                ep["corr_mass"] += corr_frac
-                ep["d_acc_real"] += float((torch.sigmoid(d_real_out) > 0.5).float().mean())
-                ep["d_acc_fake"] += float((torch.sigmoid(d_fake) < 0.5).float().mean())
-                ep["g_match"] += float(g_match.mean())
-                ep["dm_online"] += float(l_dm)
-                ep["nb"] += 1
+                epoch_metrics["corr_mass"] += corroborated_fraction
+                epoch_metrics["d_acc_real"] += float(
+                    (torch.sigmoid(score_real) > 0.5).float().mean())
+                epoch_metrics["d_acc_fake"] += float(
+                    (torch.sigmoid(score_generated) < 0.5).float().mean())
+                epoch_metrics["g_match"] += float(
+                    consistency_of_generated.mean())
+                epoch_metrics["dm_online"] += float(consistency_online_loss)
+                epoch_metrics["nb"] += 1
 
-        nb = max(int(ep["nb"]), 1)
-        print(f"  epoch {epoch:3d}/{args.epochs}  corr-pick={ep['corr_mass']/nb:.3f} "
-              f"alpha={alpha:.2f}  D-acc={ep['d_acc_real']/nb:.2f}/{ep['d_acc_fake']/nb:.2f} "
-              f"g_match={ep['g_match']/nb:+.2f}  dm-online={ep['dm_online']/nb:.3f} "
-              f"distinct={len(picks)} ({time.perf_counter()-t0:.0f}s)", flush=True)
+        num_batches = max(int(epoch_metrics["nb"]), 1)
+        print(f"  epoch {epoch:3d}/{args.epochs}  "
+              f"corr-pick={epoch_metrics['corr_mass']/num_batches:.3f} "
+              f"alpha={alpha:.2f}  "
+              f"D-acc={epoch_metrics['d_acc_real']/num_batches:.2f}"
+              f"/{epoch_metrics['d_acc_fake']/num_batches:.2f} "
+              f"g_match={epoch_metrics['g_match']/num_batches:+.2f}  "
+              f"dm-online={epoch_metrics['dm_online']/num_batches:.3f} "
+              f"distinct={len(distinct_picks)} "
+              f"({time.perf_counter()-epoch_start:.0f}s)", flush=True)
 
-        # Per-epoch snapshots start with the alpha ramp: warmup epochs are not
-        # generator candidates, the pressure epochs around the ramp are.
+        # Per-epoch snapshots start with the alpha ramp: warm-up epochs are
+        # not generator candidates, the pressure epochs around the ramp are.
         if (args.snapshot_every > 0 and epoch > ALPHA_WARMUP_EPOCHS
                 and epoch % args.snapshot_every == 0):
-            stem = args.out[:-3] if args.out.endswith(".pt") else args.out
-            snap_path = f"{stem}.ep{epoch:02d}.pt"
-            _save(snap_path)
-            print(f"  snapshot -> {snap_path}", flush=True)
+            checkpoint_stem = (args.out[:-3] if args.out.endswith(".pt")
+                               else args.out)
+            snapshot_path = f"{checkpoint_stem}.ep{epoch:02d}.pt"
+            save_checkpoint(snapshot_path)
+            print(f"  snapshot -> {snapshot_path}", flush=True)
 
-    # ---------- checkpoint ----------
-    _save(args.out)
+    # ---------- final checkpoint ----------
+    save_checkpoint(args.out)
     print(f"Saved KGSAGE-2 checkpoint to {args.out}", flush=True)
 
 

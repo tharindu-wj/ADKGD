@@ -63,7 +63,7 @@ def main():
         print(f"OK: resolve_dataset(path) -> name={cfg['name']}, path={cfg['path']}")
 
     # ---- SECTION 3: dual-discriminator architecture imports (candidate_v2) ----
-    section("SECTION 3: kgsage.gan.* (dual-discriminator) + kgsage.inference imports")
+    section("SECTION 3: kgsage.gan.* (dual-discriminator) + corruption generation imports")
 
     # CandidateScoringGenerator is the one and only architecture;
     # gumbel_softmax is the trainer's straight-through selection helper.
@@ -71,19 +71,19 @@ def main():
     print("OK: kgsage.gan.generator.{CandidateScoringGenerator, gumbel_softmax}")
 
     # The dual-discriminator training stack.
-    from kgsage.gan.d_real import DReal
-    from kgsage.gan.d_match import DMatch
-    from kgsage.gan.sketch import build_sketches
-    from kgsage.gan.candidates import CandidateSampler
-    print("OK: kgsage.gan.{d_real.DReal, d_match.DMatch, sketch.build_sketches, "
-          "candidates.CandidateSampler}")
+    from kgsage.gan.realism_discriminator import RealismDiscriminator
+    from kgsage.gan.consistency_discriminator import ConsistencyDiscriminator
+    from kgsage.gan.membership_sketch import build_membership_sketches
+    from kgsage.gan.candidate_sampler import CandidateSampler
+    print("OK: kgsage.gan.{RealismDiscriminator, ConsistencyDiscriminator, "
+          "build_membership_sketches, CandidateSampler}")
 
     # Importing the trainer transitively verifies the whole v2 dependency graph.
     from kgsage.gan import train as _train
     print("OK: kgsage.gan.train (the dual-discriminator trainer)")
 
-    from kgsage.inference import load_checkpoint, generate_negatives, render_stats as _rs
-    print("OK: kgsage.inference.{load_checkpoint, generate_negatives, render_stats}")
+    from kgsage.corruption_generation import load_checkpoint, generate_negatives, render_stats as _rs
+    print("OK: kgsage.corruption_generation.{load_checkpoint, generate_negatives, render_stats}")
 
     # ---- SECTION 4: load_kg on dummy_kg ----
     section("SECTION 4: load_kg on dummy_kg")

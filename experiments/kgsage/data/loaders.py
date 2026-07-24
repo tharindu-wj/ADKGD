@@ -5,9 +5,10 @@ directory. The loader is format-agnostic — works for FB15K-237, WN18RR,
 NELL-995, and any custom dataset in the same format.
 
 It returns integer (h, r, t) triples plus the string<->int vocabulary maps,
-which is everything the GAN trainer and inference need. It also returns a
-directed edge list (edge_index / edge_type) over the TRAIN graph, which the
-RGCN context encoder (kgsage.gan.encoder) consumes for message passing.
+which is everything the trainer and corruption generation need. It also
+returns a directed edge list (edge_index / edge_type) over the TRAIN graph,
+which the RGCN context encoder (kgsage.gan.neighbourhood_context_encoder)
+consumes for message passing.
 
 Vocab strategy: first-seen ordering. Train.txt is loaded first, so its entities
 and relations get the lowest IDs. This matches the standard KGE convention and

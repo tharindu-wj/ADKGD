@@ -39,9 +39,9 @@ def main():
     # ---- SECTION 2: Bridge end-to-end ----
     section("SECTION 2: kgsage_bridge.bridge end-to-end on dummy_kg")
 
-    # A v2 (candidate_v2) OR a legacy v1 checkpoint both work here: the bridge
-    # calls kgsage.inference.generate_negatives, which branches on the payload
-    # arch. The dummy checkpoint just needs to exist.
+    # The bridge calls kgsage.corruption_generation.generate_negatives, which
+    # requires a candidate_v2 checkpoint. The dummy checkpoint just needs to
+    # exist.
     ckpt = "experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt"
     if not os.path.isfile(ckpt):
         print(f"SKIP: {ckpt} not found.")
@@ -62,8 +62,8 @@ def main():
     rng = np.random.default_rng(42)
     # The bridge's generate() takes the detector's id maps as keyword args. Its
     # `adkgd_*` names are the ADKGD-side contract (the bridge is the designated
-    # ADKGD-aware glue); the standalone kgsage.inference API underneath is
-    # caller-agnostic (triples, id_maps).
+    # ADKGD-aware glue); the standalone kgsage.corruption_generation API
+    # underneath is caller-agnostic (triples, id_maps).
     negatives, stats = generate(
         positives,
         payload=payload,

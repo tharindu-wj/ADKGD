@@ -1,25 +1,29 @@
 """KGSAGE adversarial training stack (dual-discriminator, candidate_v2).
 
-Modules:
-    train      -- the trainer (python -m kgsage.gan.train): dual-discriminator
-                  game, PI-controlled penalty weight, per-epoch snapshots
-    generator  -- CandidateScoringGenerator + gumbel_softmax (ST selection)
-    d_real     -- realism discriminator (spectral-normed, wrong-anchor class)
-    d_match    -- neighbourhood-consistency discriminator (cross-attention)
-    encoder    -- RGCN warm-up producing the frozen context table E' (PyG-gated)
-    sketch     -- Bloom membership sketches of 1-2 hop neighbour sets
-    candidates -- per-triple candidate sampling with the logQ correction
+Modules, named after the paper's Methodology section:
+    train                         -- the trainer (python -m kgsage.gan.train):
+                                     dual-discriminator game, PI-controlled
+                                     penalty weight, per-epoch snapshots
+    generator                     -- CandidateScoringGenerator + gumbel_softmax
+    realism_discriminator         -- D_real: "could this triple be real?"
+    consistency_discriminator     -- D_match: "does the filler fit this
+                                     anchor's neighbourhood?"
+    neighbourhood_context_encoder -- RGCN warm-up producing the frozen
+                                     context table E' (needs PyG)
+    membership_sketch             -- Bloom sketches of 1-2 hop neighbour sets
+    candidate_sampler             -- per-triple candidate sets + logQ correction
 
-Generation (load checkpoint + produce negatives) lives at `kgsage.inference` --
-the same pipeline `kgsage_bridge` uses to feed the downstream detector.
+Corruption generation (load a checkpoint + produce negatives) lives at
+`kgsage.corruption_generation` -- the same pipeline `kgsage_bridge` uses to
+feed the downstream detector.
 """
 from kgsage.gan.generator import CandidateScoringGenerator, gumbel_softmax
-from kgsage.gan.d_real import DReal
-from kgsage.gan.d_match import DMatch
+from kgsage.gan.realism_discriminator import RealismDiscriminator
+from kgsage.gan.consistency_discriminator import ConsistencyDiscriminator
 
 __all__ = [
     "CandidateScoringGenerator",
     "gumbel_softmax",
-    "DReal",
-    "DMatch",
+    "RealismDiscriminator",
+    "ConsistencyDiscriminator",
 ]
