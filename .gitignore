@@ -10,3 +10,4 @@ time
 data/yago*
 *.pt
 experiments/kgsage/outputs
+.env

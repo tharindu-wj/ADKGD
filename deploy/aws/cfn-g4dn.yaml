@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  One g4dn.xlarge Spot GPU box for KGSAGE/ADKGD training. The instance runs
+  deploy/aws/bootstrap.sh on first boot (via user-data), so it comes up
+  training-ready -- you just SSH in and run deploy/aws/run.sh. `delete-stack`
+  tears the whole thing down (instance + SG + role + spot request) in one command.
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing EC2 key pair name for SSH.
+  YourIp:
+    Type: String
+    Description: Your public IP as CIDR for SSH ingress, e.g. 1.2.3.4/32 (get it with `curl ifconfig.me`).
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$'
+  InstanceType:
+    Type: String
+    Default: g4dn.xlarge
+    AllowedValues: [g4dn.xlarge, g4dn.2xlarge, g5.xlarge]
+    Description: g4dn.xlarge=T4/16GB RAM; g4dn.2xlarge=same T4/32GB RAM; g5.xlarge=A10G/24GB VRAM.
+  Branch:
+    Type: String
+    Default: dev_gan_2
+    Description: Git branch to clone -- the KGSAGE-2 launchers live on dev_gan_2.
+  VolumeSizeGb:
+    Type: Number
+    Default: 100
+  DlamiAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id
+    Description: >
+      Resolved at deploy time from the SSM public parameter -- no hardcoded,
+      region-specific AMI id. If deploy fails on this, list current names with:
+      aws ssm get-parameters-by-path --path /aws/service/deeplearning/ami --recursive --query 'Parameters[].Name'
+
+Resources:
+  Sg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SSH from your IP only (Session Manager covers the rest).
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref YourIp
+
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      # Session Manager = browser/CLI shell with no key or open port, as an SSH
+      # fallback. Add an S3 policy here if you want sync_out.sh to have creds.
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref Role]
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref DlamiAmi
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds: [!Ref Sg]
+      InstanceMarketOptions:
+        MarketType: spot
+        SpotOptions:
+          SpotInstanceType: one-time
+          InstanceInterruptionBehavior: terminate
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref VolumeSizeGb
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: adkgd-kgsage
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -x
+          # Run setup as the 'ubuntu' user -- conda + the NVIDIA driver live in
+          # its login environment, not root's. Logs: /var/log/cloud-init-output.log
+          sudo -u ubuntu -i bash -c 'curl -fsSL https://raw.githubusercontent.com/tharindu-wj/ADKGD/${Branch}/deploy/aws/bootstrap.sh | BRANCH=${Branch} bash'
+
+Outputs:
+  SshCommand:
+    Description: SSH in (swap in your key file).
+    Value: !Sub 'ssh -i <your-key>.pem ubuntu@${Instance.PublicDnsName}'
+  PublicIp:
+    Value: !GetAtt Instance.PublicIp
+  FirstBootLog:
+    Description: Watch bootstrap progress here after SSHing in.
+    Value: 'tail -f /var/log/cloud-init-output.log'

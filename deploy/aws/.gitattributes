@@ -1,0 +1,4 @@
+# Deploy scripts are consumed by bash on Linux (EC2). Force LF on checkout so a
+# Windows clone never ships CRLF that bash chokes on (`/bin/bash^M: bad interpreter`).
+* text=auto eol=lf
+*.sh text eol=lf
