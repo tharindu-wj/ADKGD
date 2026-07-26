@@ -66,14 +66,15 @@ def main():
     # ---- SECTION 3: dual-discriminator architecture imports (candidate_v2) ----
     section("SECTION 3: kgsage.gan.* (dual-discriminator) + corruption generation imports")
 
-    # CandidateScoringGenerator (G) is the one and only architecture;
-    # gumbel_softmax is the trainer's straight-through selection helper.
+    # CandidateScoringGenerator (the generator) is the one and only
+    # architecture; gumbel_softmax is the trainer's straight-through selection
+    # helper.
     from kgsage.gan.generator import CandidateScoringGenerator, gumbel_softmax
     print("OK: kgsage.gan.generator.{CandidateScoringGenerator, gumbel_softmax}")
 
-    # The rest of the adversarial training stack: D_real judges "could this
-    # triple be real?", D_match judges "does the filler fit this anchor's
-    # neighbourhood?".
+    # The rest of the adversarial training stack: the plausibility
+    # discriminator judges "could this triple be real?", the neighbourhood
+    # discriminator judges "does the filler fit this anchor's neighbourhood?".
     from kgsage.gan.plausibility_discriminator import PlausibilityDiscriminator
     from kgsage.gan.neighbourhood_discriminator import NeighbourhoodDiscriminator
     from kgsage.gan.membership_sketch import build_membership_sketches

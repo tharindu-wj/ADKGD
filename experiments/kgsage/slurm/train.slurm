@@ -77,8 +77,8 @@ echo "----------------------------------------------------------------------"
 echo "Done $(date). Checkpoint: $CKPT_PATH"
 # corr-pick= is the CORROBORATED-pick fraction (not "corrupted"); alpha= is the
 # weight on the neighbourhood penalty, set by the PI controller; dm-online=
-# tracks the neighbourhood discriminator D_match. All three are frozen log
-# tokens -- keep them so old and new logs stay comparable.
+# tracks the neighbourhood discriminator. All three are frozen log tokens
+# -- keep them so old and new logs stay comparable.
 echo "Bring back the checkpoint AND this .out.txt (the corr-pick/alpha/dm-online"
 echo "trajectories are the training-health record). Then select the epoch:"
 echo "  python experiments/kgsage/cli/knockout_eval.py --ckpt <each .epNN.pt> --data $DATA_DIR"

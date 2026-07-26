@@ -9,11 +9,12 @@ The pipeline phases of the method, in this one file:
      neighbourhood are built alongside.
   Phase 2 — Adversarial Generator Training — the candidate-scoring generator
      plays against two discriminators over the frozen E':
-       plausibility discriminator (D_real)   "could this triple be real?"
-                                                                  G pushes HIGH
-       neighbourhood discriminator (D_match) "does the filler fit THIS
-                                   anchor's neighbourhood?"        G pushes LOW
-     Generator loss:  L_G = -D_real + alpha * relu(D_match - margin).
+       the plausibility discriminator   "could this triple be real?"
+                                        the generator pushes this HIGH
+       the neighbourhood discriminator  "does the filler fit THIS anchor's
+                                        neighbourhood?"
+                                        the generator pushes this LOW
+     Generator loss: -(plausibility) + alpha * relu(neighbourhood fit - margin)
      alpha is set by a PI controller so that the corroborated fraction — the
      share of the generator's picks that the training graph corroborates —
      stays at CORROBORATION_TARGET. Step 2a pretrains both discriminators;
@@ -71,14 +72,19 @@ HEAD, TAIL = 0, 2
 EMBEDDING_DIM                 = 64     # width of every vector (E', relations)
 RGCN_NUM_LAYERS               = 2      # RGCN depth -> 2-hop context
 SKETCH_BITS                   = 8192   # Bloom membership-sketch length
-NUM_NEIGHBOURS_SAMPLED        = 32     # neighbours D_match attends over
+NUM_NEIGHBOURS_SAMPLED        = 32     # neighbours the neighbourhood
+                                       # discriminator attends over
 NUM_CANDIDATES                = 256    # candidates scored per triple (decode = full pool)
 
 # -- how long each stage runs (they happen in this order) --
 RGCN_WARMUP_EPOCHS            = 10     # Phase 1:  build E' (skipped with --init_context_from)
 RGCN_WARMUP_BATCH_SIZE        = 4096   # Phase 1:  batch size for that warm-up
-PLAUSIBILITY_PRETRAIN_EPOCHS  = 2      # Phase 2a: train D_real on its own, before the game
-NEIGHBOURHOOD_PRETRAIN_EPOCHS = 2      # Phase 2a: train D_match on its own, before the game
+PLAUSIBILITY_PRETRAIN_EPOCHS  = 2      # Phase 2a: train the plausibility
+                                       #           discriminator on its own,
+                                       #           before the game
+NEIGHBOURHOOD_PRETRAIN_EPOCHS = 2      # Phase 2a: train the neighbourhood
+                                       #           discriminator on its own,
+                                       #           before the game
 EPOCHS_BEFORE_CONTRADICTION   = 2      # Phase 2b: opening game epochs that run at alpha = 0,
                                        #           i.e. plausibility only. The game's total
                                        #           length is the --epochs CLI flag.
@@ -87,9 +93,11 @@ EPOCHS_BEFORE_CONTRADICTION   = 2      # Phase 2b: opening game epochs that run 
 BATCH_SIZE                    = 256
 GUMBEL_TEMPERATURE            = 0.5    # Gumbel-Softmax temperature (train + decode)
 GENERATOR_LEARNING_RATE       = 1e-4
-PLAUSIBILITY_LEARNING_RATE    = 3e-4   # D_real
-NEIGHBOURHOOD_LEARNING_RATE   = 1e-4   # D_match's online updates during the game
-                                       # (a frozen D_match gets exploited by G)
+PLAUSIBILITY_LEARNING_RATE    = 3e-4   # the plausibility discriminator
+NEIGHBOURHOOD_LEARNING_RATE   = 1e-4   # the neighbourhood discriminator's
+                                       # online updates during the game (a
+                                       # frozen one gets exploited by the
+                                       # generator)
 
 # -- the dial that decides how hard the corruptions are --
 CORROBORATION_TARGET          = 0.13   # PI set-point: the share of the generator's picks
@@ -300,7 +308,7 @@ def main() -> None:
 
     # ---------------------------------------------------------------------
     # Phase 2a — discriminator pretraining, part 1 of 2: the neighbourhood
-    # discriminator (D_match), on pairs built purely from data —
+    # discriminator, on pairs built purely from data —
     # (anchor, its true filler) = fits, (anchor, another anchor's
     # same-relation filler) = does not fit.
     # ---------------------------------------------------------------------
@@ -308,7 +316,8 @@ def main() -> None:
     neighbourhood_pretrain_optimizer = torch.optim.AdamW(
         neighbourhood_discriminator.parameters(), lr=1e-3)
     binary_cross_entropy = torch.nn.BCEWithLogitsLoss()
-    print(f"D_match pretraining ({NEIGHBOURHOOD_PRETRAIN_EPOCHS} epochs)...", flush=True)
+    print(f"Neighbourhood discriminator pretraining "
+          f"({NEIGHBOURHOOD_PRETRAIN_EPOCHS} epochs)...", flush=True)
     for epoch in range(1, NEIGHBOURHOOD_PRETRAIN_EPOCHS + 1):
         shuffled_triples = python_rng.sample(train_triples, len(train_triples))
         total_loss = num_batches = 0
@@ -347,14 +356,14 @@ def main() -> None:
     # one gets exploited (the generator converges onto its blind spots). It
     # keeps training during the game on the generator's own picks, labelled
     # by EXACT graph corroboration — so every blind spot the generator finds
-    # is corrected on the next batch. The oracle only supplies labels; D_match
-    # remains a learned discriminator.
+    # is corrected on the next batch. The oracle only supplies labels; the
+    # neighbourhood discriminator remains a learned discriminator.
     neighbourhood_online_optimizer = torch.optim.AdamW(
         neighbourhood_discriminator.parameters(), lr=NEIGHBOURHOOD_LEARNING_RATE)
 
     # ---------------------------------------------------------------------
     # Phase 2a — discriminator pretraining, part 2 of 2: build the generator
-    # and the plausibility discriminator (D_real), then pretrain D_real. It
+    # and the plausibility discriminator, then pretrain that discriminator. It
     # must already be anchor-specific BEFORE the generator starts learning, or
     # the generator collapses straight onto one universal contradiction.
     # ---------------------------------------------------------------------
@@ -366,15 +375,16 @@ def main() -> None:
     plausibility_optimizer = torch.optim.Adam(plausibility_discriminator.parameters(),
                                          lr=PLAUSIBILITY_LEARNING_RATE)
 
-    # tuned constants for EVERY D_real update — used here in Phase 2a and again
-    # in the Phase 2b game further down:
+    # tuned constants for EVERY plausibility discriminator update — used here in
+    # Phase 2a and again in the Phase 2b game further down:
     #   LABEL_SMOOTHING          real triples are labelled 0.9 instead of 1.0, so
-    #                            D_real never becomes absolutely certain (a
-    #                            saturated discriminator gives G no gradient).
+    #                            the plausibility discriminator never becomes
+    #                            absolutely certain (a saturated discriminator
+    #                            gives the generator no gradient).
     #   WRONG_ANCHOR_LOSS_WEIGHT weight of the GAN-CLS third class: a REAL filler
     #                            shown with the WRONG anchor, labelled fake. This
-    #                            is what forces D_real to judge the anchor rather
-    #                            than the filler alone.
+    #                            is what forces the plausibility discriminator to
+    #                            judge the anchor rather than the filler alone.
     LABEL_SMOOTHING = 0.1
     WRONG_ANCHOR_LOSS_WEIGHT = 1.0
 
@@ -398,8 +408,8 @@ def main() -> None:
                 head_context, relation_ids, context_table[random_tails.to(device)])
             # Third class: the real tail presented with a SAME-RELATION wrong
             # head. A random wrong head would usually be type-incompatible,
-            # letting D_real win on type alone; same-relation wrong heads
-            # force it to judge the individual anchor.
+            # letting the plausibility discriminator win on type alone;
+            # same-relation wrong heads force it to judge the individual anchor.
             wrong_anchors = torch.tensor([
                 triples_by_relation[int(r[i])][
                     python_rng.randrange(len(triples_by_relation[int(r[i])]))][0]
@@ -419,7 +429,8 @@ def main() -> None:
             plausibility_optimizer.zero_grad(); loss.backward(); plausibility_optimizer.step()
             total_loss += loss.item(); num_batches += 1
         # "dreal-pre" is a frozen log prefix — keep it so old logs stay
-        # comparable; it marks the D_real pretraining epochs.
+        # comparable; "dreal" = the plausibility discriminator, and this prefix
+        # marks its pretraining epochs.
         print(f"  dreal-pre {epoch}/{PLAUSIBILITY_PRETRAIN_EPOCHS} "
               f"loss={total_loss/max(num_batches,1):.4f}", flush=True)
 
@@ -432,9 +443,9 @@ def main() -> None:
             # architecture and is compared as a literal by the loaders.
             "arch": "candidate_v2",
             "generator_state": generator.state_dict(),
-            # frozen key; dmatch = D_match, the neighbourhood discriminator
+            # frozen key; "dmatch" = the neighbourhood discriminator
             "dmatch_state": neighbourhood_discriminator.state_dict(),
-            # frozen key; dreal = D_real, the plausibility discriminator
+            # frozen key; "dreal" = the plausibility discriminator
             "dreal_state": plausibility_discriminator.state_dict(),
             "context_embeddings": context_table.cpu(),
             # frozen key; "sketches" are the Bloom membership sketches
@@ -457,15 +468,17 @@ def main() -> None:
     # Phase 2b — the dual-discriminator game.
     # ---------------------------------------------------------------------
     # tuned constants for the contradiction-pressure controller. `alpha` is the
-    # weight on the neighbourhood penalty in L_G; a PI controller nudges it each
-    # batch so the corroborated fraction tracks CORROBORATION_TARGET.
+    # weight on the neighbourhood penalty in the generator loss; a PI controller
+    # nudges it each batch so the corroborated fraction tracks
+    # CORROBORATION_TARGET.
     ALPHA_INITIAL = 1.0           # what alpha restarts at when pressure switches on
     ALPHA_MAX = 10.0              # anti-windup clamp: stops alpha running away when
                                   # the target is unreachable for this dataset
     PI_PROPORTIONAL_GAIN = 2.0    # reacts to the CURRENT error
     PI_INTEGRAL_GAIN = 0.2        # reacts to the ACCUMULATED error
-    CONTRADICTION_MARGIN = 0.0    # hinge: alpha * relu(D_match - margin), so there
-                                  # is no reward for contradicting past the margin
+    CONTRADICTION_MARGIN = 0.0    # hinge: alpha * relu(neighbourhood fit -
+                                  # margin), so there is no reward for
+                                  # contradicting past the margin
 
     alpha = ALPHA_INITIAL
     previous_error = 0.0
@@ -544,10 +557,11 @@ def main() -> None:
             if not bool(valid_rows.any()):
                 continue
             anchor_context = context_table[anchor_entities.to(device)]
-            # D_real's own reading of the generated triple, on picks detached
-            # from G. The generator step below re-reads fresh picks WITH
-            # gradients as plausibility_of_generated_for_g — two different
-            # tensors, so they carry two different names.
+            # The plausibility discriminator's own reading of the generated
+            # triple, on picks detached from the generator. The generator step
+            # below re-reads fresh picks WITH gradients as
+            # plausibility_of_generated_for_g — two different tensors, so they
+            # carry two different names.
             plausibility_of_generated_for_d = plausibility_discriminator(
                 anchor_context[valid_rows], r.to(device)[valid_rows],
                 generated_embedding[valid_rows])
@@ -575,7 +589,8 @@ def main() -> None:
                                        else context_table[h.to(device)])
                 # The wrong anchor must be sampled from the ANCHOR slot:
                 # heads when the tail is corrupted, tails when the head is —
-                # otherwise D_real could reject by slot type alone.
+                # otherwise the plausibility discriminator could reject by slot
+                # type alone.
                 wrong_anchor_slot = 0 if slot == TAIL else 2
                 wrong_anchors = torch.tensor([
                     triples_by_relation[int(r[i])][python_rng.randrange(
@@ -672,10 +687,13 @@ def main() -> None:
         #               PI controller's measurement. Here "corr" means
         #               CORROBORATED; in the eval CSVs corr_* means CORRUPTED.
         #   alpha=      current weight on the neighbourhood penalty
-        #   D-acc=      D_real's accuracy, real/generated
-        #   g_match=    D_match's mean fit score for the generator's picks
-        #               (more negative = more contradictory)
-        #   dm-online=  BCE of D_match's online update on those same picks
+        #   D-acc=      the plausibility discriminator's accuracy,
+        #               real/generated
+        #   g_match=    the neighbourhood discriminator's mean fit score for
+        #               the generator's picks (more negative = more
+        #               contradictory)
+        #   dm-online=  BCE of the neighbourhood discriminator's online update
+        #               on those same picks
         #   distinct=   how many distinct entities got picked this epoch
         print(f"  epoch {epoch:3d}/{args.epochs}  "
               f"corr-pick={epoch_metrics['corroborated_fraction']/num_batches:.3f} "

@@ -30,18 +30,30 @@
 
 ## 2. Components
 
-| Concept | **Canonical** identifier | Short symbol (prose/maths) | FROZEN aliases (keep + decoder comment) |
-|---|---|---|---|
-| Judge: "could this triple be real?" | `PlausibilityDiscriminator`, `plausibility_discriminator`, `plausibility_*` | **D_real** | `dreal_state`, `dreal-pre`, `D-acc=` |
-| Judge: "does the filler fit this anchor's neighbourhood?" | `NeighbourhoodDiscriminator`, `neighbourhood_discriminator`, `neighbourhood_*` | **D_match** | `dmatch_state`, `dm-online=`, `g_match=` |
-| Proposes the corruption | `CandidateScoringGenerator`, `generator` | **G** | `generator_state` |
-| Builds the context table | `NeighbourhoodContextEncoder`, `context_encoder` | — | — |
-| Throwaway warm-up decoder | `distmult_decoder` | — | — |
-| Per-triple candidate sets | `CandidateSampler`, `candidate_sampler` | — | `cand_k`, `cand_tower` |
+> **One name per component — no short symbols.** Prose, comments and docstrings
+> use the full words: **the plausibility discriminator** and **the neighbourhood
+> discriminator**. The abbreviations `D_real` / `D_match` are **retired from all
+> writing**; they survive only inside the frozen tokens listed below, where each
+> carries a decoder comment. Writing `D_real` in a comment re-introduces exactly
+> the two-names-for-one-thing problem this glossary exists to remove.
 
-**Retired** (do not use): "realism discriminator", "consistency discriminator",
-"real-fact discriminator", "Plausibility-anchored discriminator", "critic",
-"matcher"/"matching-aware D", bare "Discriminator", `KGSAGEEncoder`.
+| Concept | **Canonical** identifier | Says, in words | FROZEN aliases (keep + decoder comment) |
+|---|---|---|---|
+| Judge: "could this triple be real?" | `PlausibilityDiscriminator`, `plausibility_discriminator`, `plausibility_*` | *the plausibility discriminator* | `dreal_state`, `dreal-pre`, `D-acc=` |
+| Judge: "does the filler fit this anchor's neighbourhood?" | `NeighbourhoodDiscriminator`, `neighbourhood_discriminator`, `neighbourhood_*` | *the neighbourhood discriminator* | `dmatch_state`, `dmatch`, `dm-online=`, `g_match=` |
+| Proposes the corruption | `CandidateScoringGenerator`, `generator` | *the generator* | `generator_state` |
+| Builds the context table | `NeighbourhoodContextEncoder`, `context_encoder` | *the context encoder* | — |
+| Throwaway warm-up decoder | `distmult_decoder` | *the DistMult decoder* | — |
+| Per-triple candidate sets | `CandidateSampler`, `candidate_sampler` | *the candidate sampler* | `cand_k`, `cand_tower` |
+
+Write the generator's objective in words too, not symbols:
+
+> maximise **plausibility**, minus α times the hinged **neighbourhood fit**.
+
+**Retired** (do not use): `D_real`, `D_match`, `G` as a standalone symbol,
+"realism discriminator", "consistency discriminator", "real-fact discriminator",
+"Plausibility-anchored discriminator", "critic", "matcher"/"matching-aware D",
+bare "Discriminator", `KGSAGEEncoder`.
 
 ---
 
@@ -114,8 +126,8 @@ Inside Phase 2, the first epochs run with α = 0: call this the
 
 > The constant is deliberately *not* named `PLAUSIBILITY_ONLY_EPOCHS`: that read
 > as a sibling of `PLAUSIBILITY_PRETRAIN_EPOCHS`, but the two are different in
-> kind — one counts **pretraining** epochs for D_real *before* the game, the
-> other counts **game** epochs run at α = 0.
+> kind — one counts **pretraining** epochs for the plausibility discriminator
+> *before* the game, the other counts **game** epochs run at α = 0.
 
 **Retired**: "Phase 0b", "Phase B", "Stage 1/2", "B1a", and using "Phase N" for
 investigation rounds or thesis milestones — those are **"Investigation Round N"**

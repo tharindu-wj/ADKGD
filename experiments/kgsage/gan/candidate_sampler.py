@@ -22,8 +22,8 @@ Design choices, in plain terms:
     identical correction).
 
 Nothing here judges whether the anchor's neighbourhood corroborates a
-candidate — that is D_match's job. This module only decides which candidates
-get to be scored at all.
+candidate — that is the neighbourhood discriminator's job. This module only
+decides which candidates get to be scored at all.
 """
 
 from __future__ import annotations

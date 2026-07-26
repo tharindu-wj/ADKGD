@@ -3,7 +3,7 @@
 > ⚠️ **HISTORICAL DOCUMENT — path not taken.** The "LP-in-the-loop" design (a
 > frozen link predictor supplying the plausibility signal) was superseded: the
 > shipped architecture is **LP-free**, with a learned `PlausibilityDiscriminator`
-> (D_real) in place of the frozen predictor. Kept for provenance. Current names:
+> in place of the frozen predictor. Kept for provenance. Current names:
 > `KGSAGE_glossary.md`.
 
 Feasibility workup 2026-07-03 (3-agent: equilibrium analysis, prior-art, code/compute). Verdict:
@@ -11,18 +11,18 @@ Feasibility workup 2026-07-03 (3-agent: equilibrium analysis, prior-art, code/co
 fallback/baseline arm = A-iv (anchored fine-tuned ComplEx, honestly framed as the KBGAN/IGAN control).**
 
 > **Vocabulary.** This plan predates the dual-discriminator architecture: its single judge "D" is
-> the design that became **D_real**, the plausibility discriminator ("could this triple be real?").
-> The neighbourhood discriminator **D_match** does not exist yet at this point in the history.
+> the design that became **the plausibility discriminator** ("could this triple be real?").
+> **The neighbourhood discriminator** does not exist yet at this point in the history.
 > "Milestone 2" here is a project milestone, not the pipeline's Phase 2.
 
 ## 1. Variant scoreboard (1–5, 5 best: achieves-goal / stability / effort / GAN-load-bearing)
 
 | Variant | D | Scores | Verdict |
 |---|---|---|---|
-| A-i | fully fine-tuned ComplEx + frozen fence | 2/1/3/2 | dominated: no fixed point (D depresses whatever G emits → cycling); ComplEx has no context mechanism, so fine-tuning cannot encode neighbourhood contradiction — only catastrophic forgetting of the MRR-0.348/0.475 calibration; the anchor that stabilises it pins D back to the frozen scorer |
-| **A-ii** | **frozen ComplEx score + trainable residual head f_θ over frozen-warmup RGCN features** | **4/4/3/4** | **primary: f_θ's optimum is by construction the contextual signal ComplEx cannot explain; G's optimum = most neighbourhood-consistent filler that is still false (= Alice→NewZealand); no forgetting, no collusion; worst case degrades gracefully into Option B's band sampler** |
+| A-i | fully fine-tuned ComplEx + frozen fence | 2/1/3/2 | dominated: no fixed point (D depresses whatever the generator emits → cycling); ComplEx has no context mechanism, so fine-tuning cannot encode neighbourhood contradiction — only catastrophic forgetting of the MRR-0.348/0.475 calibration; the anchor that stabilises it pins D back to the frozen scorer |
+| **A-ii** | **frozen ComplEx score + trainable residual head f_θ over frozen-warmup RGCN features** | **4/4/3/4** | **primary: f_θ's optimum is by construction the contextual signal ComplEx cannot explain; the generator's optimum = most neighbourhood-consistent filler that is still false (= Alice→NewZealand); no forgetting, no collusion; worst case degrades gracefully into Option B's band sampler** |
 | A-iii | repo pair-MLP over frozen features, ComplEx fence only | 2/2/4/2 | keeps the pair-shortcut + collusion surface; dominated by A-ii |
-| A-iv | no RGCN, simple G vs fine-tuned ComplEx | 2/2/5/1 | literally IGAN (AAAI'18)'s GAN-pretrain setting modulo Gumbel-vs-REINFORCE — keep as the minimal control arm, not a contribution |
+| A-iv | no RGCN, a simple generator vs fine-tuned ComplEx | 2/2/5/1 | literally IGAN (AAAI'18)'s GAN-pretrain setting modulo Gumbel-vs-REINFORCE — keep as the minimal control arm, not a contribution |
 
 ## 2. A-ii exact specification
 
@@ -30,18 +30,21 @@ Notation: s_f = frozen LibKGE ComplEx (post MRR gate); s_z = per-relation z-scor
 pool (raw ComplEx scores are uncalibrated across relations); E' = RGCN context table, **frozen after
 warmup**; f_θ = 2-layer MLP(128) over the CANDIDATE triple only [E'[h'] | ρ_r' | E'[t']] (no anchor
 input — kills the relation-match pair shortcut by construction), output β·tanh (β ≈ 1σ of within-band
-spread — bounds the residual so total score can never leave the s_f band). D_real(x) = s_z(x) + f_θ(x).
+spread — bounds the residual so total score can never leave the s_f band). The plausibility
+discriminator scores a candidate as s_z(x) + f_θ(x).
 
 - **Step 0 — encoder warmup (~50 lines):** RGCN + DistMult decoder, BCE vs uniform corruptions,
-  ~10 epochs on the train graph → `encoder.eval()` + freeze. Encoder LEAVES G's optimizer
+  ~10 epochs on the train graph → `encoder.eval()` + freeze. Encoder LEAVES the generator's optimizer
   (train.py:319-322) — mandatory, else representation collusion returns.
-- **Step 1 — G warm start:** 2 epochs CE toward Option B band-sampler draws, then weight 0 forever.
-  **No recon term in the adversarial phase** (the 75-86× distillation pathology is gone by deletion).
+- **Step 1 — generator warm start:** 2 epochs CE toward Option B band-sampler draws, then weight 0
+  forever. **No recon term in the adversarial phase** (the 75-86× distillation pathology is gone by
+  deletion).
 - **Step 2 — adversarial loop (1:1 steps):**
-  - D_real step (θ only): positives = train triples; fakes = 50% G hard samples + 25% band-sampler
-    negatives + 25% type-valid random + 10% replay buffer (damps whack-a-mole cycling; the non-G
-    fakes keep f_θ grounded in general contextual realness). L_D = BCE + λ_res·mean(f_θ²), Adam 3e-4.
-  - G step: logits masked to the allowed pool (type pool − all-splits known-true fillers − self;
+  - Plausibility-discriminator step (θ only): positives = train triples; fakes = 50% hard samples
+    from the generator + 25% band-sampler negatives + 25% type-valid random + 10% replay buffer
+    (damps whack-a-mole cycling; the fakes that do not come from the generator keep f_θ grounded in
+    general contextual realness). L_D = BCE + λ_res·mean(f_θ²), Adam 3e-4.
+  - Generator step: logits masked to the allowed pool (type pool − all-splits known-true fillers − self;
     training-time masks are mandatory); **straight-through Gumbel** (hard forward / soft backward —
     replaces the τ=1.0 soft-mixture artifact); L_G = −[s_z_soft + f_soft] + λ_fence·max(0, s_f(g) −
     (s_f(true) − m)) − λ_H·H(masked logits), m = 0.5σ_r, λ_H = 0.01, Adam 1e-4 β(0.5, 0.999).
@@ -51,11 +54,12 @@ spread — bounds the residual so total score can never leave the s_f band). D_r
 - **5 per-epoch diagnostics:** truth-drift (fence-hit %, LP-top-1 rate; alarm >25%); residual health
   (f_θ-alone AUC on held-out real-vs-band pairs, want 0.55–0.85; ~0.5 = dead channel, ~1.0 =
   shortcut; |corr(f_θ, s_z)| < 0.3); hardness band (median s_f-rank of emitted negatives ≈ 2–20);
-  diversity (distinct fillers/relation, entropy, z-sensitivity); game balance (`D-acc=` on the G-slice
-  0.6–0.8, alarm >0.95 for 3 epochs — `D-acc=` is a frozen log token for D_real's accuracy).
+  diversity (distinct fillers/relation, entropy, z-sensitivity); game balance (`D-acc=` on the
+  generator slice 0.6–0.8, alarm >0.95 for 3 epochs — `D-acc=` is a frozen log token for the
+  plausibility discriminator's accuracy).
 
 Escalation ladder if the residual is dead: more warmup epochs → dim 128 → let f_θ's optimizer (never
-G's) fine-tune the last RGCN layer → report honestly as fenced-ComplEx sampling.
+the generator's) fine-tune the last RGCN layer → report honestly as fenced-ComplEx sampling.
 
 ## 3. Effort, compute, reuse (on top of Option B)
 

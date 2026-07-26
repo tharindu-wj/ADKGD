@@ -23,13 +23,12 @@ Modules, named after the paper's Methodology section:
   Phase 2 -- Adversarial Generator Training
     candidate_sampler             -- CandidateSampler: per-triple candidate
                                      sets + the logQ correction
-    generator                     -- CandidateScoringGenerator (G) +
-                                     gumbel_softmax
-    plausibility_discriminator    -- PlausibilityDiscriminator (D_real):
-                                     "could this triple be real?"
-    neighbourhood_discriminator   -- NeighbourhoodDiscriminator (D_match):
-                                     "does the filler fit this anchor's
-                                     neighbourhood?"
+    generator                     -- CandidateScoringGenerator (the generator)
+                                     + gumbel_softmax
+    plausibility_discriminator    -- PlausibilityDiscriminator: "could this
+                                     triple be real?"
+    neighbourhood_discriminator   -- NeighbourhoodDiscriminator: "does the
+                                     filler fit this anchor's neighbourhood?"
     train                         -- the trainer (python -m kgsage.gan.train):
                                      the dual-discriminator game with a PI
                                      controller on alpha, the weight of the

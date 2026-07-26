@@ -1,11 +1,12 @@
-"""The neighbourhood discriminator D_match (paper Phase 2: Adversarial
-Generator Training).
+"""The neighbourhood discriminator (paper Phase 2: Adversarial Generator
+Training).
 
-D_match answers the second question about a candidate: "does this filler FIT
-the anchor's neighbourhood?" It cross-attends the candidate's E' row against a
-sample of the anchor's ACTUAL neighbour rows of E' — deliberately never a
-single pooled vector, because a d-dimensional pooled code cannot represent
-membership over neighbour sets larger than d (Wagstaff et al.).
+The neighbourhood discriminator answers the second question about a candidate:
+"does this filler FIT the anchor's neighbourhood?" It cross-attends the
+candidate's E' row against a sample of the anchor's ACTUAL neighbour rows of
+E' — deliberately never a single pooled vector, because a d-dimensional pooled
+code cannot represent membership over neighbour sets larger than d (Wagstaff et
+al.).
 
 Training pairs are built purely from data:
 
@@ -15,10 +16,11 @@ Training pairs are built purely from data:
 
 Popular hub entities appear equally in both classes, so global popularity
 carries no label signal — the only way to score well is to genuinely compare
-the candidate against the neighbour set. The generator G is trained to push
-this score DOWN (produce fillers the anchor's neighbourhood does NOT
-corroborate), while D_real (plausibility_discriminator.py) keeps those fillers
-realistic. The two together are the dual-discriminator architecture.
+the candidate against the neighbour set. The generator is trained to push this
+score DOWN (produce fillers the anchor's neighbourhood does NOT corroborate),
+while the plausibility discriminator (plausibility_discriminator.py) keeps
+those fillers realistic. The two judges together are the dual-discriminator
+architecture.
 
 The direct anchor-candidate edge is excluded from the neighbour sample by the
 training-data builder; otherwise "fits" could be read off trivially.
@@ -37,9 +39,10 @@ class NeighbourhoodDiscriminator(nn.Module):
     the state-dict keys stored inside every saved checkpoint, so renaming them
     makes those checkpoints unloadable. The locked generator_*.pt artifacts
     carry these weights under the payload key "dmatch_state" (frozen key;
-    `dmatch` = D_match, this neighbourhood discriminator — the same
-    abbreviation appears in the training log as the tokens `dm-online=` and
-    `g_match=`).
+    "dmatch" = the neighbourhood discriminator, this module). The same
+    shorthand appears in the training log as `dm-online=`, the BCE of this
+    discriminator's online update, and `g_match=`, its mean fit score for the
+    candidates the generator picked.
     """
 
     def __init__(self, dim: int = 64, d_model: int = 64, hidden: int = 128,

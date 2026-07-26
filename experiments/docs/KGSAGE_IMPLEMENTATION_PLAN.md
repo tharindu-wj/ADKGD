@@ -13,8 +13,8 @@ Line references verified against `dev_gan_1` (clean tree, 2026-07-03).
 
 > **Numbering + vocabulary.** M0–M4 below are **project milestones**, not the pipeline's
 > Phase 1/2/3 and not investigation rounds. This plan predates the dual-discriminator
-> architecture: where it says "D" it means the single judge that later became **D_real**, the
-> plausibility discriminator. See `KGSAGE_glossary.md`.
+> architecture: where it says "D" it means the single judge that later became **the plausibility
+> discriminator**. See `KGSAGE_glossary.md`.
 
 ## 0. Flagged decisions (brief §8: "pause and flag") — resolve before/while M1
 
@@ -82,10 +82,10 @@ near-misses; KGE MRR gate passes.
 ## 3. Milestone M2 — Make the GAN earn its name
 
 `experiments/kgsage/gan/train.py`, `models.py`:
-- **D_real positive class = (anchor, related-real-triple)** — a second real triple sharing h or (h,r)
-  with the anchor (NOT (anchor, anchor): degenerate identity check; NOT the sampler target as now,
-  L133-141). One-sided label smoothing 0.9; optional spectral norm on D_real (pick ONE stabilizer set
-  up front).
+- **Positive class for the plausibility discriminator = (anchor, related-real-triple)** — a second
+  real triple sharing h or (h,r) with the anchor (NOT (anchor, anchor): degenerate identity check;
+  NOT the sampler target as now, L133-141). One-sided label smoothing 0.9; optional spectral norm on
+  the plausibility discriminator (pick ONE stabilizer set up front).
 - **Anti-truth guardrails** (the new equilibrium's failure mode is generating TRUE-but-unobserved facts,
   plus the copy equilibrium — 2/3 of entity-head supervision is currently copy-the-truth with no mask):
   training-time true-value + type-pool masks on the corrupted slot's logits (mirror inference);
@@ -99,12 +99,13 @@ near-misses; KGE MRR gate passes.
 - Arms: `--arm {full, adv_only, recon_only, sampler_direct}`. `sampler_direct` emits the M1 sampler's
   output with no generator (needs E' from a trained run — note the arm cannot train the encoder itself).
 - Per-epoch drift diagnostics (these become paper curves): pre-filter would-have-collided rate,
-  fraction of candidates KGE-ranked ≤10 / above the true value, raw-argmax copy rate, D_real accuracy
-  per class (logged as the frozen token `D-acc=`).
+  fraction of candidates KGE-ranked ≤10 / above the true value, raw-argmax copy rate, the
+  plausibility discriminator's accuracy per class (logged as the frozen token `D-acc=`).
 - Checkpoint: store type pools + arm/loss config; save **best-by-validation**, not last epoch.
 
-**Accept:** all four arms train on fixture + dummy_kg without divergence; drift curves flat; D_real
-accuracy neither 0.5 (artifact) nor 1.0 (collapse); fixture A5–A7 still pass through the full GAN.
+**Accept:** all four arms train on fixture + dummy_kg without divergence; drift curves flat; the
+plausibility discriminator's accuracy neither 0.5 (artifact) nor 1.0 (collapse); fixture A5–A7 still
+pass through the full GAN.
 
 ## 4. Milestone M3 — Deployment-faithful inference
 

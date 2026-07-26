@@ -25,5 +25,6 @@ Keep each job's `.out.txt`: the `corr-pick=` / `alpha=` / `D-acc=` /
 `dm-online=` trajectories are the training-health record. Those log tokens are
 frozen for comparability with every run already collected — `corr-pick=` is the
 **corroborated**-pick fraction (not "corrupted"), `D-acc=` is the plausibility
-discriminator D_real's accuracy, and `dm-online=` / `g_match=` belong to the
-neighbourhood discriminator D_match.
+discriminator's accuracy on real versus generated triples, and `dm-online=` /
+`g_match=` belong to the neighbourhood discriminator (the BCE of its online
+update, and its mean fit score for the candidates the generator picked).

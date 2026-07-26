@@ -29,13 +29,13 @@ directly by `corruption_generation.py` and `cli/knockout_eval.py`.
    `gan/generator.py` (`CandidateScoringGenerator`) scores a per-triple
    candidate set (`gan/candidate_sampler.py`, logQ-corrected) and selects one
    candidate via straight-through Gumbel-Softmax. Two discriminators judge the
-   picked candidate: `gan/plausibility_discriminator.py`
-   (`PlausibilityDiscriminator`, **D_real** — "could this triple be real?",
-   spectral-normed, wrong-anchor class) and
-   `gan/neighbourhood_discriminator.py` (`NeighbourhoodDiscriminator`,
-   **D_match** — "does the filler fit this anchor's neighbourhood?",
-   cross-attention). The generator raises plausibility under a hinge
-   contradiction penalty whose weight `alpha` a **PI** controller holds at
+   picked candidate: the **plausibility discriminator**
+   (`gan/plausibility_discriminator.py`, `PlausibilityDiscriminator`) — "could
+   this triple be real?", spectral-normed, wrong-anchor class — and the
+   **neighbourhood discriminator** (`gan/neighbourhood_discriminator.py`,
+   `NeighbourhoodDiscriminator`) — "does the filler fit this anchor's
+   neighbourhood?", cross-attention. The generator raises plausibility under a
+   hinge contradiction penalty whose weight `alpha` a **PI** controller holds at
    `CORROBORATION_TARGET` — the target fraction of picks the training graph
    corroborates. The first epochs run at α = 0: that is the
    **plausibility-only phase** (`EPOCHS_BEFORE_CONTRADICTION`), distinct from the
