@@ -1,23 +1,25 @@
-"""Bloom membership sketches (paper: Neighbourhood Context Encoding).
+"""Membership sketches (paper Phase 1: Neighbourhood Context Encoding).
 
-Each entity gets a fixed-width bit vector (a Bloom filter) marking which
-entities sit in its 1–2 hop neighbourhood. This is the generator's
-set-readable view of "who belongs to this entity's world".
+Each entity gets a fixed-width bit vector — a Bloom filter — marking which
+entities sit in its 1-2 hop neighbourhood. That bit vector is its membership
+sketch: the generator's set-readable view of "who belongs to this entity's
+world".
 
-Why it exists: the pooled 64-d context vector E'[e] provably cannot answer
-membership questions over neighbour sets larger than 64 (Wagstaff et al.,
-ICML 2019). The sketch is the cheap fix — an m-bit hashed indicator of the
-neighbour set. A linear read of a sketch approximates set intersection, so a
-model conditioned on it CAN learn corroboration-style signals that a pooled
-vector cannot carry.
+Why it exists: one row of the context table E' is a pooled 64-d vector, and a
+pooled code provably cannot answer membership questions over neighbour sets
+larger than its width (Wagstaff et al., ICML 2019). The membership sketch is
+the cheap fix — an m-bit hashed indicator of the neighbour set. A linear read
+of a sketch approximates set intersection, so a model conditioned on it CAN
+learn corroboration signals that E' alone cannot carry.
 
 Two practical points:
-  - The load factor matters. At m=4096 the sketch saturated (median bit
+  - The load factor matters. At m=4096 the sketches saturated (median bit
     density 0.81) and became unreadable; the defaults m=8192 with the 2-hop
     set capped at 1024 keep density ~0.27 (false-positive rate ~5%).
-  - A Bloom filter has false positives BY DESIGN, so the sketch is only a
-    conditioning signal. The hard falseness guarantee stays where it always
-    was: the exact masks applied at corruption time.
+  - A Bloom filter has false positives BY DESIGN, so a membership sketch is
+    only a conditioning signal — it can suggest corroboration but never prove
+    it. The hard falseness guarantee stays where it always was: the exact
+    masks applied at corruption time.
 """
 
 from __future__ import annotations
@@ -41,7 +43,10 @@ def build_membership_sketches(triples, n_ent: int, m: int = 8192,
                               k_hash: int = 2, n2_cap: int = 1024,
                               seed: int = 0,
                               include_two_hop: bool = True) -> torch.Tensor:
-    """Build one m-bit sketch per entity; returns a uint8 tensor [n_ent, m].
+    """Build one m-bit membership sketch per entity; uint8 tensor [n_ent, m].
+
+    The trainer keeps the result as `membership_sketches` and stores it in the
+    checkpoint under the payload key "sketches" (frozen key; same tensor).
 
     triples : iterable of (head, relation, tail) integer triples. Adjacency is
               treated as undirected.
@@ -81,7 +86,12 @@ def build_membership_sketches(triples, n_ent: int, m: int = 8192,
 
 def sketch_stats(sketches: torch.Tensor, sample: int = 2000,
                  seed: int = 0) -> dict:
-    """Diagnostics: bit-density distribution + how many sketches saturated."""
+    """Diagnostics on a membership-sketch matrix: bit-density distribution,
+    plus how many sketches saturated (a saturated sketch is unreadable).
+
+    Takes the matrix as-is, so it can be pointed straight at a loaded
+    checkpoint field.
+    """
     generator = torch.Generator().manual_seed(seed)
     sample_ids = torch.randperm(sketches.shape[0], generator=generator)[:sample]
     density = sketches[sample_ids].float().mean(dim=1)

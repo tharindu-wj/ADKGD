@@ -1,16 +1,19 @@
 #!/bin/bash
-# KGSAGE (dual-discriminator, LP-free) GAN training. One job per dataset.
+# KGSAGE generator training on a GPU node: Phase 1 (Neighbourhood Context
+# Encoding) + Phase 2 (Adversarial Generator Training, dual-discriminator
+# architecture, LP-free). One job per dataset.
 #
 #   DATASET=fb15k237 sbatch experiments/kgsage/slurm/train.slurm
 #   DATASET=wn18rr   sbatch experiments/kgsage/slurm/train.slurm
 #   DATASET=yago45   sbatch experiments/kgsage/slurm/train.slurm   # needs data/YAGO4.5 (see commands.md §0)
 #
-# The locked recipe (curriculum, alpha controller, architecture) lives as
-# constants at the top of kgsage/gan/train.py -- edit there to re-tune. Only
-# operational knobs are env vars here: SEED, EPOCHS (8), SNAPSHOT_EVERY (1),
-# CKPT_PATH. Runs stay SHORT on purpose: anchor-awareness peaks a few pressure
-# epochs after the alpha ramp then erodes, so snapshot every epoch and select
-# the epoch by knockout J@10 (cli/knockout_eval.py) after the run.
+# The locked recipe (curriculum, the PI controller on alpha, architecture)
+# lives as constants at the top of kgsage/gan/train.py -- edit there to
+# re-tune. Only operational knobs are env vars here: SEED, EPOCHS (8),
+# SNAPSHOT_EVERY (1), CKPT_PATH. Runs stay SHORT on purpose: anchor-specificity
+# peaks a few contradiction-pressure epochs after the alpha ramp then erodes,
+# so snapshot every epoch and select the epoch by knockout J@10
+# (cli/knockout_eval.py) after the run.
 
 #SBATCH --job-name=kgsage_train
 #SBATCH --output=%x-%j.out.txt
@@ -72,6 +75,10 @@ $PY -m kgsage.gan.train \
 
 echo "----------------------------------------------------------------------"
 echo "Done $(date). Checkpoint: $CKPT_PATH"
+# corr-pick= is the CORROBORATED-pick fraction (not "corrupted"); alpha= is the
+# weight on the neighbourhood penalty, set by the PI controller; dm-online=
+# tracks the neighbourhood discriminator D_match. All three are frozen log
+# tokens -- keep them so old and new logs stay comparable.
 echo "Bring back the checkpoint AND this .out.txt (the corr-pick/alpha/dm-online"
 echo "trajectories are the training-health record). Then select the epoch:"
 echo "  python experiments/kgsage/cli/knockout_eval.py --ckpt <each .epNN.pt> --data $DATA_DIR"

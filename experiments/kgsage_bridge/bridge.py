@@ -3,10 +3,21 @@
 The single integration layer between the KGSAGE package and ADKGD's training
 pipeline. ADKGD's `dataset.py` imports the three-function API from here:
 
-  GAN negatives (KGSAGE generator checkpoints):
+  Detector-side negatives (from a KGSAGE generator checkpoint):
   - load_gan(checkpoint_path)        -> payload dict (model + vocab + reals)
   - generate(triples, payload, ...)  -> list of negative triples + stats
   - render_stats(stats)              -> human-readable log line
+
+All three names are FROZEN. They read as GAN/negative vocabulary because they
+are ADKGD's side of the contract: `--neg_source gan` / `--test_anomaly_source
+gan` and `--gan_path` are the detector's flags, and dataset.py (repo root)
+imports these functions by name.
+
+THE VOCABULARY SEAM: inside `kgsage/` the object produced is a CORRUPTION.
+Once it crosses this file it becomes a NEGATIVE (ADKGD training) or an
+ANOMALY (ADKGD evaluation). Same object, different owner, different word —
+a deliberate boundary rather than drift. Translating the vocabulary is
+exactly what this module is for, so do not "fix" the naming on either side.
 
 This is the only module in the repo that knows about BOTH the standalone
 KGSAGE package (`kgsage.*`) and ADKGD's vocabulary/ID conventions.
@@ -34,14 +45,20 @@ __all__ = ["load_gan", "generate", "render_stats"]
 
 
 def load_gan(ckpt_path, device=None):
-    """Load a trained KGSAGE GAN checkpoint once; returns a payload to reuse.
+    """Load a trained KGSAGE checkpoint once; returns a payload to reuse.
+
+    Frozen name (`--gan_path` is the matching detector flag); it is a thin
+    alias for kgsage.corruption_generation.load_checkpoint.
 
     Returns a dict with keys:
-      generator        - the trained CandidateScoringGenerator (torch.nn.Module)
+      generator        - the trained CandidateScoringGenerator G (nn.Module)
       device           - torch.device the model is on
-      ent2id, rel2id   - GAN's string -> int vocab maps
+      context_table    - the frozen context table E', [n_ent, dim]
+      sketches         - the Bloom membership sketches
+      ent2id, rel2id   - the generator's string -> int vocab maps
       id2ent, id2rel   - inverse maps
       real_triple_set  - set of (h, r, t) tuples (for collision filtering)
+      pool_masks       - per-relation type pools
       n_ent, n_rel     - vocabulary sizes
     """
     return load_checkpoint(ckpt_path, device=device)
@@ -54,8 +71,14 @@ def generate(adkgd_triples, *,
              rng=None):
     """Produce one ADKGD-ID negative per input ADKGD-ID positive.
 
-    Each negative is a single-slot corruption (head, relation, or tail) of the
-    input triple, decoded from the trained generator. Returns (negatives, stats).
+    Each one is a single-entity-slot corruption (head or tail — never the
+    relation) of the input triple, decoded from the trained generator. This
+    is where the vocabulary crosses over: kgsage calls the returned triples
+    corruptions, ADKGD calls them negatives.
+
+    Returns (negatives, stats). stats["null_indices"] flags rows whose
+    "negative" is in fact the unchanged original triple; ADKGD's dataset.py
+    replaces those in the training role and filters them in the eval role.
     """
     if rng is None:
         rng = np.random.default_rng(0)

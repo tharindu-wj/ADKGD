@@ -8,7 +8,7 @@ pattern to add a dataset:
 
     2. (Optional) add an entry to KNOWN_DATASETS below so the short name works.
 
-    3. Use the dataset directory with the GAN trainer / downstream detector run, e.g.:
+    3. Use the dataset directory with the trainer / downstream detector run, e.g.:
           python -m kgsage.gan.train --data data/<NAME> --out <ckpt>.pt ...
 
 For one-off datasets that don't need a registry entry, pass a filesystem path
@@ -19,6 +19,8 @@ trainer, not stored here.
 import os
 
 
+# The registry keys and the data/<DIR> names below are FROZEN: the SLURM `case`
+# labels and the on-disk paths use them verbatim.
 KNOWN_DATASETS = {
     # Register a dataset only once its data/<NAME>/ directory can exist on disk;
     # resolve_dataset() otherwise "succeeds" with a 0-triple KG.
@@ -26,7 +28,7 @@ KNOWN_DATASETS = {
     "wn18rr":     {"default_path": "data/WN18RR",     "n_relations": 11},
     "fb15k_mini": {"default_path": "data/FB15K-mini", "n_relations": 213},
     "dummy_kg":   {"default_path": "data/dummy_kg",   "n_relations": 3},
-    # YAGO 4.5: produced by data/yago_to_tsv.py from the -tiny Turtle release.
+    # YAGO 4.5: produced by kgsage/data/yago_to_tsv.py from the -tiny Turtle release.
     # n_relations is nominal (the real count depends on the converter's
     # --relations / --min_degree / --max_entities options and is discovered at
     # load time); the directory is gitignored (data/YAGO*).

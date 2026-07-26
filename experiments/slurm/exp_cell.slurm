@@ -6,6 +6,11 @@
 #   NEG_SOURCE  in {random, gan}   -- training negatives
 #   TEST_SOURCE in {random, gan}   -- injected eval anomalies
 #
+# "negative" and "anomaly" are the detector's names for what KGSAGE emits as a
+# CORRUPTION -- same object, different side of the seam. These env var names,
+# their random|gan values and GAN_CKPT are a frozen contract with
+# run_experiment.py's --neg_source/--test_anomaly_source/--gan_path flags.
+#
 # The 2x2 matrix (rule-based = random, KGSAGE = gan):
 #   NEG_SOURCE=random TEST_SOURCE=random SEED=0 sbatch experiments/slurm/exp_cell.slurm   # baseline
 #   NEG_SOURCE=random TEST_SOURCE=gan    SEED=0 GAN_CKPT=... sbatch ...                    # the gap
@@ -63,7 +68,7 @@ CMD=( "$PY" experiments/run_experiment.py
 
 if [[ "$NEG_SOURCE" == "gan" || "$TEST_SOURCE" == "gan" ]]; then
     [[ -n "$GAN_CKPT" && -f "$GAN_CKPT" ]] || {
-        echo "ERROR: GAN_CKPT must point at a trained GAN checkpoint for gan cells." >&2
+        echo "ERROR: GAN_CKPT must point at a trained KGSAGE generator checkpoint for gan cells." >&2
         echo "  Train one first: DATASET=... sbatch experiments/kgsage/slurm/train.slurm" >&2
         exit 1; }
     CMD+=( --gan_path "$GAN_CKPT" )

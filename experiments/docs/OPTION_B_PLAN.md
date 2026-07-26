@@ -1,8 +1,15 @@
 # Option B — LP Band Sampler (PoC control, no GAN)
 
-Proof-of-concept stage 1 of the staged path B → A → C. Everything here carries forward into
-Option A (LP-in-the-loop GAN) and the full plan (KGSAGE_IMPLEMENTATION_PLAN.md): the scorer, the
-band sampler (= the future `sampler_direct` ablation arm), the masks, and the hygiene fixes.
+> ⚠️ **HISTORICAL DOCUMENT — path not taken.** The link-predictor route described
+> here (`lp_scorer.py`, `band_sampler.py`, a frozen ComplEx signal) was explored
+> and then removed: the shipped architecture is **LP-free**, using the
+> dual-discriminator design instead. The modules named below do not exist in the
+> codebase. Kept for provenance. Current names: `KGSAGE_glossary.md`.
+
+Project Milestone 1 of the staged path B → A → C (a milestone of the plan, not a pipeline phase).
+Everything here carries forward into Option A (LP-in-the-loop GAN) and the full plan
+(KGSAGE_IMPLEMENTATION_PLAN.md): the scorer, the band sampler (= the future `sampler_direct`
+ablation arm), the masks, and the hygiene fixes.
 
 ## 0. Objective and pre-registered success criteria
 
@@ -10,7 +17,8 @@ band sampler (= the future `sampler_direct` ablation arm), the masks, and the hy
 detect neighbourhood-inconsistent anomalies, relative to random corruption?
 
 **Matrix (24 runs):** `neg_source ∈ {random, lp_band}` × `test_anomaly_source ∈ {random, lp_band}`
-× seeds {0,1,2} × {FB15K-237, WN18RR}.
+× seeds {0,1,2} × {FB15K-237, WN18RR}. *(`neg_source` / `test_anomaly_source` are frozen detector-CLI
+flag names shared by `run_experiment.py`, `exp_cell.slurm` and `Our_TopK%_RankingList.py`.)*
 
 Pre-registered read-out (adjust numbers before first cluster run, then freeze):
 1. **Loader gate:** our standalone scorer reproduces LibKGE's published filtered MRR on our own

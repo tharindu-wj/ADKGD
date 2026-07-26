@@ -1,9 +1,17 @@
-"""Aggregate per-run JSON records into mean±std tables per matrix cell (B5).
+"""Aggregate per-run JSON records into mean±std tables, one per matrix cell.
 
 run_experiment.py writes one `<model>_<dataset>_run.json` per run under
 checkpoints/<dataset>/. This script groups them by
 (dataset, neg_source, test_anomaly_source, anomaly_ratio) and reports
 mean±std over seeds for AUC, AUPRC and the five P@K / R@K cutoffs.
+
+A cell is named "train-neg x test-anom": the four cells are random x random
+(baseline), random x gan, gan x random and gan x gan. `neg_source` /
+`test_anomaly_source` and the values random|gan are FROZEN JSON keys copied
+straight from the detector CLI contract, so they are read verbatim here;
+'gan' means "corruptions produced by the trained KGSAGE generator", which the
+detector then consumes as training negatives (neg_source) or as injected eval
+anomalies (test_anomaly_source).
 
 Usage (repo root):
     python experiments/aggregate_results.py [--root checkpoints] [--dataset X]

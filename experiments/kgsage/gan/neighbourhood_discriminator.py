@@ -1,23 +1,26 @@
-"""The neighbourhood discriminator D_match (paper: Adversarial Generator Training).
+"""The neighbourhood discriminator D_match (paper Phase 2: Adversarial
+Generator Training).
 
 D_match answers the second question about a candidate: "does this filler FIT
-the anchor entity's neighbourhood?" It cross-attends the candidate's embedding
-against a sample of the anchor's ACTUAL neighbour embeddings — deliberately
-never a single pooled vector, because a d-dimensional pooled code cannot
-represent membership over neighbour sets larger than d (Wagstaff et al.).
+the anchor's neighbourhood?" It cross-attends the candidate's E' row against a
+sample of the anchor's ACTUAL neighbour rows of E' — deliberately never a
+single pooled vector, because a d-dimensional pooled code cannot represent
+membership over neighbour sets larger than d (Wagstaff et al.).
 
 Training pairs are built purely from data:
 
-    (anchor, its true slot-filler)                  -> label 1  (fits)
-    (anchor, another anchor's same-relation filler) -> label 0  (does not fit)
+    label 1 (fits)         : (anchor, its own true_filler)
+    label 0 (does not fit) : (anchor, a different anchor's true_filler for
+                              the same relation)
 
 Popular hub entities appear equally in both classes, so global popularity
 carries no label signal — the only way to score well is to genuinely compare
-the candidate against the neighbour set. The generator is trained to push this
-score DOWN (produce fillers the anchor's neighbourhood does NOT corroborate),
-while the plausibility discriminator keeps those fillers realistic.
+the candidate against the neighbour set. The generator G is trained to push
+this score DOWN (produce fillers the anchor's neighbourhood does NOT
+corroborate), while D_real (plausibility_discriminator.py) keeps those fillers
+realistic. The two together are the dual-discriminator architecture.
 
-The direct anchor–candidate edge is excluded from the neighbour sample by the
+The direct anchor-candidate edge is excluded from the neighbour sample by the
 training-data builder; otherwise "fits" could be read off trivially.
 """
 
@@ -28,12 +31,15 @@ import torch.nn as nn
 
 
 class NeighbourhoodDiscriminator(nn.Module):
-    """Scores whether a candidate filler belongs in an anchor's neighbourhood.
+    """Scores whether a candidate belongs in an anchor's neighbourhood.
 
-    NOTE: do not rename the attributes `q_proj`, `k_proj`, `v_proj`, `score` —
-    they are the state-dict keys stored inside every saved checkpoint (the
-    locked generator_*.pt artifacts carry this discriminator's weights under
-    the payload key "dmatch_state").
+    NOTE: `q_proj`, `k_proj`, `v_proj` and `score` are FROZEN names — they ARE
+    the state-dict keys stored inside every saved checkpoint, so renaming them
+    makes those checkpoints unloadable. The locked generator_*.pt artifacts
+    carry these weights under the payload key "dmatch_state" (frozen key;
+    `dmatch` = D_match, this neighbourhood discriminator — the same
+    abbreviation appears in the training log as the tokens `dm-online=` and
+    `g_match=`).
     """
 
     def __init__(self, dim: int = 64, d_model: int = 64, hidden: int = 128,
@@ -55,8 +61,9 @@ class NeighbourhoodDiscriminator(nn.Module):
                 neighbour_mask: torch.Tensor) -> torch.Tensor:
         """Return one neighbourhood-fit logit per row, shape [batch]. High = fits.
 
-        candidate_embedding  : [batch, dim]       frozen E' rows of candidates.
-        neighbour_embeddings : [batch, N, dim]    frozen E' rows of a sample of
+        candidate_embedding  : [batch, dim]       rows of the frozen context
+                                                  table E' for the candidates.
+        neighbour_embeddings : [batch, N, dim]    rows of E' for a sample of
                                                   the anchor's neighbours.
         neighbour_mask       : [batch, N] bool    True where a real neighbour
                                                   is present (rows are padded).
@@ -82,7 +89,8 @@ class NeighbourhoodDiscriminator(nn.Module):
                                 weights, value_heads).reshape(batch_size, -1)
 
         # Max cosine similarity between the candidate and any neighbour: a
-        # strong hand-built membership signal, given to the scorer explicitly.
+        # strong hand-built corroboration signal, given to the scorer
+        # explicitly rather than left for attention to rediscover.
         query_unit = torch.nn.functional.normalize(query, dim=1)
         key_unit = torch.nn.functional.normalize(keys, dim=2)
         cosine = torch.einsum("bd,bnd->bn",

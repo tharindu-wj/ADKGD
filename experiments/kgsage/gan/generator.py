@@ -1,9 +1,12 @@
-"""The candidate-scoring generator (paper: Adversarial Generator Training).
+"""The candidate-scoring generator G (paper Phase 2: Adversarial Generator
+Training).
 
-The generator's job: given a real triple (h, r, t) and a slot to corrupt
-(head or tail), score a set of replacement candidates so that the best-scoring
-ones are plausible-but-false fillers that the anchor's neighbourhood does NOT
-support.
+G's job: given a real triple (h, r, t) and a slot to corrupt (head or tail),
+score that triple's candidate set so that the best-scoring candidates are
+plausible-but-false fillers which the anchor's neighbourhood does NOT
+corroborate. The entity keeping its slot is the anchor; the original value of
+the corrupted slot is the true_filler; the candidate G selects is the
+picked_candidate, and the triple it emits is a corruption.
 
 It is a scoring model, not a vocabulary-wide classifier: it has NO per-entity
 output parameters. (An earlier design with a global output layer collapsed
@@ -12,10 +15,11 @@ popularity shortcut can be stored. Removing them closes that door.)
 
 How a score is produced:
   Query      : q = MLP([E'(h) | relation | E'(t) | projected sketch(anchor)])
-               — the Bloom sketch is the set-readable neighbourhood signal
-               that the pooled 64-d E' cannot carry (see membership_sketch.py).
-  Candidate  : f(x) = MLP(E'(x)) — a shared tower over the candidate's
-               context row, identical for every entity.
+               — the membership sketch is the set-readable neighbourhood
+               signal that the pooled 64-d E' cannot carry (see
+               membership_sketch.py).
+  Candidate  : f(x) = MLP(E'(x)) — a shared tower over the candidate's row of
+               the context table E', identical for every entity.
   Logit      : q · f(x) / sqrt(d)  -  log q(x)   (logQ sampling correction,
                see candidate_sampler.py).
   Slot       : one query projection per corrupted slot (head / tail),
@@ -39,8 +43,9 @@ def gumbel_softmax(logits, tau=1.0, hard=False, mask=None, generator=None):
                   sampled.
       hard      : straight-through estimator — exact one-hot on the forward
                   pass, soft gradient on the backward pass. Matches the hard
-                  pick used at corruption time, so the discriminators never
-                  see a soft-vs-hard difference they could exploit.
+                  picked_candidate used at corruption time, so the
+                  discriminators never see a soft-vs-hard difference they
+                  could exploit.
       generator : optional torch.Generator for reproducible sampling.
     """
     if mask is not None:
@@ -57,11 +62,14 @@ def gumbel_softmax(logits, tau=1.0, hard=False, mask=None, generator=None):
 
 
 class CandidateScoringGenerator(nn.Module):
-    """Scores per-triple candidate sets, conditioned on E' + the anchor sketch.
+    """Scores per-triple candidate sets, conditioned on E' + the anchor's
+    membership sketch.
 
-    NOTE: do not rename the attributes `relation_embedding`, `sketch_proj`,
-    `trunk`, `q_head`, `q_tail`, `cand_tower` — they are the state-dict keys
-    of the locked generator_*.pt artifacts.
+    NOTE: `relation_embedding`, `sketch_proj`, `trunk`, `q_head`, `q_tail`
+    and `cand_tower` are FROZEN names — they ARE the state-dict keys of the
+    locked generator_*.pt artifacts, so renaming any of them makes every
+    saved checkpoint unloadable. Decoder: `cand_tower` = the shared candidate
+    tower f(x); `sketch_proj` projects the membership sketch down to `dim`.
     """
 
     def __init__(self, dim=64, sketch_bits=8192, d_model=128, hidden=256,
@@ -82,11 +90,12 @@ class CandidateScoringGenerator(nn.Module):
         self.d_model = d_model
         self.sketch_bits = sketch_bits
 
-    def forward(self, head_ids, relation_ids, tail_ids, entity_context,
+    def forward(self, head_ids, relation_ids, tail_ids, context_table,
                 anchor_sketch_rows, candidate_ids, candidate_log_q, slot):
         """Return logits [batch, K] over each row's candidate set.
 
-        entity_context     : the frozen context table E', [n_ent, dim].
+        context_table      : the frozen context table E', [n_ent, dim] — the
+                             OUTPUT of the neighbourhood context encoder.
         anchor_sketch_rows : float [batch, sketch_bits] — membership sketch of
                              each row's ANCHOR (the entity keeping its slot),
                              already gathered by the caller.
@@ -96,14 +105,14 @@ class CandidateScoringGenerator(nn.Module):
         slot               : which slot is being corrupted (0 = head, 2 = tail).
         """
         conditioning = torch.cat([
-            entity_context[head_ids],
+            context_table[head_ids],
             self.relation_embedding(relation_ids),
-            entity_context[tail_ids],
+            context_table[tail_ids],
             self.sketch_proj(anchor_sketch_rows),
         ], dim=1)
         hidden = self.trunk(conditioning)
         query = (self.q_tail if slot == 2 else self.q_head)(hidden)     # [B, d]
-        candidate_features = self.cand_tower(entity_context[candidate_ids])
+        candidate_features = self.cand_tower(context_table[candidate_ids])
         logits = torch.einsum("bd,bkd->bk",
                               query, candidate_features) / (self.d_model ** 0.5)
         return logits - candidate_log_q

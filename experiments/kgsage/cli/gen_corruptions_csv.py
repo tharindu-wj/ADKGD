@@ -2,16 +2,23 @@
 """Shared stage-1 for the LLM (7.3) and ego-graph (7.4) evaluations.
 
 Generate N corruptions from a trained generator on a chosen split and write ONE
-rich CSV. Two consumers read it:
-  - ego_from_csv.py   -> renders an ego graph per row (7.4)
-  - blind_from_csv.py -> makes the blind, control-mixed upload file (7.3)
+rich CSV. Its consumers read it:
+  - ego_from_csv.py             -> an ego graph per row (7.4)
+  - format_for_llm.py           -> paste-ready triple blocks, corrupted +
+                                   control (7.3)
+  - gen_neighbourhood_context.py -> neighbourhood-context case blocks (7.4
+                                   semantic)
 
-The CSV carries both the raw string ids (for ego rendering) and natural-language
-statements (for the LLM), so neither consumer needs the checkpoint again.
+The CSV column names are FROZEN. Here the corr_* prefix means CORRUPTED -- in
+the trainer log, by contrast, corr-pick means "corroborated". orig_* holds the
+true triple each corruption was derived from.
+
+The CSV carries readable labels for both triples, so no consumer needs the
+checkpoint again.
 
 Run from repo root (pytorch env):
   PYTHONPATH=experiments python experiments/kgsage/cli/gen_corruptions_csv.py \
-      --ckpt experiments/kgsage/outputs/checkpoints/v2_fb_dyn5.pt \
+      --ckpt experiments/kgsage/outputs/checkpoints/archived/generator_fb15k237.pt \
       --data data/FB15K-237 --split test --per_rel 4 --seed 7 \
       --out experiments/kgsage/outputs/eval/fb_corruptions.csv
 """
@@ -105,7 +112,8 @@ def main() -> int:
     nm = lambda gid: _clean(ent_txt.get(id2e[gid], id2e[gid]))
     rel_label = lambda r_str: rel_txt.get(r_str) or r_str.rstrip("/").split("/")[-1]
 
-    # undirected adjacency (all splits, from the checkpoint) for the shared-nbr check
+    # Undirected adjacency (all splits, from the checkpoint). Used below to ask
+    # whether the anchor's neighbourhood corroborates the picked candidate.
     adj = {}
     for a, _, b in P["real_triple_set"]:
         adj.setdefault(a, set()).add(b)
@@ -126,28 +134,35 @@ def main() -> int:
     # in readable labels. ego_from_csv re-derives ids and metrics by matching
     # these names against the graph, so nothing else needs to be stored here.
     rows = []
-    n_tail = n_zero = 0
+    n_tail = n_uncorroborated = 0
     for r_str in args.relations:
         pool = by_rel.get(r_str, [])
         if not pool:
             continue
         sample = rng_py.sample(pool, min(args.per_rel, len(pool)))
-        pos = [(e2g[h], r2g[r], e2g[t]) for h, r, t in sample]
-        negs, _ = generate_negatives(pos, P, maps,
-                                     rng=np.random.default_rng(args.seed))
+        true_triples = [(e2g[h], r2g[r], e2g[t]) for h, r, t in sample]
+        # generate_negatives is the detector-facing name of the API; inside
+        # kgsage/ the objects it returns are corruptions.
+        corruptions, _ = generate_negatives(true_triples, P, maps,
+                                            rng=np.random.default_rng(args.seed))
         rl = rel_label(r_str)
-        for (h, r, t), (nh, nr, nt) in zip(pos, negs):
-            if (nh, nt) == (h, t):
+        for (h, r, t), (ch, cr, ct) in zip(true_triples, corruptions):
+            if (ch, ct) == (h, t):
                 continue
-            slot = "tail" if nt != t else "head"
-            anchor, filler = (h, nt) if slot == "tail" else (t, nh)
+            slot = "tail" if ct != t else "head"
+            # The anchor keeps its slot; the picked candidate replaces the
+            # true filler in the other slot.
+            anchor, picked_candidate = (h, ct) if slot == "tail" else (t, ch)
             rows.append({
                 "orig_head": nm(h), "orig_relation": rl, "orig_tail": nm(t),
-                "corr_head": nm(nh), "corr_relation": rl, "corr_tail": nm(nt),
+                "corr_head": nm(ch), "corr_relation": rl, "corr_tail": nm(ct),
             })
             n_tail += (slot == "tail")
-            n_zero += (len(adj.get(anchor, set()) & adj.get(filler, set())) == 0
-                       and filler not in adj.get(anchor, set()))
+            # Uncorroborated = the anchor's neighbourhood does not vouch for the
+            # picked candidate: no shared neighbour and no direct edge.
+            n_uncorroborated += (
+                len(adj.get(anchor, set()) & adj.get(picked_candidate, set())) == 0
+                and picked_candidate not in adj.get(anchor, set()))
 
     if args.out:
         out_path = Path(args.out)
@@ -155,6 +170,7 @@ def main() -> int:
         ds = Path(args.data).name
         out_path = _EVAL_ROOT / "gen_corruptions" / f"{ds}_{args.split}_corruptions.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # Frozen column format -- see the module docstring.
     fields = ["orig_head", "orig_relation", "orig_tail",
               "corr_head", "corr_relation", "corr_tail"]
     with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
@@ -164,7 +180,7 @@ def main() -> int:
 
     print(f"wrote {len(rows)} corruptions -> {out_path}")
     print(f"  split={args.split}  relations={len(by_rel)}  "
-          f"tail-slot={n_tail}  0-shared={n_zero}")
+          f"tail-slot={n_tail}  0-shared={n_uncorroborated}")
     return 0
 
 

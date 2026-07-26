@@ -11,7 +11,8 @@ Run from repo root:
 Sections:
   1. Imports (kgsage.* only)
   2. Behaviour checks (resolve_dataset)
-  3. Dual-discriminator architecture (candidate_v2) + inference imports
+  3. Dual-discriminator architecture (candidate_v2) + corruption-generation
+     imports
   4. load_kg works on dummy_kg
 """
 import os
@@ -65,12 +66,14 @@ def main():
     # ---- SECTION 3: dual-discriminator architecture imports (candidate_v2) ----
     section("SECTION 3: kgsage.gan.* (dual-discriminator) + corruption generation imports")
 
-    # CandidateScoringGenerator is the one and only architecture;
+    # CandidateScoringGenerator (G) is the one and only architecture;
     # gumbel_softmax is the trainer's straight-through selection helper.
     from kgsage.gan.generator import CandidateScoringGenerator, gumbel_softmax
     print("OK: kgsage.gan.generator.{CandidateScoringGenerator, gumbel_softmax}")
 
-    # The dual-discriminator training stack.
+    # The rest of the adversarial training stack: D_real judges "could this
+    # triple be real?", D_match judges "does the filler fit this anchor's
+    # neighbourhood?".
     from kgsage.gan.plausibility_discriminator import PlausibilityDiscriminator
     from kgsage.gan.neighbourhood_discriminator import NeighbourhoodDiscriminator
     from kgsage.gan.membership_sketch import build_membership_sketches
@@ -78,7 +81,8 @@ def main():
     print("OK: kgsage.gan.{PlausibilityDiscriminator, NeighbourhoodDiscriminator, "
           "build_membership_sketches, CandidateSampler}")
 
-    # Importing the trainer transitively verifies the whole v2 dependency graph.
+    # Importing the trainer transitively verifies the whole candidate_v2
+    # dependency graph.
     from kgsage.gan import train as _train
     print("OK: kgsage.gan.train (the dual-discriminator trainer)")
 

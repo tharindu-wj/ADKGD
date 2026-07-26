@@ -30,9 +30,9 @@ NAMESPACES + SCHEMA ARE DERIVED FROM THE FILE (not hardcoded)
 SUBSAMPLING (why it matters -- READ THIS)
     Full YAGO is millions of entities. KGSAGE builds O(n_ent) structures --
     the membership sketch is [n_ent, 8192] bytes (~8 GB per million entities)
-    and pool_masks is [2, n_rel, n_ent] -- so the raw graph will NOT fit. You
-    must shrink YAGO to FB/WN scale (~15k-50k entities). Three knobs, applied in
-    order:
+    and pool_masks (the per-relation type pools) is [2, n_rel, n_ent] -- so the
+    raw graph will NOT fit. You must shrink YAGO to FB/WN scale (~15k-50k
+    entities). Three knobs, applied in order:
 
       --relations r1 r2 ...   keep only these schema properties (focus the KG)
       --min_degree K          k-core: drop entities with < K neighbours,
@@ -42,7 +42,8 @@ SUBSAMPLING (why it matters -- READ THIS)
 
     A good first-run recipe for the -tiny release:
         --min_degree 5 --max_entities 30000
-    which yields a dense, WN18RR-scale KG the RGCN and sketches handle.
+    which yields a dense, WN18RR-scale KG that the NeighbourhoodContextEncoder
+    and the membership sketches handle.
 
 USAGE
     python experiments/kgsage/data/yago_to_tsv.py \
@@ -257,7 +258,8 @@ def _cap_entities(triples, max_entities):
     """Extract a connected subgraph of at most max_entities entities.
 
     BFS outward from the highest-degree entities (so the kept subgraph is dense
-    and connected, which the RGCN needs). Returns the induced triples.
+    and connected, which the Phase-1 RGCN message passing needs). Returns the
+    induced triples.
     """
     entities = {e for h, r, t in triples for e in (h, t)}
     if max_entities <= 0 or len(entities) <= max_entities:

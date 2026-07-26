@@ -7,8 +7,9 @@ NELL-995, and any custom dataset in the same format.
 It returns integer (h, r, t) triples plus the string<->int vocabulary maps,
 which is everything the trainer and corruption generation need. It also
 returns a directed edge list (edge_index / edge_type) over the TRAIN graph,
-which the RGCN context encoder (kgsage.gan.neighbourhood_context_encoder)
-consumes for message passing.
+which the NeighbourhoodContextEncoder
+(kgsage.gan.neighbourhood_context_encoder) consumes for message passing in
+Phase 1 to build the context table E'.
 
 Vocab strategy: first-seen ordering. Train.txt is loaded first, so its entities
 and relations get the lowest IDs. This matches the standard KGE convention and
@@ -104,8 +105,9 @@ def build_edge_index(triples):
 
     One directed edge  h -> t  per triple, labelled with relation r (edge_type
     in [0, n_rel)). INVERSE edges (t -> h) are intentionally NOT added here —
-    the RGCN encoder appends them itself, so it owns the num_relations = 2*n_rel
-    modelling decision and loaders stays purely structural.
+    the NeighbourhoodContextEncoder appends them itself, so it owns the
+    num_relations = 2*n_rel modelling decision and loaders stays purely
+    structural.
     """
     src = [h for (h, r, t) in triples]
     dst = [t for (h, r, t) in triples]

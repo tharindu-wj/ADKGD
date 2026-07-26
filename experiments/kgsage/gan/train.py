@@ -1,24 +1,28 @@
 """KGSAGE trainer: the dual-discriminator adversarial game (paper: Methodology).
 
-The three phases of the method, in this one file:
+The pipeline phases of the method, in this one file:
 
-  1. Neighbourhood Context Encoding — the RGCN encoder is warmed up with a
-     DistMult decoder on link prediction, then its output E' (one context
-     vector per entity) is FROZEN. Bloom membership sketches of every
-     entity's 1-2 hop neighbourhood are built alongside.
-  2. Adversarial Generator Training — the candidate-scoring generator plays
-     against two discriminators over the frozen E':
-       plausibility discriminator      "could this triple be real?"   G pushes HIGH
-       neighbourhood discriminator  "does the filler fit THIS
-                                   anchor's neighbourhood?"       G pushes LOW
+  Phase 1 — Neighbourhood Context Encoding — the RGCN context encoder is
+     warmed up against a throwaway DistMult decoder on link prediction, then
+     its output E' (the context_table: one context vector per entity) is
+     FROZEN. Bloom membership sketches of every entity's 1-2 hop
+     neighbourhood are built alongside.
+  Phase 2 — Adversarial Generator Training — the candidate-scoring generator
+     plays against two discriminators over the frozen E':
+       plausibility discriminator (D_real)   "could this triple be real?"
+                                                                  G pushes HIGH
+       neighbourhood discriminator (D_match) "does the filler fit THIS
+                                   anchor's neighbourhood?"        G pushes LOW
      Generator loss:  L_G = -D_real + alpha * relu(D_match - margin).
-     alpha is set by a PI controller so that the fraction of generated picks
-     the training graph actually corroborates stays at CORROBORATION_TARGET.
-  3. Corruption Generation lives in kgsage/corruption_generation.py — it
-     replays the checkpoint saved here.
+     alpha is set by a PI controller so that the corroborated fraction — the
+     share of the generator's picks that the training graph corroborates —
+     stays at CORROBORATION_TARGET. Step 2a pretrains both discriminators;
+     step 2b plays the game.
+  Phase 3 — Corruption Generation lives in kgsage/corruption_generation.py —
+     it replays the checkpoint saved here.
 
-Everything learned (E', sketches, candidate pools, neighbour lists, both
-discriminators) sees the TRAIN split only. The guarantee that emitted
+Everything learned (E', membership sketches, candidate pools, neighbour lists,
+both discriminators) sees the TRAIN split only. The guarantee that emitted
 corruptions are false against ALL splits comes from the masks applied at
 corruption time, not from anything learned here.
 
@@ -58,43 +62,48 @@ HEAD, TAIL = 0, 2
 # stay on the CLI. Re-tune by editing here.
 # ==========================================================================
 
-# -- architecture (E', sketches, candidate set) --
-EMBEDDING_DIM             = 64      # context-vector / embedding width
-RGCN_NUM_BASES       = 30      # RGCN basis decomposition
-RGCN_NUM_LAYERS  = 2       # RGCN depth -> 2-hop context
-SKETCH_BITS     = 8192    # Bloom membership-sketch length
-NUM_NEIGHBOURS_SAMPLED           = 32      # neighbours the neighbourhood discriminator attends over
-NUM_CANDIDATES          = 256     # candidates scored per triple (decode = full pool)
+# -- architecture (E', membership sketches, candidate set) --
+EMBEDDING_DIM                 = 64     # context-vector / embedding width
+RGCN_NUM_BASES                = 30     # RGCN basis decomposition
+RGCN_NUM_LAYERS               = 2      # RGCN depth -> 2-hop context
+SKETCH_BITS                   = 8192   # Bloom membership-sketch length
+NUM_NEIGHBOURS_SAMPLED        = 32     # neighbours D_match attends over
+NUM_CANDIDATES                = 256    # candidates scored per triple (decode = full pool)
 
-# -- E' warm-up (skipped when --init_context_from is given) --
-RGCN_WARMUP_EPOCHS   = 10
-RGCN_WARMUP_BATCH_SIZE    = 4096
+# -- Phase-1 RGCN warm-up (skipped when --init_context_from is given) --
+RGCN_WARMUP_EPOCHS            = 10
+RGCN_WARMUP_BATCH_SIZE        = 4096
 
-# -- curriculum: pretrain both discriminators, then an alpha=0 warm-up --
-NEIGHBOURHOOD_PRETRAIN_EPOCHS         = 2
-PLAUSIBILITY_PRETRAIN_EPOCHS = 2
-PLAUSIBILITY_ONLY_EPOCHS   = 2
+# -- curriculum: Phase 2a pretrains both discriminators, then Phase 2b opens
+#    with an alpha=0 plausibility-only phase. "Warm-up" always means the
+#    Phase-1 RGCN warm-up above, never these epochs. --
+NEIGHBOURHOOD_PRETRAIN_EPOCHS = 2
+PLAUSIBILITY_PRETRAIN_EPOCHS  = 2
+PLAUSIBILITY_ONLY_EPOCHS      = 2
 
 # -- game optimisation --
-BATCH_SIZE      = 256
-GUMBEL_TEMPERATURE             = 0.5     # Gumbel-Softmax temperature (train + decode)
-GENERATOR_LEARNING_RATE            = 1e-4
-PLAUSIBILITY_LEARNING_RATE            = 3e-4    # plausibility discriminator
-NEIGHBOURHOOD_LEARNING_RATE       = 1e-4    # neighbourhood discriminator's online updates during
-                          # the game (a frozen one gets exploited by G)
-LABEL_SMOOTHING = 0.1
+BATCH_SIZE                    = 256
+GUMBEL_TEMPERATURE            = 0.5    # Gumbel-Softmax temperature (train + decode)
+GENERATOR_LEARNING_RATE       = 1e-4
+PLAUSIBILITY_LEARNING_RATE    = 3e-4   # D_real
+NEIGHBOURHOOD_LEARNING_RATE   = 1e-4   # D_match's online updates during the game
+                                       # (a frozen D_match gets exploited by G)
+LABEL_SMOOTHING               = 0.1
 
 # -- contradiction-pressure controller (alpha) --
-CORROBORATION_TARGET    = 0.13    # PI set-point; MUST stay above the ~0.12-0.13
-                          # structural floor or alpha saturates and the
-                          # generator collapses to one-alien-fits-all picks
-ALPHA_INITIAL      = 1.0     # value alpha restarts at when the warm-up ends
-ALPHA_MAX       = 10.0    # anti-windup clamp
-PI_PROPORTIONAL_GAIN        = 2.0     # PI proportional gain
-PI_INTEGRAL_GAIN        = 0.2     # PI integral gain
-CONTRADICTION_MARGIN    = 0.0     # hinge margin: alpha * relu(D_match - margin)
-WRONG_ANCHOR_LOSS_WEIGHT  = 1.0     # weight of the wrong-anchor class (GAN-CLS style);
-                          # this is what makes D_real anchor-conditional
+CORROBORATION_TARGET          = 0.13   # PI set-point for the corroborated fraction;
+                                       # MUST stay above the ~0.12-0.13 structural
+                                       # floor, or alpha saturates and the generator
+                                       # collapses onto one universal contradiction
+                                       # for every anchor
+ALPHA_INITIAL                 = 1.0    # value alpha restarts at when the
+                                       # plausibility-only phase ends
+ALPHA_MAX                     = 10.0   # anti-windup clamp
+PI_PROPORTIONAL_GAIN          = 2.0    # PI proportional gain
+PI_INTEGRAL_GAIN              = 0.2    # PI integral gain
+CONTRADICTION_MARGIN          = 0.0    # hinge margin: alpha * relu(D_match - margin)
+WRONG_ANCHOR_LOSS_WEIGHT      = 1.0    # weight of the wrong-anchor class (GAN-CLS
+                                       # style); this makes D_real anchor-specific
 
 
 def main() -> None:
@@ -103,8 +112,8 @@ def main() -> None:
     parser.add_argument("--out", required=True)
     parser.add_argument("--epochs", type=int, default=8,
                         help="adversarial game epochs (locked recipe: 8; use 2 "
-                             "for a quick smoke). Anchor-awareness peaks a few "
-                             "epochs after the alpha ramp and then erodes, so "
+                             "for a quick smoke). Anchor-specificity peaks a "
+                             "few epochs after the alpha ramp and then erodes, so "
                              "keep runs short and select across snapshots by "
                              "knockout J@10.")
     parser.add_argument("--snapshot_every", type=int, default=0,
@@ -134,11 +143,12 @@ def main() -> None:
           f"{len(train_triples):,} train triples", flush=True)
 
     # ---------------------------------------------------------------------
-    # Phase 1: Neighbourhood Context Encoding.
-    # Either reuse a frozen E' from an earlier checkpoint, or warm the RGCN
-    # encoder up with a DistMult decoder on link prediction and freeze its
-    # output. The decoder is a throwaway: it only exists to give the encoder
-    # a training signal, and is deleted once E' is frozen.
+    # Phase 1 — Neighbourhood Context Encoding.
+    # Either reuse a frozen E' (the context_table) from an earlier checkpoint,
+    # or warm the RGCN context encoder up with a DistMult decoder on link
+    # prediction and freeze its output. The decoder is a throwaway: it only
+    # exists to give the encoder a training signal, and is deleted once E' is
+    # frozen.
     # ---------------------------------------------------------------------
     if args.init_context_from:
         donor = torch.load(args.init_context_from, map_location=device,
@@ -149,6 +159,8 @@ def main() -> None:
         for entity in list(kg["ent2id"])[:50]:
             assert donor["ent2id"].get(entity) == kg["ent2id"][entity], \
                 f"vocab mismatch at {entity!r}"
+        # frozen payload key; "context_embeddings" holds the context table E',
+        # i.e. the encoder's OUTPUT — not the entity_embeddings fed into it.
         context_table = donor["context_embeddings"].to(device).detach()
         torch_rng = torch.Generator().manual_seed(args.seed + 1)
         print(f"E' loaded from {args.init_context_from} "
@@ -167,14 +179,15 @@ def main() -> None:
     if skip_warmup:
         context_encoder = None
     if not skip_warmup:
-        # DistMult decoder: score(h, r, t) = sum(E'[h] * w_r * E'[t]).
-        # Real triples should score high, random-tail triples low — the
-        # standard link-prediction warm-up that shapes E' into a meaningful
+        # Throwaway DistMult decoder: score(h, r, t) = sum(E'[h] * w_r * E'[t]).
+        # The decoder is nothing but this per-relation weight matrix. Real
+        # triples should score high, random-tail triples low — the standard
+        # link-prediction warm-up that shapes E' into a meaningful
         # neighbourhood summary.
-        distmult_relations = torch.nn.Parameter(
+        distmult_decoder = torch.nn.Parameter(
             torch.randn(n_rel, EMBEDDING_DIM, device=device) * 0.1)
         warmup_optimizer = torch.optim.Adam(
-            list(context_encoder.parameters()) + [distmult_relations], lr=1e-3)
+            list(context_encoder.parameters()) + [distmult_decoder], lr=1e-3)
         torch_rng = torch.Generator().manual_seed(args.seed + 1)
         for epoch in range(1, RGCN_WARMUP_EPOCHS + 1):
             shuffled = torch.randperm(train_triples_tensor.shape[0],
@@ -186,23 +199,26 @@ def main() -> None:
                 h, r, t = rows[:, 0], rows[:, 1], rows[:, 2]
                 random_tails = torch.randint(0, n_ent, (len(rows),),
                                              generator=torch_rng).to(device)
-                current_context = context_encoder(edge_index, edge_type)
-                positive_scores = (current_context[h] * distmult_relations[r]
-                                   * current_context[t]).sum(-1)
-                negative_scores = (current_context[h] * distmult_relations[r]
-                                   * current_context[random_tails]).sum(-1)
+                # E' as it stands this step — still training; frozen below.
+                context_table = context_encoder(edge_index, edge_type)
+                positive_scores = (context_table[h] * distmult_decoder[r]
+                                   * context_table[t]).sum(-1)
+                negative_scores = (context_table[h] * distmult_decoder[r]
+                                   * context_table[random_tails]).sum(-1)
                 loss = (F.binary_cross_entropy_with_logits(
                             positive_scores, torch.ones_like(positive_scores))
                         + F.binary_cross_entropy_with_logits(
                             negative_scores, torch.zeros_like(negative_scores)))
                 warmup_optimizer.zero_grad(); loss.backward(); warmup_optimizer.step()
                 total_loss += loss.item(); num_batches += 1
+            # "LP_loss=" is a frozen log token: the link-prediction loss of the
+            # Phase-1 RGCN warm-up. Keep it so older logs stay comparable.
             print(f"  warmup {epoch}/{RGCN_WARMUP_EPOCHS} "
                   f"LP_loss={total_loss/max(num_batches,1):.4f}", flush=True)
         context_encoder.eval(); context_encoder.requires_grad_(False)
         with torch.no_grad():
             context_table = context_encoder(edge_index, edge_type).detach()
-        del distmult_relations, warmup_optimizer
+        del distmult_decoder, warmup_optimizer
         print(f"E' frozen [{context_table.shape[0]}, {context_table.shape[1]}]",
               flush=True)
 
@@ -220,7 +236,7 @@ def main() -> None:
         true_heads[(r, t)].add(h)
         triples_by_relation[r].append((h, r, t))
 
-    print("building sketches (train split)...", flush=True)
+    print("building membership sketches (train split)...", flush=True)
     membership_sketches = build_membership_sketches(
         train_triples, n_ent, m=SKETCH_BITS, seed=args.seed).float()
     candidate_sampler = CandidateSampler(train_triples, n_ent, n_rel,
@@ -253,13 +269,13 @@ def main() -> None:
             neighbour_mask[i, :len(neighbours)] = True
         return neighbour_ids, neighbour_mask
 
-    _support_row_cache: dict[int, torch.Tensor] = {}
+    _corroborated_row_cache: dict[int, torch.Tensor] = {}
 
-    def supported_entities_row(entity: int) -> torch.Tensor:
+    def corroborated_entities_row(entity: int) -> torch.Tensor:
         """Cached bool [n_ent] row: which entities the graph CORROBORATES for
         this entity — its direct neighbours plus anything within two hops
         (TRAIN adjacency)."""
-        row = _support_row_cache.get(entity)
+        row = _corroborated_row_cache.get(entity)
         if row is None:
             neighbours = neighbour_sets.get(entity, set())
             row = torch.zeros(n_ent, dtype=torch.bool)
@@ -272,22 +288,23 @@ def main() -> None:
                 if two_hop:
                     row[torch.tensor(sorted(two_hop), dtype=torch.long)] = True
             row[entity] = False
-            if len(_support_row_cache) < 20000:
-                _support_row_cache[entity] = row
+            if len(_corroborated_row_cache) < 20000:
+                _corroborated_row_cache[entity] = row
         return row
 
-    def exact_support_flags(anchors, candidate_ids):
-        """Exact graph support of candidates w.r.t. anchors (bool [B, K]) —
-        the PI controller's measurement signal and the oracle labels for the
+    def exact_corroboration_flags(anchors, candidate_ids):
+        """Exact graph corroboration of candidates w.r.t. anchors (bool [B, K])
+        — the PI controller's measurement signal and the oracle labels for the
         neighbourhood discriminator's online updates."""
         flags = torch.zeros_like(candidate_ids, dtype=torch.bool)
         for i, anchor in enumerate(anchors.tolist()):
-            flags[i] = supported_entities_row(anchor)[candidate_ids[i]]
+            flags[i] = corroborated_entities_row(anchor)[candidate_ids[i]]
         return flags
 
     # ---------------------------------------------------------------------
-    # Phase 2a: pretrain the neighbourhood discriminator on pairs built purely
-    # from data — (anchor, its true filler) = fits, (anchor, another anchor's
+    # Phase 2a — discriminator pretraining, part 1 of 2: the neighbourhood
+    # discriminator (D_match), on pairs built purely from data —
+    # (anchor, its true filler) = fits, (anchor, another anchor's
     # same-relation filler) = does not fit.
     # ---------------------------------------------------------------------
     neighbourhood_discriminator = NeighbourhoodDiscriminator(dim=EMBEDDING_DIM).to(device)
@@ -332,17 +349,17 @@ def main() -> None:
     # The neighbourhood discriminator is NOT frozen after pretraining: a frozen
     # one gets exploited (the generator converges onto its blind spots). It
     # keeps training during the game on the generator's own picks, labelled
-    # by EXACT graph support — so every blind spot the generator finds is
-    # corrected on the next batch. The oracle only supplies labels; D_match
+    # by EXACT graph corroboration — so every blind spot the generator finds
+    # is corrected on the next batch. The oracle only supplies labels; D_match
     # remains a learned discriminator.
     neighbourhood_online_optimizer = torch.optim.AdamW(
         neighbourhood_discriminator.parameters(), lr=NEIGHBOURHOOD_LEARNING_RATE)
 
     # ---------------------------------------------------------------------
-    # Phase 2b: build the generator and the plausibility discriminator, then
-    # pretrain the plausibility discriminator. It must already be
-    # anchor-conditional BEFORE the generator starts learning, or the
-    # generator falls straight into the one-alien-fits-all basin.
+    # Phase 2a — discriminator pretraining, part 2 of 2: build the generator
+    # and the plausibility discriminator (D_real), then pretrain D_real. It
+    # must already be anchor-specific BEFORE the generator starts learning, or
+    # the generator collapses straight onto one universal contradiction.
     # ---------------------------------------------------------------------
     generator = CandidateScoringGenerator(dim=EMBEDDING_DIM, sketch_bits=SKETCH_BITS,
                                           n_rel=n_rel).to(device)
@@ -366,9 +383,9 @@ def main() -> None:
             relation_ids = r.to(device)
             random_tails = torch.randint(0, n_ent, (len(rows),),
                                          generator=torch_rng)
-            score_real = plausibility_discriminator(head_context, relation_ids,
-                                               tail_context)
-            score_random = plausibility_discriminator(
+            plausibility_of_real = plausibility_discriminator(
+                head_context, relation_ids, tail_context)
+            plausibility_of_random = plausibility_discriminator(
                 head_context, relation_ids, context_table[random_tails.to(device)])
             # Third class: the real tail presented with a SAME-RELATION wrong
             # head. A random wrong head would usually be type-incompatible,
@@ -378,19 +395,22 @@ def main() -> None:
                 triples_by_relation[int(r[i])][
                     python_rng.randrange(len(triples_by_relation[int(r[i])]))][0]
                 for i in range(len(rows))])
-            score_wrong_anchor = plausibility_discriminator(
+            plausibility_of_wrong_anchor = plausibility_discriminator(
                 context_table[wrong_anchors.to(device)], relation_ids,
                 tail_context)
             loss = (F.binary_cross_entropy_with_logits(
-                        score_real,
-                        torch.full_like(score_real, 1 - LABEL_SMOOTHING))
+                        plausibility_of_real,
+                        torch.full_like(plausibility_of_real, 1 - LABEL_SMOOTHING))
                     + F.binary_cross_entropy_with_logits(
-                        score_random, torch.zeros_like(score_random))
+                        plausibility_of_random,
+                        torch.zeros_like(plausibility_of_random))
                     + WRONG_ANCHOR_LOSS_WEIGHT * F.binary_cross_entropy_with_logits(
-                        score_wrong_anchor,
-                        torch.zeros_like(score_wrong_anchor)))
+                        plausibility_of_wrong_anchor,
+                        torch.zeros_like(plausibility_of_wrong_anchor)))
             plausibility_optimizer.zero_grad(); loss.backward(); plausibility_optimizer.step()
             total_loss += loss.item(); num_batches += 1
+        # "dreal-pre" is a frozen log prefix — keep it so old logs stay
+        # comparable; it marks the D_real pretraining epochs.
         print(f"  dreal-pre {epoch}/{PLAUSIBILITY_PRETRAIN_EPOCHS} "
               f"loss={total_loss/max(num_batches,1):.4f}", flush=True)
 
@@ -399,11 +419,16 @@ def main() -> None:
         loadable by kgsage.corruption_generation (same contract as the final
         save). Do not rename any key: they are the checkpoint contract."""
         torch.save({
+            # frozen arch string; "candidate_v2" names the dual-discriminator
+            # architecture and is compared as a literal by the loaders.
             "arch": "candidate_v2",
             "generator_state": generator.state_dict(),
+            # frozen key; dmatch = D_match, the neighbourhood discriminator
             "dmatch_state": neighbourhood_discriminator.state_dict(),
+            # frozen key; dreal = D_real, the plausibility discriminator
             "dreal_state": plausibility_discriminator.state_dict(),
             "context_embeddings": context_table.cpu(),
+            # frozen key; "sketches" are the Bloom membership sketches
             "sketches": (membership_sketches > 0).to(torch.uint8).cpu(),
             "sketch_bits": SKETCH_BITS,
             "pool_masks": pool_masks,
@@ -412,12 +437,15 @@ def main() -> None:
             "id2ent": kg["id2ent"], "id2rel": kg["id2rel"],
             "real_triples": list(kg["triple_set_all"]),
             "n_ent": n_ent, "n_rel": n_rel,
+            # frozen keys; alpha_final = the alpha value this run ended on,
+            # alpha_target = the PI set-point CORROBORATION_TARGET, which is a
+            # target CORROBORATED FRACTION, not a target alpha.
             "train_split": "train", "alpha_final": alpha,
             "alpha_target": CORROBORATION_TARGET, "seed": args.seed,
         }, path)
 
     # ---------------------------------------------------------------------
-    # Phase 2c: the dual-discriminator game.
+    # Phase 2b — the dual-discriminator game.
     # ---------------------------------------------------------------------
     alpha = ALPHA_INITIAL
     previous_error = 0.0
@@ -425,8 +453,10 @@ def main() -> None:
     print(f"Dual-discriminator: {args.epochs} epochs, K={NUM_CANDIDATES}, tau={GUMBEL_TEMPERATURE}, "
           f"alpha0={alpha} target={CORROBORATION_TARGET}", flush=True)
     for epoch in range(1, args.epochs + 1):
-        in_warmup = epoch <= PLAUSIBILITY_ONLY_EPOCHS
-        if in_warmup:
+        # The opening alpha=0 epochs are the PLAUSIBILITY-ONLY PHASE (never
+        # "warm-up" — that word belongs to the Phase-1 RGCN warm-up).
+        in_plausibility_only_phase = epoch <= PLAUSIBILITY_ONLY_EPOCHS
+        if in_plausibility_only_phase:
             alpha = 0.0                  # curriculum: learn "plausible" FIRST
         elif alpha == 0.0:
             alpha = ALPHA_INITIAL           # ramp point: hand over to the PI loop
@@ -494,27 +524,32 @@ def main() -> None:
             if not bool(valid_rows.any()):
                 continue
             anchor_context = context_table[anchor_entities.to(device)]
-            score_generated = plausibility_discriminator(
+            # D_real's own reading of the generated triple, on picks detached
+            # from G. The generator step below re-reads fresh picks WITH
+            # gradients as plausibility_of_generated_for_g — two different
+            # tensors, so they carry two different names.
+            plausibility_of_generated_for_d = plausibility_discriminator(
                 anchor_context[valid_rows], r.to(device)[valid_rows],
                 generated_embedding[valid_rows])
-            score_real = plausibility_discriminator(
+            plausibility_of_real = plausibility_discriminator(
                 context_table[h.to(device)], r.to(device),
                 context_table[t.to(device)]) if slot == TAIL else \
                 plausibility_discriminator(
                     context_table[t.to(device)], r.to(device),
                     context_table[h.to(device)])
             plausibility_loss = (F.binary_cross_entropy_with_logits(
-                                score_real,
-                                torch.full_like(score_real, 1 - LABEL_SMOOTHING))
+                                plausibility_of_real,
+                                torch.full_like(plausibility_of_real,
+                                                1 - LABEL_SMOOTHING))
                             + F.binary_cross_entropy_with_logits(
-                                score_generated,
-                                torch.zeros_like(score_generated)))
+                                plausibility_of_generated_for_d,
+                                torch.zeros_like(plausibility_of_generated_for_d)))
             if WRONG_ANCHOR_LOSS_WEIGHT > 0:
                 # Wrong-anchor class (GAN-CLS): the TRUE filler presented
                 # with another anchor of the same relation, labelled fake.
                 # Type and popularity are identical across the real and
                 # wrong-anchor classes, so the only winning strategy is to
-                # judge plausibility CONDITIONAL on the individual anchor.
+                # judge plausibility for the SPECIFIC anchor in front of it.
                 true_filler_context = (context_table[t.to(device)]
                                        if slot == TAIL
                                        else context_table[h.to(device)])
@@ -526,13 +561,13 @@ def main() -> None:
                     triples_by_relation[int(r[i])][python_rng.randrange(
                         len(triples_by_relation[int(r[i])]))][wrong_anchor_slot]
                     for i in range(num_rows)])
-                score_wrong_anchor = plausibility_discriminator(
+                plausibility_of_wrong_anchor = plausibility_discriminator(
                     context_table[wrong_anchors.to(device)], r.to(device),
                     true_filler_context)
                 plausibility_loss = plausibility_loss + (
                     WRONG_ANCHOR_LOSS_WEIGHT * F.binary_cross_entropy_with_logits(
-                        score_wrong_anchor,
-                        torch.zeros_like(score_wrong_anchor)))
+                        plausibility_of_wrong_anchor,
+                        torch.zeros_like(plausibility_of_wrong_anchor)))
             plausibility_optimizer.zero_grad()
             plausibility_loss.backward()
             plausibility_optimizer.step()
@@ -542,7 +577,7 @@ def main() -> None:
             selection = gumbel_softmax(logits, tau=GUMBEL_TEMPERATURE, hard=True)
             generated_embedding = torch.einsum(
                 "bk,bkd->bd", selection, context_table[candidate_ids.to(device)])
-            plausibility_of_generated = plausibility_discriminator(
+            plausibility_of_generated_for_g = plausibility_discriminator(
                 anchor_context[valid_rows], r.to(device)[valid_rows],
                 generated_embedding[valid_rows])
             neighbour_ids, neighbour_mask = sample_neighbour_batch(
@@ -551,10 +586,11 @@ def main() -> None:
                 generated_embedding[valid_rows],
                 context_table[neighbour_ids.to(device)][valid_rows],
                 neighbour_mask.to(device)[valid_rows])
-            # The alienation term is a HINGE, not a graded reward: past the
-            # margin there is no payoff for deeper alienation, so the ranking
-            # WITHIN the alien set is carried by the plausibility discriminator.
-            generator_loss = (-plausibility_of_generated
+            # The contradiction term is a HINGE, not a graded reward: past the
+            # margin there is no payoff for a deeper contradiction, so the
+            # ranking WITHIN the contradicting candidates is carried by the
+            # plausibility discriminator.
+            generator_loss = (-plausibility_of_generated_for_g
                               + alpha * torch.relu(neighbourhood_fit_of_generated
                                                    - CONTRADICTION_MARGIN)).mean()
             generator_optimizer.zero_grad()
@@ -566,28 +602,30 @@ def main() -> None:
                 picked_columns = selection[valid_rows].argmax(dim=1)
                 picked_entities = candidate_ids[valid_rows.cpu()].gather(
                     1, picked_columns.cpu().unsqueeze(1)).squeeze(1)
-                support_matrix = exact_support_flags(
+                corroboration_matrix = exact_corroboration_flags(
                     anchor_entities[valid_rows.cpu()],
                     candidate_ids[valid_rows.cpu()])
-                picked_supported = support_matrix.gather(
+                picked_corroborated = corroboration_matrix.gather(
                     1, picked_columns.cpu().unsqueeze(1)).squeeze(1)
-                corroborated_fraction = float(picked_supported.float().mean())
+                corroborated_fraction = float(picked_corroborated.float().mean())
                 distinct_picks.update(picked_entities.tolist())
 
             # ---- neighbourhood discriminator online step: the generator's own
-            #      picks, labelled by exact graph support ----
+            #      picks, labelled by exact graph corroboration ----
             neighbourhood_logits = neighbourhood_discriminator(
                 context_table[picked_entities.to(device)],
                 context_table[neighbour_ids.to(device)][valid_rows],
                 neighbour_mask.to(device)[valid_rows])
             neighbourhood_online_loss = binary_cross_entropy(
-                neighbourhood_logits, picked_supported.float().to(device))
+                neighbourhood_logits, picked_corroborated.float().to(device))
             neighbourhood_online_optimizer.zero_grad()
             neighbourhood_online_loss.backward()
             neighbourhood_online_optimizer.step()
 
-            # ---- PI controller with anti-windup (inactive during warm-up) ----
-            if np.isfinite(corroborated_fraction) and not in_warmup:
+            # ---- PI controller with anti-windup (proportional + integral;
+            #      inactive during the plausibility-only phase) ----
+            if (np.isfinite(corroborated_fraction)
+                    and not in_plausibility_only_phase):
                 error = corroborated_fraction - CORROBORATION_TARGET
                 alpha_updated = (alpha + PI_PROPORTIONAL_GAIN * (error - previous_error)
                                  + PI_INTEGRAL_GAIN * error)
@@ -595,19 +633,32 @@ def main() -> None:
                 if alpha_updated == alpha:   # integrate only when unsaturated
                     previous_error = error
             with torch.no_grad():
-                epoch_metrics["corr_mass"] += corroborated_fraction
+                epoch_metrics["corroborated_fraction"] += corroborated_fraction
                 epoch_metrics["d_acc_real"] += float(
-                    (torch.sigmoid(score_real) > 0.5).float().mean())
+                    (torch.sigmoid(plausibility_of_real) > 0.5).float().mean())
                 epoch_metrics["d_acc_fake"] += float(
-                    (torch.sigmoid(score_generated) < 0.5).float().mean())
+                    (torch.sigmoid(plausibility_of_generated_for_d)
+                     < 0.5).float().mean())
                 epoch_metrics["g_match"] += float(
                     neighbourhood_fit_of_generated.mean())
                 epoch_metrics["dm_online"] += float(neighbourhood_online_loss)
                 epoch_metrics["nb"] += 1
 
         num_batches = max(int(epoch_metrics["nb"]), 1)
+        # Frozen log tokens: every training log already collected is parsed
+        # against them, so the emitted text must stay byte-identical. Decoder:
+        #   corr-pick=  the corroborated fraction — the share of the
+        #               generator's picks the TRAIN graph corroborates, and the
+        #               PI controller's measurement. Here "corr" means
+        #               CORROBORATED; in the eval CSVs corr_* means CORRUPTED.
+        #   alpha=      current weight on the neighbourhood penalty
+        #   D-acc=      D_real's accuracy, real/generated
+        #   g_match=    D_match's mean fit score for the generator's picks
+        #               (more negative = more contradictory)
+        #   dm-online=  BCE of D_match's online update on those same picks
+        #   distinct=   how many distinct entities got picked this epoch
         print(f"  epoch {epoch:3d}/{args.epochs}  "
-              f"corr-pick={epoch_metrics['corr_mass']/num_batches:.3f} "
+              f"corr-pick={epoch_metrics['corroborated_fraction']/num_batches:.3f} "
               f"alpha={alpha:.2f}  "
               f"D-acc={epoch_metrics['d_acc_real']/num_batches:.2f}"
               f"/{epoch_metrics['d_acc_fake']/num_batches:.2f} "
@@ -616,8 +667,9 @@ def main() -> None:
               f"distinct={len(distinct_picks)} "
               f"({time.perf_counter()-epoch_start:.0f}s)", flush=True)
 
-        # Per-epoch snapshots start with the alpha ramp: warm-up epochs are
-        # not generator candidates, the pressure epochs around the ramp are.
+        # Per-epoch snapshots start with the alpha ramp: plausibility-only
+        # epochs are not generator candidates, the contradiction-pressure
+        # epochs around the ramp are.
         if (args.snapshot_every > 0 and epoch > PLAUSIBILITY_ONLY_EPOCHS
                 and epoch % args.snapshot_every == 0):
             checkpoint_stem = (args.out[:-3] if args.out.endswith(".pt")
@@ -628,7 +680,7 @@ def main() -> None:
 
     # ---------- final checkpoint ----------
     save_checkpoint(args.out)
-    print(f"Saved KGSAGE-2 checkpoint to {args.out}", flush=True)
+    print(f"Saved KGSAGE checkpoint to {args.out}", flush=True)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,9 @@ inside `experiments/kgsage/`. That keeps the kgsage package's own smoke test
 (`experiments/kgsage/smoke_test.py`) free of any cross-package import, so the
 package stays independently extractable.
 
+Because it runs on the detector's side of the seam, this file speaks ADKGD's
+vocabulary: the triples kgsage calls corruptions are "negatives" here.
+
 Run from repo root (pytorch env):
     PYTHONPATH=experiments python experiments/kgsage_bridge/smoke_test.py
 """
@@ -40,8 +43,9 @@ def main():
     section("SECTION 2: kgsage_bridge.bridge end-to-end on dummy_kg")
 
     # The bridge calls kgsage.corruption_generation.generate_negatives, which
-    # requires a candidate_v2 checkpoint. The dummy checkpoint just needs to
-    # exist.
+    # requires a candidate_v2 checkpoint ("candidate_v2" is the frozen arch
+    # string for the dual-discriminator architecture). The dummy checkpoint
+    # just needs to exist.
     ckpt = "experiments/kgsage/outputs/checkpoints/kgsage_dummy.pt"
     if not os.path.isfile(ckpt):
         print(f"SKIP: {ckpt} not found.")
@@ -80,6 +84,8 @@ def main():
         f"1:1 contract broken: {len(negatives)} negatives for {len(positives)} positives"
     print(f"OK: 1:1 contract holds ({len(negatives)} == {len(positives)})")
 
+    # A row that did NOT change is a null corruption (generation failed and the
+    # original triple came back); those are the rows in stats["null_indices"].
     n_changed = sum(1 for p, n in zip(positives, negatives) if tuple(p) != tuple(n))
     print(f"OK: {n_changed}/{len(negatives)} negatives differ from their positive")
 

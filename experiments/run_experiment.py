@@ -1,14 +1,27 @@
 """Run ONE experiment-matrix cell (one train + one test subprocess) and report
 Precision@K / Recall@K at five cutoffs, global AUC/AUPRC, and timings.
 
-Cells are (--neg_source x --test_anomaly_source), sources {random,
-gan}. The default --model label encodes the cell identity
-(ADKGD_<neg>x<test>_s<seed>) so artifacts never collide across cells or
-seeds; a machine-readable <model>_<dataset>_run.json is written per run for
+This script sits on the KGSAGE-detector seam, so two vocabularies meet here.
+KGSAGE emits *corruptions* (false triples). ADKGD consumes the very same
+objects in two different roles: as training *negatives*, and as the
+*anomalies* injected into the evaluation split. One axis of the matrix picks
+the source for each role:
+
+    --neg_source           -> where the TRAINING negatives come from
+    --test_anomaly_source  -> where the INJECTED eval anomalies come from
+
+Both take random|gan: 'random' is ADKGD's own uniform corruption (the
+baseline), 'gan' is a trained KGSAGE generator checkpoint (--gan_path).
+
+A cell is named "train-neg x test-anom", so the four cells are
+random x random (baseline), random x gan, gan x random and gan x gan. The
+default --model label encodes that cell identity (ADKGD_<neg>x<test>_s<seed>)
+so artifacts never collide across cells or seeds; a machine-readable
+<model>_<dataset>_run.json is written per run for
 experiments/aggregate_results.py.
 Defaults (random x random, 5% anomalies, seed 0, 1 epoch) reproduce the
-paper's baseline protocol. Invoked by experiments/slurm/exp_cell.slurm and
-exp1-4, but runs identically from a shell.
+paper's baseline protocol. Invoked by experiments/slurm/exp_cell.slurm, but
+runs identically from a shell.
 
 Local CPU caveat: on Windows/CPU, set OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 KMP_DUPLICATE_LIB_OK=TRUE in the environment before running -- otherwise
@@ -108,25 +121,33 @@ def parse_total_train_min(epoch_times_path: Path) -> tuple[float, int] | None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dataset", default="FB15K-237", help="dataset folder name under data/")
-    ap.add_argument("--anomaly_ratio", type=float, default=0.05, help="fraction of fakes injected (e.g. 0.05)")
+    ap.add_argument("--anomaly_ratio", type=float, default=0.05, help="fraction of injected anomalies (e.g. 0.05)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--max_epoch", type=int, default=1)
     ap.add_argument("--model", default="ADKGD", help="label written into output filenames")
     ap.add_argument("--script", default="Our_TopK%_RankingList.py", help="ADKGD entry-point script")
-    # Phase B (GAN integration). Forwarded verbatim to both train and test subprocesses.
+    # The two matrix axes. These three flag names and the literals random|gan are
+    # FROZEN: they are the detector CLI contract shared by this script,
+    # experiments/slurm/exp_cell.slurm and the ADKGD entry script. "gan" here means
+    # "corruptions from the trained KGSAGE generator" (the package is wider than a
+    # plain GAN, but the flag value cannot be renamed). Forwarded verbatim to both
+    # the train and the test subprocess.
     ap.add_argument("--neg_source", default="random", choices=["random", "gan"],
-                    help="source of TRAINING negatives; 'random' = baseline (default)")
+                    help="source of the ADKGD TRAINING negatives: 'random' = ADKGD's own uniform "
+                         "corruption (baseline, default), 'gan' = KGSAGE corruptions")
     ap.add_argument("--test_anomaly_source", default="random", choices=["random", "gan"],
                     help="source of the INJECTED eval anomalies; 'random' = baseline (default). "
-                         "The (neg_source x test_anomaly_source) pair is the experiment matrix.")
+                         "The (train-neg x test-anom) pair names the matrix cell.")
     ap.add_argument("--gan_path", default="experiments/kgsage/outputs/checkpoints/generator_fb15k237.pt",
-                    help="path to the KGSAGE GAN .pt checkpoint (used when EITHER axis is 'gan'; missing file is a hard error)")
+                    help="path to the trained KGSAGE generator checkpoint (used when EITHER axis is 'gan'; missing file is a hard error)")
     args = ap.parse_args()
 
-    # B0 hygiene: encode the experiment cell in the model label so checkpoint
-    # and log filenames (all derived from --model) can never collide between
-    # matrix cells or seeds running concurrently. A user-supplied --model is
-    # respected verbatim; the default gets the cell identity appended.
+    # Cell hygiene: encode the matrix cell in the model label so checkpoint and
+    # log filenames (all derived from --model) can never collide between matrix
+    # cells or seeds running concurrently. A user-supplied --model is respected
+    # verbatim; the default gets the cell identity appended.
+    # frozen format: ADKGD_<train-neg>x<test-anom>_s<seed> -- aggregate_results.py
+    # and the operator docs both key off this exact shape.
     if args.model == "ADKGD":
         args.model = f"ADKGD_{args.neg_source}x{args.test_anomaly_source}_s{args.seed}"
     print(f"[run_experiment] model label: {args.model}")
@@ -156,11 +177,11 @@ def main() -> int:
     py = sys.executable                            # use the same interpreter we were launched with
     adkgd_script = project_root / args.script      # absolute path to ADKGD's entry script
 
-    # Phase B flags get appended to BOTH the train and test invocations so the
-    # Reader sees the same neg_source in either mode (Reader is rebuilt fresh
-    # in each subprocess). --gan_path is only forwarded when we actually need
-    # it -- otherwise it's misleading noise in the B0 log (and could mask a
-    # real misconfiguration if the path is stale).
+    # The seam flags go on BOTH the train and test invocations so ADKGD's Reader
+    # sees the same sources in either mode (the Reader is rebuilt fresh in each
+    # subprocess). --gan_path is only forwarded when a KGSAGE checkpoint is
+    # actually needed -- otherwise it's misleading noise in a baseline log (and
+    # could mask a real misconfiguration if the path is stale).
     gan_args = ["--neg_source", args.neg_source,
                 "--test_anomaly_source", args.test_anomaly_source]
     if args.neg_source == "gan" or args.test_anomaly_source == "gan":

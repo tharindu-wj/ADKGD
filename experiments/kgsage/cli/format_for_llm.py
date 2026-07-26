@@ -3,9 +3,13 @@
 blind LLM real-world evaluation.
 
 Prints two blocks with clean relation predicates:
-  CORRUPTED  -- the triples to judge (the main run)
-  ORIGINALS  -- the true triples, for the CONTROL run (validates the judges;
-                originals should come back mostly True, corruptions mostly False)
+  CORRUPTED  -- the corruptions to judge (the main run)
+  CONTROL    -- the matching true triples, for the control run (validates the
+                judges; the control arm should come back mostly True, the
+                corruptions mostly False)
+
+The control arm judges the true triple each corruption was derived from, so a
+judge that calls both blocks False has simply not read the facts.
 
 Run from repo root:
   PYTHONPATH=experiments python experiments/kgsage/cli/format_for_llm.py \
@@ -60,6 +64,12 @@ def _lemma(name: str) -> str:
 
 
 def _block(rows, prefix, lemma_only=False):
+    """Render one paste-ready block of (h, r, t) lines.
+
+    `prefix` selects the frozen CSV column family: "corr" (here corr_ means
+    CORRUPTED -- in the trainer log corr-pick instead means "corroborated") or
+    "orig", the true triple the corruption was derived from.
+    """
     out = []
     for r in rows:
         h, rel, t = r[f"{prefix}_head"], _pred(r[f"{prefix}_relation"]), r[f"{prefix}_tail"]
@@ -73,7 +83,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", required=True)
     ap.add_argument("--which", default="both",
-                    choices=["corrupted", "original", "both"])
+                    choices=["corrupted", "control", "both"])
     ap.add_argument("--lemma_only", action="store_true",
                     help="WN18RR ONLY: print just the lemma of each entity, "
                          "dropping the gloss after the first comma (WordNet "
@@ -90,10 +100,10 @@ def main() -> int:
         print(f"CORRUPTED  ({len(rows)} triples -- the main run)")
         print("=" * 70)
         print(_block(rows, "corr", args.lemma_only))
-    if args.which in ("original", "both"):
+    if args.which in ("control", "both"):
         print()
         print("=" * 70)
-        print(f"ORIGINALS  ({len(rows)} triples -- the CONTROL run)")
+        print(f"CONTROL  ({len(rows)} true triples -- the control run)")
         print("=" * 70)
         print(_block(rows, "orig", args.lemma_only))
     return 0

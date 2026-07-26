@@ -1,23 +1,29 @@
 # Running the KGSAGE pipeline on DeepThought (Flinders HPC)
 
-## CURRENT WORKFLOW (2026-07-23 — dual-discriminator build)
+## CURRENT WORKFLOW (2026-07-23 — dual-discriminator architecture)
 
-Submission order (details + env knobs in each script header and
-[README.md](README.md)):
+Names follow [docs/KGSAGE_glossary.md](docs/KGSAGE_glossary.md). Submission
+order (details + env knobs in each script header and [README.md](README.md)):
 
-1. **Train the generator** (GPU `train.slurm`, or CPU `train_cpu.slurm` with
-   E' reuse): `DATASET=fb15k237 SEED=0 sbatch
-   experiments/kgsage/slurm/train.slurm`. Saves a snapshot after every
-   adversarial epoch (`.epNN.pt`).
-3. **Select the snapshot** (the anchor-knockout criterion; lowest mean J@10
-   wins): `PYTHONPATH=experiments python -m kgsage.cli.knockout_eval --ckpt
+1. **Train the generator — Phases 1–2** (GPU `train.slurm`, or CPU
+   `train_cpu.slurm` reusing a cached context table E'):
+   `DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train.slurm`. Phase
+   1 is Neighbourhood Context Encoding (RGCN warm-up → E' frozen, membership
+   sketches built); Phase 2 is Adversarial Generator Training. Saves a snapshot
+   after every adversarial epoch (`.epNN.pt`).
+2. **Select the snapshot** (the anchor-knockout criterion; lowest mean knockout
+   J@10 wins — the most anchor-specific generator):
+   `PYTHONPATH=experiments python -m kgsage.cli.knockout_eval --ckpt
    <each .epNN.pt> --data data/FB15K-237` (WN18RR: pass `--relations _hypernym
    _derivationally_related_form _member_meronym _has_part`). Promote the winner
    to `generator_<dataset>.pt`.
-4. **Run matrix cells** (GPU): `NEG_SOURCE=<random|gan>
-   TEST_SOURCE=<random|gan> DATASET=<FB15K-237|WN18RR> SEED=<n>
-   [MAX_EPOCH=<n>] [GAN_CKPT=<pt>] sbatch experiments/slurm/exp_cell.slurm`.
-5. **Aggregate**: `python experiments/aggregate_results.py --dataset <ds>`.
+3. **Run matrix cells** (GPU; Phase 3 — Corruption Generation happens
+   in-process, feeding the detector its negatives and anomalies):
+   `NEG_SOURCE=<random|gan> TEST_SOURCE=<random|gan>
+   DATASET=<FB15K-237|WN18RR> SEED=<n> [MAX_EPOCH=<n>] [GAN_CKPT=<pt>] sbatch
+   experiments/slurm/exp_cell.slurm`. These env var names and their
+   `random`|`gan` values are a frozen contract with `run_experiment.py`.
+4. **Aggregate**: `python experiments/aggregate_results.py --dataset <ds>`.
 
 What one cell job produces: the RESULTS P@K/R@K table **plus an
 `AUC: … AUPRC: …` line and a `per-run record: …_run.json` path** in the
@@ -27,11 +33,14 @@ names quoted in older sections below). All scripts merge stderr into the
 `.out.txt` — **no `.err.txt` is ever produced.**
 
 > The sections below predate this build: they describe the legacy two-config
-> "B0 vs B1" flow (whose `run_baseline_*.slurm` and `exp1–4.slurm` launchers have been
-> removed — use `exp_cell.slurm`) and quote pre-B0 artifact names. The cluster
-> mechanics they document — login vs compute nodes, conda/CUDA-wheel setup,
-> queueing/backfill behaviour, monitoring commands — remain accurate and are
-> kept for reference.
+> "B0 vs B1" flow and quote pre-B0 artifact names. **Every launcher they name —
+> `run_baseline_fb15k237.slurm`, `run_baseline_with_kgsage_fb15k237.slurm`,
+> `train_gan_fb15k237.slurm`, `exp1–4.slurm` — has been removed**; the only
+> launchers that exist now are `experiments/slurm/exp_cell.slurm` and
+> `experiments/kgsage/slurm/train{,_cpu}.slurm`. Read those filenames as
+> historical labels, not as things to submit. The cluster mechanics documented
+> below — login vs compute nodes, conda/CUDA-wheel setup, queueing/backfill
+> behaviour, monitoring commands — remain accurate and are kept for reference.
 
 ---
 
@@ -468,11 +477,14 @@ torch from segfaulting on multi-core nodes.
 
 ## What this baseline row feeds into
 
-This document covers the HPC operations for the full pipeline (ADKGD baseline
-B0, GAN training, and ADKGD-with-GAN B1). The step-by-step research
-walkthrough lives in [README.md](README.md); this doc focuses on the cluster
-specifics: env, submission, monitoring, troubleshooting.
+This document covers the HPC operations for the full pipeline. The step-by-step
+research walkthrough lives in [README.md](README.md); this doc focuses on the
+cluster specifics: env, submission, monitoring, troubleshooting. Vocabulary is
+defined once in [docs/KGSAGE_glossary.md](docs/KGSAGE_glossary.md) (a
+working-tree file — `docs/` is gitignored).
 
-For the end-to-end research workflow (train the GAN → run B0 → run B1 → compare
-RESULTS), follow the four steps in `README.md`. The slurm launchers in
-`experiments/slurm/` map 1:1 to those steps.
+For the end-to-end workflow, follow the **CURRENT WORKFLOW** steps at the top of
+this file: train the generator (Phases 1–2) → select the snapshot by knockout
+J@10 → run the four matrix cells through `experiments/slurm/exp_cell.slurm` →
+aggregate. The legacy "B0 vs B1" pair below is superseded by the
+`random`/`gan` cells of that matrix.

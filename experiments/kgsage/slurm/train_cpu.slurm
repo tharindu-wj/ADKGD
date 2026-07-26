@@ -1,8 +1,10 @@
 #!/bin/bash
-# KGSAGE-2 (dual-discriminator) training on a CPU node -- for when the GPU partition is
-# blocked. If a cached-E' donor checkpoint exists, the GPU-hungry RGCN warm-up
-# is SKIPPED by reusing it (--init_context_from); otherwise the warm-up runs on
-# CPU (fine for small KGs -- YAGO/WN warm up in minutes on a CPU node).
+# KGSAGE generator training (dual-discriminator architecture) on a CPU node --
+# for when the GPU partition is blocked. If a cached-E' donor checkpoint
+# exists, the GPU-hungry Phase-1 RGCN warm-up is SKIPPED by reusing it
+# (--init_context_from) and the job goes straight to Phase 2; otherwise the
+# warm-up runs on CPU (fine for small KGs -- YAGO/WN warm up in minutes on a
+# CPU node).
 #
 #   CPU_PARTITION=<name> DATASET=fb15k237 sbatch experiments/kgsage/slurm/train_cpu.slurm
 #   CPU_PARTITION=<name> DATASET=wn18rr   sbatch experiments/kgsage/slurm/train_cpu.slurm
@@ -13,6 +15,8 @@
 # For fb15k237/wn18rr an E'-donor (kgsage_<tag>_s0.pt) skips the warm-up if present;
 # for a fresh dataset like yago45 there is no donor, so the warm-up runs on CPU.
 
+# Historical job-name label, kept as-is: --output below is %x-%j.out.txt, so
+# renaming it would change the log filenames already referenced in run notes.
 #SBATCH --job-name=kgsage2_cpu
 #SBATCH --output=%x-%j.out.txt
 #SBATCH --time=14:00:00
@@ -40,27 +44,28 @@ case "$DATASET" in
 esac
 
 # The locked recipe lives as constants in kgsage/gan/train.py; only operational
-# knobs are env vars here. Runs stay SHORT (anchor-awareness peaks then erodes),
-# snapshot every epoch, and select the epoch by knockout J@10 after the run.
+# knobs are env vars here. Runs stay SHORT (anchor-specificity peaks then
+# erodes), snapshot every epoch, and select the epoch by knockout J@10 after
+# the run.
 SEED="${SEED:-0}"
 EPOCHS="${EPOCHS:-8}"
 SNAPSHOT_EVERY="${SNAPSHOT_EVERY:-1}"
 CKPT_PATH="${CKPT_PATH:-experiments/kgsage/outputs/checkpoints/run_${TAG}_s${SEED}.pt}"
 INIT_E="${INIT_E:-experiments/kgsage/outputs/checkpoints/kgsage_${TAG}_s${SEED}.pt}"
 
-# Use the E'-donor to skip the warm-up if it exists; otherwise warm up on CPU.
+# Use the E'-donor to skip the Phase-1 warm-up if it exists; else warm up on CPU.
 INIT_ARGS=()
 if [[ -f "$INIT_E" ]]; then
-  WARMUP_NOTE="Reuse E': $INIT_E   (RGCN warm-up SKIPPED)"
+  WARMUP_NOTE="Reuse context table E': $INIT_E   (Phase-1 RGCN warm-up SKIPPED)"
   INIT_ARGS=(--init_context_from "$INIT_E")
 else
-  WARMUP_NOTE="No E'-donor at $INIT_E -- running a fresh RGCN warm-up on CPU (OK for small KGs)."
+  WARMUP_NOTE="No E'-donor at $INIT_E -- running a fresh Phase-1 RGCN warm-up on CPU (OK for small KGs)."
 fi
 
 echo "Job $SLURM_JOB_ID on $(hostname) [$(sinfo -h -n $(hostname) -o %P 2>/dev/null)] $(date)"
 echo "Dataset : $DATASET ($DATA_DIR)   CPU cores: $SLURM_CPUS_PER_TASK"
 echo "$WARMUP_NOTE"
-echo "Game    : epochs=$EPOCHS snapshots=every $SNAPSHOT_EVERY  (recipe = constants in train.py)"
+echo "Phase 2 : epochs=$EPOCHS snapshots=every $SNAPSHOT_EVERY  (recipe = constants in train.py)"
 echo "Output  : $CKPT_PATH"
 echo "----------------------------------------------------------------------"
 

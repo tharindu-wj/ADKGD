@@ -1,7 +1,9 @@
-# KGSAGE — copy-paste command reference (current dual-discriminator flow)
+# KGSAGE — copy-paste command reference (dual-discriminator architecture)
 
 Run from the repo root (`cd ~/ADKGD` on DeepThought; local Windows works the
 same with the pytorch conda env). `PYTHONPATH=experiments` throughout.
+
+Names follow `experiments/docs/KGSAGE_glossary.md`.
 
 ## 0. (Optional) Add YAGO 4.5 as a dataset
 
@@ -32,12 +34,16 @@ for tens of thousands of entities and a few hundred thousand train triples. If
 too few survive, lower `--min_degree`; if too many, lower `--max_entities`.
 No `entity2text.txt` is needed — YAGO ids are already human-readable.
 
-## 1. Train (per-epoch snapshots; short runs on purpose)
+## 1. Train — Phases 1-2 (per-epoch snapshots; short runs on purpose)
+
+One job covers Phase 1 (Neighbourhood Context Encoding: RGCN warm-up -> E'
+frozen, membership sketches built) and Phase 2 (Adversarial Generator
+Training: discriminator pretraining, then the dual-discriminator game).
 
 ```bash
 # GPU node:
 DATASET=fb15k237 SEED=0 sbatch experiments/kgsage/slurm/train.slurm
-# CPU node (skips the RGCN warm-up by reusing a cached E'):
+# CPU node (skips the Phase-1 RGCN warm-up by reusing a cached E'):
 CPU_PARTITION=<name> DATASET=fb15k237 sbatch --partition=$CPU_PARTITION \
     experiments/kgsage/slurm/train_cpu.slurm
 # Direct (no SLURM):
@@ -48,7 +54,7 @@ PYTHONPATH=experiments nohup python -m kgsage.gan.train \
     --epochs 8 --snapshot_every 1 --device cpu > run_fb.log 2>&1 &
 ```
 
-## 2. Select the snapshot (anchor-knockout; LOWEST mean J@10 wins)
+## 2. Select the snapshot (anchor-knockout; LOWEST mean knockout J@10 wins)
 
 ```bash
 for f in experiments/kgsage/outputs/checkpoints/run_fb15k237_s0.ep0*.pt; do
@@ -61,12 +67,13 @@ done
 ```
 
 Locked artifacts in use: `generator_fb15k237.pt` (knockout J@10 0.582) and
-`generator_wn18rr.pt` (0.082).
+`generator_wn18rr.pt` (0.082). Lower = more anchor-specific.
 
 ## 3. Evaluate (Section 7 pipeline)
 
 ```bash
-# Stage 1 — one CSV of corruptions (shared by 7.3 LLM + 7.4 ego):
+# Phase 3 (Corruption Generation) — one CSV of corruptions, shared by the
+# 7.3 LLM arm and the 7.4 ego arm:
 PYTHONPATH=experiments python experiments/kgsage/cli/gen_corruptions_csv.py \
     --ckpt experiments/kgsage/outputs/checkpoints/generator_fb15k237.pt \
     --data data/FB15K-237 --split test --per_rel 4 --seed 7 \
@@ -79,6 +86,11 @@ PYTHONPATH=experiments python experiments/kgsage/cli/ego_from_csv.py \
 ```
 
 ## 4. Downstream 2x2 matrix (ADKGD)
+
+Detector-side vocabulary: the corruptions from step 3 arrive as **negatives**
+(training) and **anomalies** (evaluation). `NEG_SOURCE`/`TEST_SOURCE`/`GAN_CKPT`
+and the `random`|`gan` values are a frozen contract between `exp_cell.slurm`,
+`run_experiment.py` and the detector — do not rename them.
 
 ```bash
 NEG_SOURCE=<random|gan> TEST_SOURCE=<random|gan> DATASET=<FB15K-237|WN18RR> \

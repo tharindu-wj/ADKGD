@@ -3,17 +3,21 @@
 
 Reads a CSV produced by gen_corruptions_csv.py and draws, for each row, the
 2-hop neighbourhoods of the head and the tail with the changed edge on top --
-so the figure shows whether the replacement sits inside the entity's context or
-outside it entirely. The dataset graph is loaded ONCE and reused across rows.
+so the figure shows whether the picked candidate sits inside the anchor's
+neighbourhood or outside it entirely. The dataset graph is loaded ONCE and
+reused across rows.
+
+The CSV column names are FROZEN. Here the corr_* prefix means CORRUPTED -- in
+the trainer log, by contrast, corr-pick means "corroborated".
 
 By default renders the clearest exemplars first (tail-slot, zero shared
 neighbours, moderate anchor degree so the graph stays legible), capped by
 --limit.
 
 Reading a figure:
-    green solid   the original (true) edge      blue node   head
+    green solid   the true edge                 blue node   head
     red dashed    the corrupted edge            green node  true tail
-    grey nodes    1-hop (darker) / 2-hop        red node    the replacement
+    grey nodes    1-hop (darker) / 2-hop        red node    picked candidate
 
 Run from repo root (pytorch env):
   PYTHONPATH=experiments python experiments/kgsage/cli/ego_from_csv.py \
@@ -130,26 +134,28 @@ def _short(text: str, n: int = 26) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def _structured_layout(G, head, tail, corr):
-    """Pin the three anchors far apart, assign every other node to its nearest
-    anchor, and fan it onto an arc pointing away from the middle -- so the true
-    edge and the corrupted edge always run through open space."""
-    anchors = {head: (-4.0, 0.4), tail: (4.0, 2.2)}
-    if corr and corr not in anchors:
-        anchors[corr] = (4.0, -2.6)
+def _structured_layout(G, head, tail, picked_candidate):
+    """Pin the three focus nodes far apart, assign every other node to its
+    nearest focus node, and fan it onto an arc pointing away from the middle --
+    so the true edge and the corrupted edge always run through open space."""
+    # "pinned" is a layout concept (the three big nodes), not the glossary's
+    # anchor -- the anchor is whichever of them keeps its slot in the triple.
+    pinned = {head: (-4.0, 0.4), tail: (4.0, 2.2)}
+    if picked_candidate and picked_candidate not in pinned:
+        pinned[picked_candidate] = (4.0, -2.6)
     sector = {head: (100.0, 260.0), tail: (-40.0, 120.0)}
-    if corr in anchors:
-        sector[corr] = (-120.0, 40.0)
+    if picked_candidate in pinned:
+        sector[picked_candidate] = (-120.0, 40.0)
 
     U = G.to_undirected(as_view=True)
-    dist = {a: nx.single_source_shortest_path_length(U, a) for a in anchors}
+    dist = {a: nx.single_source_shortest_path_length(U, a) for a in pinned}
 
     buckets = {}
     for n in G.nodes():
-        if n in anchors:
+        if n in pinned:
             continue
         best_a, best_d = None, 10**9
-        for a in anchors:
+        for a in pinned:
             d = dist[a].get(n, 10**9)
             if d < best_d:
                 best_a, best_d = a, d
@@ -157,7 +163,7 @@ def _structured_layout(G, head, tail, corr):
             best_a, best_d = head, 3
         buckets.setdefault(best_a, {}).setdefault(best_d, []).append(n)
 
-    pos = dict(anchors)
+    pos = dict(pinned)
     for a, byhop in buckets.items():
         a0, a1 = sector.get(a, (0.0, 360.0))
         for d, nodes in sorted(byhop.items()):
@@ -166,17 +172,18 @@ def _structured_layout(G, head, tail, corr):
             for i, n in enumerate(nodes):
                 frac = (i + 0.5) / len(nodes)
                 ang = math.radians(a0 + (a1 - a0) * frac)
-                pos[n] = (anchors[a][0] + r * math.cos(ang),
-                          anchors[a][1] + r * math.sin(ang))
+                pos[n] = (pinned[a][0] + r * math.cos(ang),
+                          pinned[a][1] + r * math.sin(ang))
     return pos
 
 
-def render_ego(adj, ent_txt, rel_txt, orig, corr, out, *, hops=2, corr_hops=1,
-               max_neighbors=6, label_hops=1, edge_labels=False,
-               short_relations=False, layout="structured", seed=0,
-               figsize=(14, 9)):
+def render_ego(adj, ent_txt, rel_txt, true_triple, corruption, out, *, hops=2,
+               candidate_hops=1, max_neighbors=6, label_hops=1,
+               edge_labels=False, short_relations=False, layout="structured",
+               seed=0, figsize=(14, 9)):
     """Draw ONE corruption's ego figure. `adj`/`ent_txt`/`rel_txt` are the
-    once-loaded graph + text maps. `orig`/`corr` are (h, r, t) string triples.
+    once-loaded graph + text maps. `true_triple`/`corruption` are (h, r, t)
+    string triples.
     Returns a stats dict (or None if the triple could not be drawn)."""
     rng = random.Random(seed)
     name = lambda e: _short(ent_txt.get(e, e))
@@ -186,27 +193,33 @@ def render_ego(adj, ent_txt, rel_txt, orig, corr, out, *, hops=2, corr_hops=1,
             return _short(r.rstrip("/").split("/")[-1] or r, 24)
         return _short(rel_txt.get(r, r), 34)
 
-    oh, orr, ot = orig
-    ch, cr, ct = corr
+    true_head, true_rel, true_tail = true_triple
+    corr_head, corr_rel, corr_tail = corruption
     changed = [s for s, (a, b) in
-               zip(("head", "relation", "tail"), zip(orig, corr)) if a != b]
+               zip(("head", "relation", "tail"),
+                   zip(true_triple, corruption)) if a != b]
     if not changed:
         return None
     slot = changed[0]
-    new_ent = ch if slot == "head" else (ct if slot == "tail" else None)
-    if oh not in adj or ot not in adj:
+    # The picked candidate is the entity the generator put in the changed slot.
+    picked_candidate = (corr_head if slot == "head"
+                        else (corr_tail if slot == "tail" else None))
+    if true_head not in adj or true_tail not in adj:
         return None
 
-    keep = {oh, ot} | ({new_ent} if new_ent else set())
-    hop_h, edges_h = _ego(adj, oh, hops, max_neighbors, rng, keep)
-    hop_t, edges_t = _ego(adj, ot, hops, max_neighbors, rng, keep)
+    keep = {true_head, true_tail} | ({picked_candidate} if picked_candidate else set())
+    hop_h, edges_h = _ego(adj, true_head, hops, max_neighbors, rng, keep)
+    hop_t, edges_t = _ego(adj, true_tail, hops, max_neighbors, rng, keep)
 
-    anchor_hop = min(hop_h.get(new_ent, 99), hop_t.get(new_ent, 99)) if new_ent else 99
-    corr_in_ego = anchor_hop < 99
+    candidate_hop = (min(hop_h.get(picked_candidate, 99),
+                         hop_t.get(picked_candidate, 99))
+                     if picked_candidate else 99)
+    candidate_in_ego = candidate_hop < 99
 
     hop_c, edges_c = {}, []
-    if new_ent and corr_hops > 0:
-        hop_c, edges_c = _ego(adj, new_ent, corr_hops, max_neighbors, rng, keep)
+    if picked_candidate and candidate_hops > 0:
+        hop_c, edges_c = _ego(adj, picked_candidate, candidate_hops,
+                              max_neighbors, rng, keep)
 
     hop = dict(hop_t)
     for src in (hop_h, hop_c):
@@ -219,25 +232,25 @@ def render_ego(adj, ent_txt, rel_txt, orig, corr, out, *, hops=2, corr_hops=1,
     for s, d, r in edges_h + edges_t + edges_c:
         if s in hop and d in hop:
             G.add_edge(s, d, rel=r)
-    if new_ent and new_ent not in G:
-        G.add_node(new_ent, hop=99)
-    G.add_edge(ch, ct, rel=cr)
-    G.add_edge(oh, ot, rel=orr)
+    if picked_candidate and picked_candidate not in G:
+        G.add_node(picked_candidate, hop=99)
+    G.add_edge(corr_head, corr_tail, rel=corr_rel)
+    G.add_edge(true_head, true_tail, rel=true_rel)
 
     if layout == "spring":
-        init = {oh: (-1.0, 0.0), ot: (1.0, 0.0)}
-        if new_ent and new_ent not in init:
-            init[new_ent] = (1.0, -1.1)
+        init = {true_head: (-1.0, 0.0), true_tail: (1.0, 0.0)}
+        if picked_candidate and picked_candidate not in init:
+            init[picked_candidate] = (1.0, -1.1)
         pos = nx.spring_layout(G, pos=init, fixed=list(init), seed=seed,
                                k=0.55, iterations=200)
     else:
-        pos = _structured_layout(G, oh, ot, new_ent)
+        pos = _structured_layout(G, true_head, true_tail, picked_candidate)
 
     w, h = figsize
     fig, ax = plt.subplots(figsize=(w, h))
     ax.axis("off")
 
-    true_edge, corr_edge = (oh, ot), (ch, ct)
+    true_edge, corr_edge = (true_head, true_tail), (corr_head, corr_tail)
     plain = [e for e in G.edges() if e not in (true_edge, corr_edge)]
     nx.draw_networkx_edges(G, pos, edgelist=plain, edge_color=C_EDGE,
                            width=1.0, arrows=False, ax=ax)
@@ -255,48 +268,52 @@ def render_ego(adj, ent_txt, rel_txt, orig, corr, out, *, hops=2, corr_hops=1,
             nx.draw_networkx_nodes(G, pos, nodelist=nodes, node_color=color,
                                    node_size=size, edgecolors=edge, linewidths=lw, ax=ax)
 
-    anchors = {oh, ot} | ({new_ent} if new_ent else set())
-    draw([n for n, d in hop.items() if d >= 2 and n not in anchors], C_HOP2, 240)
-    draw([n for n, d in hop.items() if d == 1 and n not in anchors], C_HOP1, 340)
-    draw([oh], C_HEAD, 1100, "#31506f", 2.0)
-    draw([ot], C_TAIL, 1100, "#4a7a3a", 2.0)
-    if new_ent:
-        draw([new_ent], C_CORR, 1100, "#7d2f28", 2.0)
+    # The three big nodes of the figure: head, true tail, picked candidate.
+    focus_nodes = {true_head, true_tail} | ({picked_candidate} if picked_candidate else set())
+    draw([n for n, d in hop.items() if d >= 2 and n not in focus_nodes], C_HOP2, 240)
+    draw([n for n, d in hop.items() if d == 1 and n not in focus_nodes], C_HOP1, 340)
+    draw([true_head], C_HEAD, 1100, "#31506f", 2.0)
+    draw([true_tail], C_TAIL, 1100, "#4a7a3a", 2.0)
+    if picked_candidate:
+        draw([picked_candidate], C_CORR, 1100, "#7d2f28", 2.0)
 
     lab_nodes = (list(G.nodes()) if label_hops < 0
                  else [n for n in G.nodes() if hop.get(n, 99) <= label_hops])
-    for n in set(lab_nodes) | anchors:
+    for n in set(lab_nodes) | focus_nodes:
         if n not in pos:
             continue
-        big = n in anchors
+        big = n in focus_nodes
         ax.text(pos[n][0], pos[n][1] - (0.30 if big else 0.20), name(n),
                 ha="center", va="top", fontsize=8.0 if big else 6.8,
                 fontweight="bold" if big else "normal", zorder=5,
                 bbox=dict(fc="white", ec="none", alpha=0.75, pad=0.8))
 
-    key = {true_edge: rname(orr)}
+    key = {true_edge: rname(true_rel)}
     if corr_edge != true_edge:
-        key[corr_edge] = rname(cr)
+        key[corr_edge] = rname(corr_rel)
     if edge_labels:
         key = {(s, d): rname(a["rel"]) for s, d, a in G.edges(data=True)}
     nx.draw_networkx_edge_labels(G, pos, edge_labels=key, font_size=6.5,
                                  bbox=dict(fc="white", ec="none", alpha=0.75), ax=ax)
 
-    where = ("inside the neighbourhood (hop %d)" % hop[new_ent] if corr_in_ego
-             else "OUTSIDE the %d-hop neighbourhood" % hops) if new_ent else "n/a"
+    where = (("inside the neighbourhood (hop %d)" % hop[picked_candidate]
+              if candidate_in_ego
+              else "OUTSIDE the %d-hop neighbourhood" % hops)
+             if picked_candidate else "n/a")
     ax.set_title(
-        f"{slot} corrupted:  {name(oh)} —[{rname(orr)}]→ {name(ot)}\n"
-        f"replacement: {name(new_ent) if new_ent else '-'}  ·  {where}"
+        f"{slot} corrupted:  {name(true_head)} —[{rname(true_rel)}]→ {name(true_tail)}\n"
+        f"picked candidate: {name(picked_candidate) if picked_candidate else '-'}"
+        f"  ·  {where}"
         f"   |   {G.number_of_nodes()} nodes, {hops}-hop ego of head+tail"
         f" (≤{max_neighbors} nbrs/node)",
         fontsize=10)
 
     handles = [
-        plt.Line2D([], [], color=C_TRUE_EDGE, lw=2.8, label="original (true) edge"),
+        plt.Line2D([], [], color=C_TRUE_EDGE, lw=2.8, label="true edge"),
         plt.Line2D([], [], color=C_CORR_EDGE, lw=2.8, ls="--", label="corrupted edge"),
         plt.Line2D([], [], marker="o", ls="", mfc=C_HEAD, mec="#31506f", ms=10, label="head"),
         plt.Line2D([], [], marker="o", ls="", mfc=C_TAIL, mec="#4a7a3a", ms=10, label="true tail"),
-        plt.Line2D([], [], marker="o", ls="", mfc=C_CORR, mec="#7d2f28", ms=10, label="replacement"),
+        plt.Line2D([], [], marker="o", ls="", mfc=C_CORR, mec="#7d2f28", ms=10, label="picked candidate"),
         plt.Line2D([], [], marker="o", ls="", mfc=C_HOP1, mec="#888", ms=8, label="1-hop"),
         plt.Line2D([], [], marker="o", ls="", mfc=C_HOP2, mec="#888", ms=7, label="2-hop"),
     ]
@@ -308,11 +325,14 @@ def render_ego(adj, ent_txt, rel_txt, orig, corr, out, *, hops=2, corr_hops=1,
     fig.savefig(out, bbox_inches="tight", dpi=180)
     plt.close(fig)
 
+    # Both counts are taken from the head, so the figure caption can contrast
+    # "how connected the true tail is" with "how connected the picked candidate is".
     nb = lambda e: {x[0] for x in adj.get(e, [])}
-    shared_true = len(nb(oh) & nb(ot)) if new_ent else 0
-    shared_corr = len(nb(oh) & nb(new_ent)) if new_ent else 0
-    return {"slot": slot, "corr_in_ego": corr_in_ego,
-            "shared_true": shared_true, "shared_corr": shared_corr,
+    shared_with_true_tail = len(nb(true_head) & nb(true_tail)) if picked_candidate else 0
+    shared_with_candidate = len(nb(true_head) & nb(picked_candidate)) if picked_candidate else 0
+    return {"slot": slot, "candidate_in_ego": candidate_in_ego,
+            "shared_with_true_tail": shared_with_true_tail,
+            "shared_with_candidate": shared_with_candidate,
             "nodes": G.number_of_nodes(), "edges": G.number_of_edges()}
 
 
@@ -375,9 +395,9 @@ def main() -> int:
         head_pool[r].add(h); tail_pool[r].add(t)
 
     def resolve(o_head, o_rel, o_tail, c_head, c_rel, c_tail):
-        """(orig readable, corr readable) -> (orig ids, corr ids) or None."""
+        """(true readable, corrupted readable) -> (true ids, corrupted ids) or None."""
         rels = label2rels.get(o_rel, set())
-        # the original is a real edge -> the (h, r, t) that exists pins everything
+        # the true triple is a real edge -> the (h, r, t) that exists pins everything
         for r in rels:
             for h in name2ids.get(o_head, ()):
                 for t in name2ids.get(o_tail, ()):
@@ -400,12 +420,14 @@ def main() -> int:
             continue
         (h, rp, t), (ch, cr, ct) = got
         slot = "head" if ch != h else "tail"
-        anchor, filler = (h, ct) if slot == "tail" else (t, ch)
+        # anchor = the entity that keeps its slot; the picked candidate took the other.
+        anchor, picked_candidate = (h, ct) if slot == "tail" else (t, ch)
         nb = lambda e: {x[0] for x in adj.get(e, [])}
         resolved.append({
-            "orig": (h, rp, t), "corr": (ch, cr, ct), "slot": slot,
-            "shared": len(nb(anchor) & nb(filler)),
-            "direct": filler in nb(anchor), "degree": len(adj.get(anchor, [])),
+            "true_triple": (h, rp, t), "corruption": (ch, cr, ct), "slot": slot,
+            "shared": len(nb(anchor) & nb(picked_candidate)),
+            "direct": picked_candidate in nb(anchor),
+            "degree": len(adj.get(anchor, [])),
             "rel_seg": rp.rstrip("/").split("/")[-1],
             "label": f"({r['corr_head']}, {r['corr_relation']}, {r['corr_tail']})",
         })
@@ -422,7 +444,7 @@ def main() -> int:
     ok = 0
     for i, x in enumerate(resolved):
         out = out_dir / f"ego_{i}_{x['rel_seg']}.{args.ext}"
-        stats = render_ego(adj, ent_txt, rel_txt, x["orig"], x["corr"], out,
+        stats = render_ego(adj, ent_txt, rel_txt, x["true_triple"], x["corruption"], out,
                            hops=args.hops, max_neighbors=args.max_neighbors,
                            edge_labels=args.edge_labels, short_relations=args.short_relations)
         if stats is None:
@@ -430,7 +452,8 @@ def main() -> int:
             continue
         ok += 1
         print(f"OK  {out}   {x['label']}   "
-              f"[shared true={stats['shared_true']} repl={stats['shared_corr']}]")
+              f"[shared true_tail={stats['shared_with_true_tail']} "
+              f"candidate={stats['shared_with_candidate']}]")
 
     print(f"\nrendered {ok}/{len(resolved)} ego graphs "
           f"({len(csv_rows) - len(resolved) if not args.limit else '...'} "
@@ -438,11 +461,11 @@ def main() -> int:
     return 0
 
 
-def _prefer(cands, pool):
-    """Yield candidate ids, those observed in the relation's slot pool first."""
-    cands = list(cands)
-    inpool = [c for c in cands if c in pool]
-    return inpool + [c for c in cands if c not in pool]
+def _prefer(candidates, pool):
+    """Return candidate ids, those observed in the relation's type pool first."""
+    candidates = list(candidates)
+    inpool = [c for c in candidates if c in pool]
+    return inpool + [c for c in candidates if c not in pool]
 
 
 if __name__ == "__main__":

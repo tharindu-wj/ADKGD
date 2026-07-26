@@ -1,14 +1,15 @@
-"""Per-triple candidate sets (paper: Adversarial Generator Training).
+"""Per-triple candidate sets (paper Phase 2: Adversarial Generator Training).
 
 The generator never scores the whole entity vocabulary during training.
-Instead, each training triple gets a small CANDIDATE SET of size K, and the
-generator only ranks those. This module builds the sets.
+Instead, each training triple gets a small candidate set of size K (the trainer
+passes NUM_CANDIDATES), and the generator only ranks those. This module builds
+the candidate sets.
 
 Design choices, in plain terms:
-  - Candidates come from the relation's TYPE POOL — the entities actually
+  - Candidates come from the relation's type pool — the entities actually
     observed in that slot for that relation in the training split. This keeps
     candidates type-plausible (a "place of birth" candidate is a place).
-  - Sampling is a mixture: half the draws uniform over the pool, half
+  - Sampling is a mixture: half the draws uniform over the type pool, half
     proportional to how frequent each entity is in that slot. The frequent
     (popular) entities must be present, otherwise the discriminators could
     never teach the generator to rank them down.
@@ -19,6 +20,10 @@ Design choices, in plain terms:
     simply by being drawn more often.
   - Sampling is WITH replacement; duplicates are harmless (identical score,
     identical correction).
+
+Nothing here judges whether the anchor's neighbourhood corroborates a
+candidate — that is D_match's job. This module only decides which candidates
+get to be scored at all.
 """
 
 from __future__ import annotations
@@ -30,17 +35,21 @@ HEAD, TAIL = 0, 2
 
 
 class CandidateSampler:
-    """Samples type-pool candidate sets, with the logQ correction term."""
+    """Samples a type-pool candidate set per triple, with the logQ correction.
+
+    NOTE: `cand_k` (the checkpoint payload key for K) is a frozen name; here
+    the same quantity is the constructor's `k`.
+    """
 
     def __init__(self, triples, n_ent: int, n_rel: int, k: int = 256,
                  mix_uniform: float = 0.5, seed: int = 0):
         self.n_ent = n_ent
-        self.k = k                       # candidates per triple
+        self.k = k                       # candidate-set size (NUM_CANDIDATES)
         self.mix = mix_uniform           # fraction of draws that are uniform
         self.rng = np.random.default_rng(seed)
 
-        # For every (slot, relation) pair: the pool of observed filler ids and
-        # their in-slot frequency distribution.
+        # For every (slot, relation) pair: the type pool of observed filler ids
+        # and their in-slot frequency distribution.
         pools: dict[tuple[int, int], dict] = {}
         counts: dict[tuple[int, int], dict] = {}
         for head, relation, tail in triples:
@@ -58,7 +67,7 @@ class CandidateSampler:
 
         relation_ids : LongTensor/array [batch]
         include      : optional [batch, I] ids forced into every row (e.g. the
-                       true filler, so the discriminator always sees it).
+                       true_filler, so the discriminator always sees it).
         Returns (candidate_ids [batch, K(+I)], log_q [batch, K(+I)]) as torch
         tensors.
         """
@@ -73,8 +82,8 @@ class CandidateSampler:
             key = (slot, int(relation_ids[i]))
             pool = self.pools.get(key)
             if pool is None or len(pool["ids"]) == 0:
-                # Relation/slot never seen in training: fall back to uniform
-                # over the whole vocabulary.
+                # Relation/slot has no type pool (never seen in training):
+                # fall back to uniform over the whole vocabulary.
                 ids = self.rng.integers(0, self.n_ent, size=self.k)
                 sample_prob = np.full(self.k, 1.0 / self.n_ent)
             else:
@@ -85,7 +94,7 @@ class CandidateSampler:
                     self.rng.choice(len(pool_ids), size=self.k - num_uniform,
                                     p=pool_freq)]
                 ids = np.concatenate([uniform_draws, frequency_draws])
-                # q(x) under the actual mixture over this pool.
+                # q(x) under the actual mixture over this type pool.
                 position = {e: j for j, e in enumerate(pool_ids)}
                 freq_of_draw = np.array([pool_freq[position[e]] for e in ids])
                 sample_prob = (self.mix / len(pool_ids)

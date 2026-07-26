@@ -5,13 +5,18 @@ evaluation.
 For each corruption in the CSV, gather the ANCHOR entity's local facts from the
 graph, render them readable, and emit a case block: the facts + one triple to
 assess. Paste the blocks into an LLM with the 3-way prompt (SUPPORTED / NEUTRAL
-/ CONTRADICTED) -- KGSAGE corruptions should come back not-supported, while the
-true tails (the control) should come back supported.
+/ CONTRADICTED -- the judge's own labels) -- KGSAGE corruptions should come back
+not-supported, while the control arm (the true triples) should come back
+supported.
 
-The anchor is resolved by matching the ORIGINAL (real) triple against the graph,
-which pins the ids and disambiguates repeated display names. When assessing the
-true triple (--which control), that exact edge is EXCLUDED from the facts so the
-judgement is by corroboration, not tautology.
+The CSV column names are FROZEN. Here the corr_* prefix means CORRUPTED -- in
+the trainer log, by contrast, corr-pick means "corroborated". orig_* holds the
+true triple each corruption was derived from.
+
+The anchor is resolved by matching the true triple against the graph, which pins
+the ids and disambiguates repeated display names. When assessing the true triple
+(--which control), that exact edge is EXCLUDED from the facts so the judgement
+is by corroboration, not tautology.
 
 Run from repo root (pytorch env not needed -- pure graph/text):
   PYTHONPATH=experiments python experiments/kgsage/cli/gen_neighbourhood_context.py \
@@ -88,9 +93,10 @@ def main() -> int:
     ap.add_argument("--slot", default="tail", choices=["tail", "head", "both"],
                     help="which corruptions to include. tail (default) is the "
                          "meaningful case: anchor = the subject, whose own facts "
-                         "support or contradict the new object. head corruptions "
-                         "anchor on a hub object (a place/genre), where an absent "
-                         "value reads as merely neutral, not contradicted.")
+                         "corroborate or contradict the picked candidate. head "
+                         "corruptions anchor on a hub object (a place/genre), "
+                         "where an absent value reads as merely neutral, not "
+                         "contradicted.")
     ap.add_argument("--max_facts", type=int, default=20)
     ap.add_argument("--lemma_only", action="store_true",
                     help="WN18RR ONLY: print just the lemma of each entity, "
@@ -138,10 +144,11 @@ def main() -> int:
         if rp in rel_txt:
             label2rels[rel_txt[rp]].add(rp)
 
-    def resolve_orig(oh, orel, ot):
-        for r in label2rels.get(orel, set()):
-            for h in name2ids.get(oh, ()):
-                for t in name2ids.get(ot, ()):
+    def resolve_true_triple(orig_head, orig_relation, orig_tail):
+        """Readable labels of the true triple -> the (h, r, t) ids that exist."""
+        for r in label2rels.get(orig_relation, set()):
+            for h in name2ids.get(orig_head, ()):
+                for t in name2ids.get(orig_tail, ()):
                     if (h, r, t) in triple_set:
                         return h, r, t
         return None
@@ -171,21 +178,22 @@ def main() -> int:
     def build(mode):
         blocks, n = [], 0
         for r in rows:
-            got = resolve_orig(r["orig_head"], r["orig_relation"], r["orig_tail"])
+            got = resolve_true_triple(r["orig_head"], r["orig_relation"],
+                                      r["orig_tail"])
             if got is None:
                 continue
             h, rp, t = got
             slot = "head" if r["corr_head"] != r["orig_head"] else "tail"
             if args.slot != "both" and slot != args.slot:
                 continue
-            anchor = h if slot == "tail" else t
+            anchor = h if slot == "tail" else t   # the entity that keeps its slot
             # the CSV carries full labels; apply the same display rule as name()
             disp = (lambda s: s.split(",")[0].strip()) if args.lemma_only else (lambda s: s)
-            if mode == "corrupted":                       # assess the fake
+            if mode == "corrupted":                       # assess the corruption
                 triple_str = (f"({disp(r['corr_head'])}, {pred(rp)}, "
                               f"{disp(r['corr_tail'])})")
                 lines = fact_lines(anchor, rel_priority=rp)   # keep the real edge (it contradicts)
-            else:                                          # assess the true triple
+            else:                                          # control: assess the true triple
                 triple_str = (f"({disp(r['orig_head'])}, {pred(rp)}, "
                               f"{disp(r['orig_tail'])})")
                 lines = fact_lines(anchor, rel_priority=rp, exclude=(h, rp, t))  # drop its own edge

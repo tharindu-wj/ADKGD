@@ -1,14 +1,21 @@
-"""The RGCN context encoder (paper: Neighbourhood Context Encoding).
+"""The RGCN context encoder (paper Phase 1: Neighbourhood Context Encoding).
 
-Runs relation-aware message passing over the whole knowledge graph and
-returns ONE context vector per entity: the context table E'. E'[e] summarises
-entity e's 2-hop neighbourhood, so every model that conditions on it (the
-generator and both discriminators) is neighbourhood-aware by construction.
+INPUT  -> OUTPUT, and keep the two straight, because they are easy to confuse:
 
-Where this sits in the pipeline: the encoder runs ONCE, during the DistMult
-warm-up at the start of training (see train.py). The finished table E' is
-frozen and stored in the checkpoint; corruption generation replays the cached
-table and never needs the encoder — or torch_geometric — again.
+    INPUT  : `entity_embeddings`, the RGCN layer-0 features. One free-floating
+             learned vector per entity, holding no graph structure at all.
+    OUTPUT : the context table E'. E'[e] summarises entity e's 2-hop
+             neighbourhood, so every model that conditions on it (the generator
+             and both discriminators) is neighbourhood-aware by construction.
+
+E' is NEVER called "entity embeddings" — that name belongs to the input alone.
+
+Where this sits in the pipeline: the encoder runs ONCE, during the Phase-1 RGCN
+warm-up, which trains it through a throwaway DistMult decoder (see train.py).
+The finished table E' is then frozen and stored in the checkpoint; corruption
+generation replays the cached table and never needs the encoder — or
+torch_geometric — again. ("Warm-up" always means this Phase-1 step; the first
+epochs of Phase 2 are the plausibility-only phase, not a warm-up.)
 
 Why RGCNConv and not FastRGCNConv: both are relation-aware, but FastRGCNConv
 materialises a per-edge [E, dim, dim] weight tensor — on FB15K-237 that is
@@ -32,11 +39,16 @@ except ImportError as exc:  # pragma: no cover - environment guard
 class NeighbourhoodContextEncoder(nn.Module):
     """Multi-relational GNN encoder: KG structure -> context table E'.
 
+    NOTE: `entity_embeddings` and `rgcn_layers` are FROZEN names — they ARE the
+    state-dict keys of the locked artifacts, so renaming them makes those
+    checkpoints unloadable. Decoder: `entity_embeddings` is the layer-0 INPUT
+    table, NOT E'. E' is what forward() returns.
+
     Args:
-        n_ent      : number of entities (rows of E').
+        n_ent      : number of entities (rows of the input table and of E').
         n_rel      : number of relations in the BASE edge list (before
                      inverse edges are added).
-        dim        : embedding width of both the inputs and E'.
+        dim        : embedding width of both the layer-0 input and E'.
         num_bases  : basis-decomposition rank; capped at the effective
                      relation count. ~30 is the classic FB15K-237 setting.
         num_layers : RGCN layers = hops of context. 2 is typical.
@@ -54,8 +66,9 @@ class NeighbourhoodContextEncoder(nn.Module):
         self.num_layers = num_layers
         self.add_inverse = add_inverse
 
-        # Layer-0 input features: one learned vector per entity. Message
-        # passing refines these into neighbourhood-aware context vectors.
+        # Layer-0 INPUT features: one learned vector per entity, structure-free
+        # on its own. Message passing turns these into the context table E'.
+        # (Frozen state-dict key: `entity_embeddings` names the input, not E'.)
         self.entity_embeddings = nn.Embedding(n_ent, dim)
         nn.init.normal_(self.entity_embeddings.weight, std=0.1)
 
@@ -93,6 +106,8 @@ class NeighbourhoodContextEncoder(nn.Module):
             edge_index, edge_type = self._augment_with_inverse(edge_index,
                                                                edge_type)
 
+        # Start from the layer-0 INPUT table, then let each RGCN layer mix in
+        # one more hop of neighbourhood. What comes out of the last layer is E'.
         x = self.entity_embeddings.weight
         for layer_index, layer in enumerate(self.rgcn_layers):
             x = layer(x, edge_index, edge_type)
@@ -102,15 +117,17 @@ class NeighbourhoodContextEncoder(nn.Module):
 
     @torch.no_grad()
     def cache_embeddings(self, edge_index, edge_type):
-        """Compute E' once for checkpointing — detached, on CPU.
+        """Compute the context table E' once for checkpointing — detached, CPU.
 
-        Called at the end of training: the resulting tensor goes into the
-        checkpoint so corruption generation can look up E' rows without ever
+        Called at the end of the Phase-1 warm-up: the resulting tensor is
+        stored under the frozen payload key "context_embeddings" (frozen key;
+        it holds E', the encoder's OUTPUT — not `entity_embeddings`, the
+        input), so corruption generation can look up E' rows without ever
         running PyG again.
         """
         self.eval()
-        embeddings = self.forward(edge_index, edge_type)
-        return embeddings.detach().cpu()
+        context_table = self.forward(edge_index, edge_type)
+        return context_table.detach().cpu()
 
     @staticmethod
     def to_tensors(edge_index, edge_type, device=None):
