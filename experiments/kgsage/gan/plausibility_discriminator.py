@@ -1,4 +1,4 @@
-"""The realism discriminator D_real (paper: Adversarial Generator Training).
+"""The plausibility discriminator D_real (paper: Adversarial Generator Training).
 
 D_real answers one question about a triple: "could this be a real fact?"
 It scores (anchor entity, relation, candidate filler) and is trained to output
@@ -20,12 +20,13 @@ import torch.nn as nn
 from torch.nn.utils.parametrizations import spectral_norm
 
 
-class RealismDiscriminator(nn.Module):
+class PlausibilityDiscriminator(nn.Module):
     """Scores how plausible an (anchor, relation, candidate) triple looks.
 
     NOTE: do not rename the attributes `rel_embedding` and `net` — they are
     the state-dict keys stored inside every saved checkpoint (the locked
-    generator_*.pt artifacts carry this discriminator's weights).
+    generator_*.pt artifacts carry this discriminator's weights under the
+    payload key "dreal_state").
     """
 
     def __init__(self, dim: int = 64, n_rel: int = None, hidden: int = 128):
@@ -40,7 +41,7 @@ class RealismDiscriminator(nn.Module):
 
     def forward(self, anchor_embedding: torch.Tensor, relation_ids: torch.Tensor,
                 candidate_embedding: torch.Tensor) -> torch.Tensor:
-        """Return one realism logit per triple, shape [batch].
+        """Return one plausibility logit per triple, shape [batch].
 
         anchor_embedding    : [batch, dim] E' row of the entity that KEEPS its
                               slot (the anchor).

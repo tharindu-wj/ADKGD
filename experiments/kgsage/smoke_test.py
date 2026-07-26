@@ -71,11 +71,11 @@ def main():
     print("OK: kgsage.gan.generator.{CandidateScoringGenerator, gumbel_softmax}")
 
     # The dual-discriminator training stack.
-    from kgsage.gan.realism_discriminator import RealismDiscriminator
-    from kgsage.gan.consistency_discriminator import ConsistencyDiscriminator
+    from kgsage.gan.plausibility_discriminator import PlausibilityDiscriminator
+    from kgsage.gan.neighbourhood_discriminator import NeighbourhoodDiscriminator
     from kgsage.gan.membership_sketch import build_membership_sketches
     from kgsage.gan.candidate_sampler import CandidateSampler
-    print("OK: kgsage.gan.{RealismDiscriminator, ConsistencyDiscriminator, "
+    print("OK: kgsage.gan.{PlausibilityDiscriminator, NeighbourhoodDiscriminator, "
           "build_membership_sketches, CandidateSampler}")
 
     # Importing the trainer transitively verifies the whole v2 dependency graph.

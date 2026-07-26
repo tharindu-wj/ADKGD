@@ -5,8 +5,8 @@ Modules, named after the paper's Methodology section:
                                      dual-discriminator game, PI-controlled
                                      penalty weight, per-epoch snapshots
     generator                     -- CandidateScoringGenerator + gumbel_softmax
-    realism_discriminator         -- D_real: "could this triple be real?"
-    consistency_discriminator     -- D_match: "does the filler fit this
+    plausibility_discriminator    -- D_real: "could this triple be real?"
+    neighbourhood_discriminator   -- D_match: "does the filler fit this
                                      anchor's neighbourhood?"
     neighbourhood_context_encoder -- RGCN warm-up producing the frozen
                                      context table E' (needs PyG)
@@ -18,12 +18,12 @@ Corruption generation (load a checkpoint + produce negatives) lives at
 feed the downstream detector.
 """
 from kgsage.gan.generator import CandidateScoringGenerator, gumbel_softmax
-from kgsage.gan.realism_discriminator import RealismDiscriminator
-from kgsage.gan.consistency_discriminator import ConsistencyDiscriminator
+from kgsage.gan.plausibility_discriminator import PlausibilityDiscriminator
+from kgsage.gan.neighbourhood_discriminator import NeighbourhoodDiscriminator
 
 __all__ = [
     "CandidateScoringGenerator",
     "gumbel_softmax",
-    "RealismDiscriminator",
-    "ConsistencyDiscriminator",
+    "PlausibilityDiscriminator",
+    "NeighbourhoodDiscriminator",
 ]

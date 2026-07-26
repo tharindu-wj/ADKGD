@@ -14,10 +14,11 @@ integration lives exclusively in `experiments/kgsage_bridge/`.
 2. **Phase 2 — the game.** `gan/generator.py` (`CandidateScoringGenerator`) scores
    a per-triple candidate set (`gan/candidate_sampler.py`, logQ-corrected) and
    selects one via straight-through Gumbel-Softmax. Two discriminators judge the
-   pick: `gan/realism_discriminator.py` (realism, spectral-normed, wrong-anchor
-   class) and `gan/consistency_discriminator.py` (neighbourhood consistency,
-   cross-attention). The generator raises realism under a hinge penalty whose
-   weight a PI controller holds at a target corroborated-selection rate.
+   pick: `gan/plausibility_discriminator.py` (D_real — "could this be real?",
+   spectral-normed, wrong-anchor class) and `gan/neighbourhood_discriminator.py`
+   (D_match — "does it fit this anchor's neighbourhood?", cross-attention). The
+   generator raises plausibility under a hinge penalty whose weight a PI
+   controller holds at a target corroborated-selection rate.
 3. **Snapshots + selection.** A checkpoint is saved every adversarial epoch;
    `cli/knockout_eval.py` picks the snapshot whose ranking depends most on the
    anchor's neighbourhood (lowest mean knockout J@10).

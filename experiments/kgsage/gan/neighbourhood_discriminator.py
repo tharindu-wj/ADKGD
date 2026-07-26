@@ -1,4 +1,4 @@
-"""The consistency discriminator D_match (paper: Adversarial Generator Training).
+"""The neighbourhood discriminator D_match (paper: Adversarial Generator Training).
 
 D_match answers the second question about a candidate: "does this filler FIT
 the anchor entity's neighbourhood?" It cross-attends the candidate's embedding
@@ -15,7 +15,7 @@ Popular hub entities appear equally in both classes, so global popularity
 carries no label signal — the only way to score well is to genuinely compare
 the candidate against the neighbour set. The generator is trained to push this
 score DOWN (produce fillers the anchor's neighbourhood does NOT corroborate),
-while the realism discriminator keeps those fillers plausible.
+while the plausibility discriminator keeps those fillers realistic.
 
 The direct anchor–candidate edge is excluded from the neighbour sample by the
 training-data builder; otherwise "fits" could be read off trivially.
@@ -27,11 +27,13 @@ import torch
 import torch.nn as nn
 
 
-class ConsistencyDiscriminator(nn.Module):
+class NeighbourhoodDiscriminator(nn.Module):
     """Scores whether a candidate filler belongs in an anchor's neighbourhood.
 
     NOTE: do not rename the attributes `q_proj`, `k_proj`, `v_proj`, `score` —
-    they are the state-dict keys stored inside every saved checkpoint.
+    they are the state-dict keys stored inside every saved checkpoint (the
+    locked generator_*.pt artifacts carry this discriminator's weights under
+    the payload key "dmatch_state").
     """
 
     def __init__(self, dim: int = 64, d_model: int = 64, hidden: int = 128,
@@ -51,7 +53,7 @@ class ConsistencyDiscriminator(nn.Module):
     def forward(self, candidate_embedding: torch.Tensor,
                 neighbour_embeddings: torch.Tensor,
                 neighbour_mask: torch.Tensor) -> torch.Tensor:
-        """Return one consistency logit per row, shape [batch]. High = fits.
+        """Return one neighbourhood-fit logit per row, shape [batch]. High = fits.
 
         candidate_embedding  : [batch, dim]       frozen E' rows of candidates.
         neighbour_embeddings : [batch, N, dim]    frozen E' rows of a sample of
