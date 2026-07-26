@@ -109,8 +109,13 @@ Aligned with the paper. Use these names, not bare numbers.
 | **Phase 3 — Corruption Generation** | trained checkpoint → one corruption per input triple |
 
 Inside Phase 2, the first epochs run with α = 0: call this the
-**plausibility-only phase** (`PLAUSIBILITY_ONLY_EPOCHS`) — **never** "warm-up",
-which is reserved for the Phase-1 RGCN warm-up.
+**plausibility-only phase** (`EPOCHS_BEFORE_CONTRADICTION`) — **never**
+"warm-up", which is reserved for the Phase-1 RGCN warm-up.
+
+> The constant is deliberately *not* named `PLAUSIBILITY_ONLY_EPOCHS`: that read
+> as a sibling of `PLAUSIBILITY_PRETRAIN_EPOCHS`, but the two are different in
+> kind — one counts **pretraining** epochs for D_real *before* the game, the
+> other counts **game** epochs run at α = 0.
 
 **Retired**: "Phase 0b", "Phase B", "Stage 1/2", "B1a", and using "Phase N" for
 investigation rounds or thesis milestones — those are **"Investigation Round N"**

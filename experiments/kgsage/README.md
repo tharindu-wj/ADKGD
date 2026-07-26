@@ -38,7 +38,7 @@ directly by `corruption_generation.py` and `cli/knockout_eval.py`.
    contradiction penalty whose weight `alpha` a **PI** controller holds at
    `CORROBORATION_TARGET` — the target fraction of picks the training graph
    corroborates. The first epochs run at α = 0: that is the
-   **plausibility-only phase** (`PLAUSIBILITY_ONLY_EPOCHS`), distinct from the
+   **plausibility-only phase** (`EPOCHS_BEFORE_CONTRADICTION`), distinct from the
    Phase-1 RGCN warm-up.
 3. **Snapshots + selection.** A checkpoint is saved every adversarial epoch;
    `cli/knockout_eval.py` picks the most **anchor-specific** snapshot — the one

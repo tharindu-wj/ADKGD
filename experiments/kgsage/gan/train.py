@@ -26,8 +26,10 @@ both discriminators) sees the TRAIN split only. The guarantee that emitted
 corruptions are false against ALL splits comes from the masks applied at
 corruption time, not from anything learned here.
 
-The locked hyperparameters live as module-level constants below (edit there
-to re-tune); only operational flags are on the CLI.
+The knobs you are most likely to re-tune are the module-level constants just
+below. Fixed implementation details are NOT up there — each is defined right
+above the code that uses it and marked `tuned constant:` (grep for that string
+to list them). Only operational flags are on the CLI.
 
 Usage (repo root, pytorch env):
   PYTHONPATH=experiments python -m kgsage.gan.train \
@@ -57,53 +59,44 @@ from kgsage.gan.candidate_sampler import CandidateSampler
 HEAD, TAIL = 0, 2
 
 # ==========================================================================
-# Locked configuration. Tuned once during development and fixed for every
-# run; only operational args (data/out/device/seed/epochs/snapshots/E'-reuse)
-# stay on the CLI. Re-tune by editing here.
+# THE KNOBS YOU ARE LIKELY TO RE-TUNE.
+#
+# Everything else is a fixed implementation detail, defined immediately above
+# the code that uses it and marked `tuned constant:` — grep for that string to
+# find them all. Nothing here is on the CLI except the operational flags
+# (data / out / device / seed / epochs / snapshots / E'-reuse).
 # ==========================================================================
 
-# -- architecture (E', membership sketches, candidate set) --
-EMBEDDING_DIM                 = 64     # context-vector / embedding width
-RGCN_NUM_BASES                = 30     # RGCN basis decomposition
+# -- sizes --
+EMBEDDING_DIM                 = 64     # width of every vector (E', relations)
 RGCN_NUM_LAYERS               = 2      # RGCN depth -> 2-hop context
 SKETCH_BITS                   = 8192   # Bloom membership-sketch length
 NUM_NEIGHBOURS_SAMPLED        = 32     # neighbours D_match attends over
 NUM_CANDIDATES                = 256    # candidates scored per triple (decode = full pool)
 
-# -- Phase-1 RGCN warm-up (skipped when --init_context_from is given) --
-RGCN_WARMUP_EPOCHS            = 10
-RGCN_WARMUP_BATCH_SIZE        = 4096
+# -- how long each stage runs (they happen in this order) --
+RGCN_WARMUP_EPOCHS            = 10     # Phase 1:  build E' (skipped with --init_context_from)
+RGCN_WARMUP_BATCH_SIZE        = 4096   # Phase 1:  batch size for that warm-up
+PLAUSIBILITY_PRETRAIN_EPOCHS  = 2      # Phase 2a: train D_real on its own, before the game
+NEIGHBOURHOOD_PRETRAIN_EPOCHS = 2      # Phase 2a: train D_match on its own, before the game
+EPOCHS_BEFORE_CONTRADICTION   = 2      # Phase 2b: opening game epochs that run at alpha = 0,
+                                       #           i.e. plausibility only. The game's total
+                                       #           length is the --epochs CLI flag.
 
-# -- curriculum: Phase 2a pretrains both discriminators, then Phase 2b opens
-#    with an alpha=0 plausibility-only phase. "Warm-up" always means the
-#    Phase-1 RGCN warm-up above, never these epochs. --
-NEIGHBOURHOOD_PRETRAIN_EPOCHS = 2
-PLAUSIBILITY_PRETRAIN_EPOCHS  = 2
-PLAUSIBILITY_ONLY_EPOCHS      = 2
-
-# -- game optimisation --
+# -- optimisation --
 BATCH_SIZE                    = 256
 GUMBEL_TEMPERATURE            = 0.5    # Gumbel-Softmax temperature (train + decode)
 GENERATOR_LEARNING_RATE       = 1e-4
 PLAUSIBILITY_LEARNING_RATE    = 3e-4   # D_real
 NEIGHBOURHOOD_LEARNING_RATE   = 1e-4   # D_match's online updates during the game
                                        # (a frozen D_match gets exploited by G)
-LABEL_SMOOTHING               = 0.1
 
-# -- contradiction-pressure controller (alpha) --
-CORROBORATION_TARGET          = 0.13   # PI set-point for the corroborated fraction;
-                                       # MUST stay above the ~0.12-0.13 structural
-                                       # floor, or alpha saturates and the generator
-                                       # collapses onto one universal contradiction
-                                       # for every anchor
-ALPHA_INITIAL                 = 1.0    # value alpha restarts at when the
-                                       # plausibility-only phase ends
-ALPHA_MAX                     = 10.0   # anti-windup clamp
-PI_PROPORTIONAL_GAIN          = 2.0    # PI proportional gain
-PI_INTEGRAL_GAIN              = 0.2    # PI integral gain
-CONTRADICTION_MARGIN          = 0.0    # hinge margin: alpha * relu(D_match - margin)
-WRONG_ANCHOR_LOSS_WEIGHT      = 1.0    # weight of the wrong-anchor class (GAN-CLS
-                                       # style); this makes D_real anchor-specific
+# -- the dial that decides how hard the corruptions are --
+CORROBORATION_TARGET          = 0.13   # PI set-point: the share of the generator's picks
+                                       # that the training graph corroborates. MUST stay
+                                       # above the dataset's structural floor, or alpha
+                                       # saturates and the generator collapses onto one
+                                       # universal contradiction for every anchor.
 
 
 def main() -> None:
@@ -173,6 +166,10 @@ def main() -> None:
     # keeping every later weight init reproducible per seed.
     edge_index, edge_type = NeighbourhoodContextEncoder.to_tensors(
         kg["edge_index"], kg["edge_type"], device)
+    # tuned constant: basis decomposition shares weights across relations so the
+    # RGCN stays small on relation-rich graphs. 30 is the classic FB15K-237
+    # setting; the encoder caps it at the relation count internally.
+    RGCN_NUM_BASES = 30
     context_encoder = NeighbourhoodContextEncoder(
         n_ent, n_rel, dim=EMBEDDING_DIM, num_bases=RGCN_NUM_BASES,
         num_layers=RGCN_NUM_LAYERS).to(device)
@@ -369,6 +366,18 @@ def main() -> None:
     plausibility_optimizer = torch.optim.Adam(plausibility_discriminator.parameters(),
                                          lr=PLAUSIBILITY_LEARNING_RATE)
 
+    # tuned constants for EVERY D_real update — used here in Phase 2a and again
+    # in the Phase 2b game further down:
+    #   LABEL_SMOOTHING          real triples are labelled 0.9 instead of 1.0, so
+    #                            D_real never becomes absolutely certain (a
+    #                            saturated discriminator gives G no gradient).
+    #   WRONG_ANCHOR_LOSS_WEIGHT weight of the GAN-CLS third class: a REAL filler
+    #                            shown with the WRONG anchor, labelled fake. This
+    #                            is what forces D_real to judge the anchor rather
+    #                            than the filler alone.
+    LABEL_SMOOTHING = 0.1
+    WRONG_ANCHOR_LOSS_WEIGHT = 1.0
+
     for epoch in range(1, PLAUSIBILITY_PRETRAIN_EPOCHS + 1):
         shuffled = torch.randperm(train_triples_tensor.shape[0],
                                   generator=torch_rng)
@@ -447,6 +456,17 @@ def main() -> None:
     # ---------------------------------------------------------------------
     # Phase 2b — the dual-discriminator game.
     # ---------------------------------------------------------------------
+    # tuned constants for the contradiction-pressure controller. `alpha` is the
+    # weight on the neighbourhood penalty in L_G; a PI controller nudges it each
+    # batch so the corroborated fraction tracks CORROBORATION_TARGET.
+    ALPHA_INITIAL = 1.0           # what alpha restarts at when pressure switches on
+    ALPHA_MAX = 10.0              # anti-windup clamp: stops alpha running away when
+                                  # the target is unreachable for this dataset
+    PI_PROPORTIONAL_GAIN = 2.0    # reacts to the CURRENT error
+    PI_INTEGRAL_GAIN = 0.2        # reacts to the ACCUMULATED error
+    CONTRADICTION_MARGIN = 0.0    # hinge: alpha * relu(D_match - margin), so there
+                                  # is no reward for contradicting past the margin
+
     alpha = ALPHA_INITIAL
     previous_error = 0.0
     print("-" * 60, flush=True)
@@ -455,7 +475,7 @@ def main() -> None:
     for epoch in range(1, args.epochs + 1):
         # The opening alpha=0 epochs are the PLAUSIBILITY-ONLY PHASE (never
         # "warm-up" — that word belongs to the Phase-1 RGCN warm-up).
-        in_plausibility_only_phase = epoch <= PLAUSIBILITY_ONLY_EPOCHS
+        in_plausibility_only_phase = epoch <= EPOCHS_BEFORE_CONTRADICTION
         if in_plausibility_only_phase:
             alpha = 0.0                  # curriculum: learn "plausible" FIRST
         elif alpha == 0.0:
@@ -670,7 +690,7 @@ def main() -> None:
         # Per-epoch snapshots start with the alpha ramp: plausibility-only
         # epochs are not generator candidates, the contradiction-pressure
         # epochs around the ramp are.
-        if (args.snapshot_every > 0 and epoch > PLAUSIBILITY_ONLY_EPOCHS
+        if (args.snapshot_every > 0 and epoch > EPOCHS_BEFORE_CONTRADICTION
                 and epoch % args.snapshot_every == 0):
             checkpoint_stem = (args.out[:-3] if args.out.endswith(".pt")
                                else args.out)
