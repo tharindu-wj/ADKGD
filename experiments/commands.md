@@ -3,6 +3,35 @@
 Run from the repo root (`cd ~/ADKGD` on DeepThought; local Windows works the
 same with the pytorch conda env). `PYTHONPATH=experiments` throughout.
 
+## 0. (Optional) Add YAGO 4.5 as a dataset
+
+The model code is dataset-agnostic — YAGO is purely a data-conversion step.
+**Download the `-tiny` release, NOT the 12 GB full one**: KGSAGE builds
+O(n_ent) structures (the membership sketch is ~8 GB per million entities), so
+the graph must be shrunk to FB/WN scale with the converter's subsampling knobs.
+
+```bash
+# 1. download the TINY Turtle release (~200 MB) into data/
+cd ~/ADKGD/data
+wget https://yago-knowledge.org/data/yago4.5/yago-4.5.0.2-tiny.zip
+cd ~/ADKGD
+
+# 2. convert Turtle -> data/YAGO4.5/{train,valid,test}.txt (pure stdlib, no GPU).
+#    --min_degree + --max_entities shrink YAGO to a dense, WN18RR-scale KG.
+python experiments/kgsage/data/yago_to_tsv.py \
+    --in  data/yago-4.5.0.2-tiny.zip \
+    --out data/YAGO4.5 \
+    --min_degree 5 --max_entities 30000
+#    Optional: focus on specific relations for a cleaner story, e.g.
+#    --relations nationality birthPlace spouse memberOf author director \
+#                containedInPlace deathPlace
+```
+
+The converter accepts a `.zip`, a `.ttl`, or a directory. Read its summary: aim
+for tens of thousands of entities and a few hundred thousand train triples. If
+too few survive, lower `--min_degree`; if too many, lower `--max_entities`.
+No `entity2text.txt` is needed — YAGO ids are already human-readable.
+
 ## 1. Train (per-epoch snapshots; short runs on purpose)
 
 ```bash

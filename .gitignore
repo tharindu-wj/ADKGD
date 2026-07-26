@@ -8,6 +8,7 @@ results
 temp
 time
 data/yago*
+data/YAGO*
 *.pt
 experiments/kgsage/outputs
 .env

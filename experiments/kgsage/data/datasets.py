@@ -20,15 +20,17 @@ import os
 
 
 KNOWN_DATASETS = {
-    # Only datasets that exist on disk in this checkout are registered.
-    # (nell995/kinship/yago/kg20c entries were removed: their directories are
-    # not in the repo and resolve_dataset would silently "succeed" with a
-    # 0-triple KG. The YAGO converter was deleted by the dev_gan_1 cleanup;
-    # recover it from commit 982cb77 if that dataset returns.)
+    # Register a dataset only once its data/<NAME>/ directory can exist on disk;
+    # resolve_dataset() otherwise "succeeds" with a 0-triple KG.
     "fb15k237":   {"default_path": "data/FB15K-237",  "n_relations": 237},
     "wn18rr":     {"default_path": "data/WN18RR",     "n_relations": 11},
     "fb15k_mini": {"default_path": "data/FB15K-mini", "n_relations": 213},
     "dummy_kg":   {"default_path": "data/dummy_kg",   "n_relations": 3},
+    # YAGO 4.5: produced by data/yago_to_tsv.py from the -tiny Turtle release.
+    # n_relations is nominal (the real count depends on the converter's
+    # --relations / --min_degree / --max_entities options and is discovered at
+    # load time); the directory is gitignored (data/YAGO*).
+    "yago45":     {"default_path": "data/YAGO4.5",    "n_relations": None},
 }
 
 
