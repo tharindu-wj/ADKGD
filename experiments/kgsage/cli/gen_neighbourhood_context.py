@@ -28,6 +28,7 @@ from pathlib import Path
 _EVAL_ROOT = Path(__file__).resolve().parents[1] / "outputs" / "eval"
 
 PREDICATE = {
+    # --- FB15K-237 ---
     "people person place of birth": "place of birth",
     "people person nationality": "nationality",
     "people person profession": "profession",
@@ -35,6 +36,18 @@ PREDICATE = {
     "film film language": "language",
     "film film country": "country of production",
     "music artist origin": "origin",
+    # --- WN18RR (keys are the relation2text.txt labels) ---
+    "hypernym": "is a kind of",
+    "instance hypernym": "is an instance of",
+    "member meronym": "has member",
+    "has part": "has part",
+    "derivationally related form": "is derivationally related to",
+    "synset domain topic of": "belongs to the topic domain of",
+    "member of domain region": "is the region domain of",
+    "member of domain usage": "is the usage domain of",
+    "also see": "is semantically related to",
+    "verb group": "is in the same verb group as",
+    "similar to": "is similar to",
 }
 
 
@@ -79,6 +92,13 @@ def main() -> int:
                          "anchor on a hub object (a place/genre), where an absent "
                          "value reads as merely neutral, not contradicted.")
     ap.add_argument("--max_facts", type=int, default=20)
+    ap.add_argument("--lemma_only", action="store_true",
+                    help="WN18RR ONLY: print just the lemma of each entity, "
+                         "dropping the gloss after the first comma (WordNet "
+                         "glosses contain commas and break the triple layout). "
+                         "Do NOT use on FB15K-237 -- ~1.2%% of its labels "
+                         "contain a real comma and would be truncated to a "
+                         "different entity.")
     ap.add_argument("--out", default=None,
                     help="default: outputs/eval/neighbourhood/<csv-stem>_<which>.txt")
     args = ap.parse_args()
@@ -89,7 +109,12 @@ def main() -> int:
     triples = _load_triples(data)
     triple_set = set(triples)
 
-    name = lambda e: _clean(ent_txt.get(e, e))
+    def name(e):
+        label = _clean(ent_txt.get(e, e))
+        # WordNet labels are 'lemma, gloss' and the gloss contains commas, which
+        # breaks the (h, r, t) layout; keeping the lemma restores it. Display
+        # only -- resolution still matches on the full label (see name2ids).
+        return label.split(",")[0].strip() if args.lemma_only else label
     def pred(rp):
         lab = rel_txt.get(rp, rp.rstrip("/").split("/")[-1])
         return PREDICATE.get(lab, lab)
@@ -154,11 +179,15 @@ def main() -> int:
             if args.slot != "both" and slot != args.slot:
                 continue
             anchor = h if slot == "tail" else t
+            # the CSV carries full labels; apply the same display rule as name()
+            disp = (lambda s: s.split(",")[0].strip()) if args.lemma_only else (lambda s: s)
             if mode == "corrupted":                       # assess the fake
-                triple_str = f"({r['corr_head']}, {pred(rp)}, {r['corr_tail']})"
+                triple_str = (f"({disp(r['corr_head'])}, {pred(rp)}, "
+                              f"{disp(r['corr_tail'])})")
                 lines = fact_lines(anchor, rel_priority=rp)   # keep the real edge (it contradicts)
             else:                                          # assess the true triple
-                triple_str = f"({r['orig_head']}, {pred(rp)}, {r['orig_tail']})"
+                triple_str = (f"({disp(r['orig_head'])}, {pred(rp)}, "
+                              f"{disp(r['orig_tail'])})")
                 lines = fact_lines(anchor, rel_priority=rp, exclude=(h, rp, t))  # drop its own edge
             if not lines:
                 continue

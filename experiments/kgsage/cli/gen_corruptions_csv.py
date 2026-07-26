@@ -34,7 +34,11 @@ from kgsage.corruption_generation import load_checkpoint, generate_negatives  # 
 _EVAL_ROOT = Path(__file__).resolve().parents[1] / "outputs" / "eval"
 
 # Human-phraseable relations -> a natural-language template. Extend for YAGO.
+# Relation names are dataset-unique (FB uses /paths/, WN uses _names), so one
+# dict serves every dataset: only the relations present in the chosen split are
+# ever used. A relation MUST appear here to be sampled (see the filter below).
 TEMPLATES = {
+    # --- FB15K-237 ---
     "/people/person/place_of_birth": "{h} was born in {t}.",
     "/people/person/nationality": "{h} is a citizen of {t}.",
     "/people/person/profession": "{h}'s profession is {t}.",
@@ -42,6 +46,18 @@ TEMPLATES = {
     "/film/film/language": "The film {h} is in {t}.",
     "/film/film/country": "The film {h} was produced in {t}.",
     "/music/artist/origin": "The musical artist {h} originates from {t}.",
+    # --- WN18RR (directions verified against train.txt) ---
+    "_hypernym": "{h} is a kind of {t}.",
+    "_instance_hypernym": "{h} is an instance of {t}.",
+    "_member_meronym": "{t} is a member of {h}.",
+    "_has_part": "{h} has part {t}.",
+    "_derivationally_related_form": "{h} is derivationally related to {t}.",
+    "_synset_domain_topic_of": "{h} belongs to the topic domain of {t}.",
+    "_member_of_domain_region": "{t} is a term used in the region {h}.",
+    "_member_of_domain_usage": "{t} is a term of the usage type {h}.",
+    "_also_see": "{h} is semantically related to {t}.",
+    "_verb_group": "{h} is in the same verb group as {t}.",
+    "_similar_to": "{h} is similar to {t}.",
 }
 
 
