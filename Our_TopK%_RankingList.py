@@ -6,9 +6,22 @@ from dataset import Reader
 # import utils
 from create_batch import get_pair_batch_train, get_pair_batch_test, toarray, get_pair_batch_train_common, toarray_float
 import torch
+
+# Windows/CPU compat guard (torch 2.8): the oneDNN (mkldnn) LSTM kernel path
+# access-violates (0xC0000005) after the first training batch in this model's
+# full context -- verified via faulthandler (crash inside nn.LSTM.forward) and
+# an A/B probe: mkldnn off completes training, single-threading does not help.
+# Kernel selection only; model math is unchanged. No-op on the GPU cluster.
+# Override with ADKGD_DISABLE_MKLDNN=0/1.
+import os as _os_compat
+_mkldnn_flag = _os_compat.environ.get("ADKGD_DISABLE_MKLDNN", "auto")
+if _mkldnn_flag == "1" or (_mkldnn_flag == "auto" and _os_compat.name == "nt" and not torch.cuda.is_available()):
+    torch.backends.mkldnn.enabled = False
+
 from model import BiLSTM_Attention
 import torch.nn as nn
 from sklearn.metrics import roc_auc_score
+from sklearn.metrics import average_precision_score
 from sklearn.metrics import precision_recall_fscore_support
 import os
 import logging
@@ -71,6 +84,22 @@ def main():
     parser.add_argument('--anomaly_ratio', default=0.15, type=float, help="anomaly ratio")
     #
     parser.add_argument('--num_anomaly_num', default=300, type=int, help="number of anomalies")
+    # Phase B (GAN integration): source of training-time negatives.
+    # 'random' = ADKGD's original generate_anomalous_triples (default; baseline).
+    # 'gan'    = in-process call to a trained KGSAGE checkpoint via
+    #            experiments/kgsage_bridge/bridge. Head/tail slot by
+    #            corruptibility; decode masked by type pool + known-true
+    #            fillers + self-loop; bounded resample; failed rows come
+    #            back flagged (never trained on). --gan_path = checkpoint.
+    # Only `Reader.get_data()` consults these; everything downstream is unchanged.
+    parser.add_argument('--neg_source', default='random', choices=['random', 'gan'],
+                        help="source of TRAINING negatives (set C); default 'random' = baseline behaviour")
+    # Source of the INJECTED eval anomalies (Reader.inject_anomaly). Independent of
+    # --neg_source, so the experiment matrix (train x test) is a pair of flags.
+    parser.add_argument('--test_anomaly_source', default='random', choices=['random', 'gan'],
+                        help="source of the INJECTED eval anomalies; 'random' = baseline")
+    parser.add_argument('--gan_path', default='artifacts/kgsage/generator_fb15k237.pt',
+                        help="path to the KGSAGE GAN .pt checkpoint (used when EITHER --neg_source or --test_anomaly_source is 'gan'; missing file is a hard error)")
     args = parser.parse_args()
 
     # data_name = args.dataset
@@ -294,6 +323,7 @@ def train(args, dataset, device):
 def test(args, dataset, device):
     # Dataset parameters
     # data_name = args.dataset
+    test_start_time = time.time()  # wall-clock for end-to-end testing time
     device = torch.device('cpu')
     data_path = args.data_path
     model_name = args.model
@@ -367,14 +397,26 @@ def test(args, dataset, device):
 
             # print('{}th test data'.format(i))
             logging.info('[Test] Evaluation on %d batch of Original graph' % i)
-            # sum = labels.sum()
-            # if sum < labels.size(0):
-            #     # loss = -1 * loss
-            #     AUC = roc_auc_score(labels.cpu(), loss.cpu())
-            #     print('AUC on the {}th test images: {} %'.format(i, np.around(AUC)))
 
         total_num = len(all_label)
 
+        # B5: threshold-free metrics over the full ranking (higher loss = more
+        # anomalous) + raw score dump for the cross-source hardness analysis.
+        # The old commented per-batch AUC (see git history) was statistically
+        # meaningless; this is ONE global AUC/AUPRC over all test triples.
+        _scores_np = np.array(all_loss, dtype=np.float64)
+        _labels_np = np.array(all_label, dtype=np.int64)
+        try:
+            auc_val = roc_auc_score(_labels_np, _scores_np)
+            auprc_val = average_precision_score(_labels_np, _scores_np)
+            logging.info('[Test][%s][%s] AUC %f -- AUPRC %f'
+                         % (args.dataset, model_name, auc_val, auprc_val))
+        except ValueError as _exc:  # e.g. degenerate single-class labels
+            logging.info('[Test] AUC/AUPRC unavailable: %s' % _exc)
+        _npz_path = os.path.join(args.log_folder,
+                                 model_name + '_' + args.dataset + '_scores.npz')
+        np.savez_compressed(_npz_path, scores=_scores_np, labels=_labels_np)
+        logging.info('[Test] score dump: %s' % _npz_path)
 
         # 9300
         max_top_k = total_num_anomalies * 2
@@ -455,6 +497,19 @@ def test(args, dataset, device):
             logging.info('[Test][%s][%s] Recall  %f-- %f : %f' % (args.dataset, model_name, args.anomaly_ratio, ratios[i], recall))
             logging.info('[Test][%s][%s] anomalies in total: %d -- discovered:%d -- K : %d' % (
                 args.dataset, model_name, total_num_anomalies, anomaly_discovered[num_k - 1], num_k))
+
+    # End-to-end testing time. Written in the same "Duration: X seconds" format
+    # as the per-epoch training file so the run_experiment.py regex picks it up
+    # without changes. Mode 'w' (not 'a') -- one test pass per --mode test run.
+    test_end_time = time.time()
+    test_duration = test_end_time - test_start_time
+    logging.info('Test, Duration: %f seconds' % test_duration)
+    test_time_file = os.path.join(
+        args.log_folder, model_name + "_" + args.dataset + "_test_time.txt"
+    )
+    with open(test_time_file, 'w') as f:
+        f.write('Test, Duration: %f seconds\n' % test_duration)
+
 
 if __name__ == '__main__':
     main()

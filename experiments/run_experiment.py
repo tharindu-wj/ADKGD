@@ -1,9 +1,27 @@
-"""Run ONE ADKGD baseline experiment (one train + one test) and print the
-five Precision@K / Recall@K values plus the total training time.
+"""Run ONE experiment-matrix cell (one train + one test subprocess) and report
+Precision@K / Recall@K at five cutoffs, global AUC/AUPRC, and timings.
 
-Defaults reproduce the FB15K-237 column of the paper's Table 2 (5% anomaly,
-seed 0, 1 epoch). Designed to be invoked from a slurm script, but runs
-identically from a normal shell.
+This script sits on the KGSAGE-detector seam, so two vocabularies meet here.
+KGSAGE emits *corruptions* (false triples). ADKGD consumes the very same
+objects in two different roles: as training *negatives*, and as the
+*anomalies* injected into the evaluation split. One axis of the matrix picks
+the source for each role:
+
+    --neg_source           -> where the TRAINING negatives come from
+    --test_anomaly_source  -> where the INJECTED eval anomalies come from
+
+Both take random|gan: 'random' is ADKGD's own uniform corruption (the
+baseline), 'gan' is a trained KGSAGE generator checkpoint (--gan_path).
+
+A cell is named "train-neg x test-anom", so the four cells are
+random x random (baseline), random x gan, gan x random and gan x gan. The
+default --model label encodes that cell identity (ADKGD_<neg>x<test>_s<seed>)
+so artifacts never collide across cells or seeds; a machine-readable
+<model>_<dataset>_run.json is written per run for
+experiments/aggregate_results.py.
+Defaults (random x random, 5% anomalies, seed 0, 1 epoch) reproduce the
+paper's baseline protocol. Invoked by experiments/slurm/exp_cell.slurm, but
+runs identically from a shell.
 
 Local CPU caveat: on Windows/CPU, set OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 KMP_DUPLICATE_LIB_OK=TRUE in the environment before running -- otherwise
@@ -28,12 +46,13 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 
 # Log lines look like:
-#   INFO:root:[Test][FB15K][ADKGD] Precision 0.050000 -- 0.010000 : 0.951...
-#   INFO:root:[Test][FB15K][ADKGD] Recall   0.050000-- 0.010000 : 0.190...
+#   INFO:root:[Test][FB15K-237][ADKGD] Precision 0.050000 -- 0.010000 : 0.951...
+#   INFO:root:[Test][FB15K-237][ADKGD] Recall   0.050000-- 0.010000 : 0.190...
 #   Epoch: 0, Duration: 700.32 seconds
 PRECISION_RE = re.compile(r"Precision\s+(\d+\.\d+)\s*--\s*(\d+\.\d+)\s*:\s*(\d+\.\d+)")
 RECALL_RE = re.compile(r"Recall\s+(\d+\.\d+)\s*--\s*(\d+\.\d+)\s*:\s*(\d+\.\d+)")
 DURATION_RE = re.compile(r"Duration:\s+([\d.]+)")
+AUC_RE = re.compile(r"AUC\s+([\d.]+)\s*--\s*AUPRC\s+([\d.]+)")
 
 
 def _run(cmd: list[str], cwd: Path | None = None) -> None:
@@ -72,6 +91,22 @@ def parse_metrics(log_path: Path, anomaly_ratio: float, ks: list[float]) -> dict
     return {k: (precisions.get(round(k, 6)), recalls.get(round(k, 6))) for k in ks}
 
 
+def parse_total_test_min(test_time_path: Path) -> float | None:
+    """Return total test minutes parsed from the test_time.txt file.
+
+    Same format as the train file (`Duration: X seconds`), so we reuse
+    DURATION_RE. Test writes exactly one entry per run, but we sum defensively
+    in case that ever changes.
+    """
+    if not test_time_path.exists():
+        print(f"!! test_time not found: {test_time_path}", file=sys.stderr)
+        return None
+    durations = [float(m) for m in DURATION_RE.findall(test_time_path.read_text(encoding="utf-8", errors="replace"))]
+    if not durations:
+        return None
+    return sum(durations) / 60.0
+
+
 def parse_total_train_min(epoch_times_path: Path) -> tuple[float, int] | None:
     """Return (total_minutes, n_epochs) parsed from the epoch_times.txt file."""
     if not epoch_times_path.exists():
@@ -85,13 +120,37 @@ def parse_total_train_min(epoch_times_path: Path) -> tuple[float, int] | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dataset", default="FB15K", help="dataset folder name under data/")
-    ap.add_argument("--anomaly_ratio", type=float, default=0.05, help="fraction of fakes injected (e.g. 0.05)")
+    ap.add_argument("--dataset", default="FB15K-237", help="dataset folder name under data/")
+    ap.add_argument("--anomaly_ratio", type=float, default=0.05, help="fraction of injected anomalies (e.g. 0.05)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--max_epoch", type=int, default=1)
     ap.add_argument("--model", default="ADKGD", help="label written into output filenames")
     ap.add_argument("--script", default="Our_TopK%_RankingList.py", help="ADKGD entry-point script")
+    # The two matrix axes. These three flag names and the literals random|gan are
+    # FROZEN: they are the detector CLI contract shared by this script,
+    # experiments/slurm/exp_cell.slurm and the ADKGD entry script. "gan" here means
+    # "corruptions from the trained KGSAGE generator" (the package is wider than a
+    # plain GAN, but the flag value cannot be renamed). Forwarded verbatim to both
+    # the train and the test subprocess.
+    ap.add_argument("--neg_source", default="random", choices=["random", "gan"],
+                    help="source of the ADKGD TRAINING negatives: 'random' = ADKGD's own uniform "
+                         "corruption (baseline, default), 'gan' = KGSAGE corruptions")
+    ap.add_argument("--test_anomaly_source", default="random", choices=["random", "gan"],
+                    help="source of the INJECTED eval anomalies; 'random' = baseline (default). "
+                         "The (train-neg x test-anom) pair names the matrix cell.")
+    ap.add_argument("--gan_path", default="artifacts/kgsage/generator_fb15k237.pt",
+                    help="path to the trained KGSAGE generator checkpoint (used when EITHER axis is 'gan'; missing file is a hard error)")
     args = ap.parse_args()
+
+    # Cell hygiene: encode the matrix cell in the model label so checkpoint and
+    # log filenames (all derived from --model) can never collide between matrix
+    # cells or seeds running concurrently. A user-supplied --model is respected
+    # verbatim; the default gets the cell identity appended.
+    # frozen format: ADKGD_<train-neg>x<test-anom>_s<seed> -- aggregate_results.py
+    # and the operator docs both key off this exact shape.
+    if args.model == "ADKGD":
+        args.model = f"ADKGD_{args.neg_source}x{args.test_anomaly_source}_s{args.seed}"
+    print(f"[run_experiment] model label: {args.model}")
 
     # This file lives at experiments/run_experiment.py; the repo root (where
     # ADKGD's data/, Our_TopK%_RankingList.py, etc. live) is one level up.
@@ -108,13 +167,25 @@ def main() -> int:
     #     Our_TopK%_RankingList.py:112 (where the filename is built).
     log = ckpt_dir / f"{args.model}_{args.dataset}_{args.anomaly_ratio}_Neighbors39__log.txt"
     ept = ckpt_dir / f"{args.model}_{args.dataset}_epoch_times.txt"
+    ttf = ckpt_dir / f"{args.model}_{args.dataset}_test_time.txt"
 
     # ADKGD only ever appends to these. Start fresh so this run's report is clean.
     log.unlink(missing_ok=True)
     ept.unlink(missing_ok=True)
+    ttf.unlink(missing_ok=True)
 
     py = sys.executable                            # use the same interpreter we were launched with
     adkgd_script = project_root / args.script      # absolute path to ADKGD's entry script
+
+    # The seam flags go on BOTH the train and test invocations so ADKGD's Reader
+    # sees the same sources in either mode (the Reader is rebuilt fresh in each
+    # subprocess). --gan_path is only forwarded when a KGSAGE checkpoint is
+    # actually needed -- otherwise it's misleading noise in a baseline log (and
+    # could mask a real misconfiguration if the path is stale).
+    gan_args = ["--neg_source", args.neg_source,
+                "--test_anomaly_source", args.test_anomaly_source]
+    if args.neg_source == "gan" or args.test_anomaly_source == "gan":
+        gan_args += ["--gan_path", args.gan_path]
 
     # Train -- cwd=project_root so ADKGD's "./data/..." / "./checkpoints/..." resolve correctly.
     _run([
@@ -125,6 +196,7 @@ def main() -> int:
         "--anomaly_ratio", str(args.anomaly_ratio),
         "--seed", str(args.seed),
         "--max_epoch", str(args.max_epoch),
+        *gan_args,
     ], cwd=project_root)
 
     # Test (same cwd reasoning).
@@ -135,6 +207,7 @@ def main() -> int:
         "--mode", "test",
         "--anomaly_ratio", str(args.anomaly_ratio),
         "--seed", str(args.seed),
+        *gan_args,
     ], cwd=project_root)
 
     ratio = args.anomaly_ratio
@@ -142,10 +215,14 @@ def main() -> int:
 
     # get the metrics and timing info from the log files, print them in a nice format
     metrics = parse_metrics(log, ratio, ks)
+    auc_match = AUC_RE.search(log.read_text(encoding="utf-8", errors="replace")) if log.exists() else None
+    auc, auprc = (float(auc_match.group(1)), float(auc_match.group(2))) if auc_match else (None, None)
 
-    # The epoch_times file is only written during training,
-    # so if it's missing, we can still report the metrics but just say "no timing info" instead of erroring out.  
+    # The epoch_times file is only written during training, and the test_time
+    # file is only written during testing. Either may be missing if its phase
+    # crashed; report what we have instead of erroring out.
     timing = parse_total_train_min(ept)
+    test_timing = parse_total_test_min(ttf)
 
     print()
     print("=" * 60)
@@ -160,12 +237,37 @@ def main() -> int:
         r_str = f"{r:.4f}" if r is not None else "  --  "
         print(f"{k * 100:>5.0f}%  {p_str:>12}  {r_str:>10}")
     print()
+    if auc is not None:
+        print(f"AUC:   {auc:.4f}    AUPRC: {auprc:.4f}")
+    else:
+        print("AUC:   -- (no AUC line found in the log)")
+    print()
+
+    # Machine-readable per-run record for aggregate_results.py (mean±std over
+    # seeds per matrix cell). One JSON per run, named by the cell-identity label.
+    import json
+    run_record = {
+        "dataset": args.dataset, "model": args.model, "seed": args.seed,
+        "neg_source": args.neg_source, "test_anomaly_source": args.test_anomaly_source,
+        "anomaly_ratio": ratio, "max_epoch": args.max_epoch,
+        "precision_at": {str(k): metrics[k][0] for k in ks},
+        "recall_at": {str(k): metrics[k][1] for k in ks},
+        "auc": auc, "auprc": auprc,
+    }
+    run_json = ckpt_dir / f"{args.model}_{args.dataset}_run.json"
+    run_json.write_text(json.dumps(run_record, indent=2), encoding="utf-8")
+    print(f"per-run record: {run_json}")
 
     if timing is None:
         print("Total train time: -- (no epoch_times file found)")
     else:
         total_min, n_epochs = timing
         print(f"Total train time: {total_min:.2f} minutes ({n_epochs} epoch(s))")
+
+    if test_timing is None:
+        print("Total test time:  -- (no test_time file found)")
+    else:
+        print(f"Total test time:  {test_timing:.2f} minutes")
 
     return 0
 
