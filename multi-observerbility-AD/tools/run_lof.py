@@ -15,15 +15,20 @@ from sklearn.neighbors import LocalOutlierFactor
 from data.california_housing import DATA
 
 
-def run_lof(columns, row_filter=None):
-    """Tool 3: the statistical component. Scores every row with Local Outlier Factor.
+def run_lof(columns: list[str], row_filter: dict | None = None) -> str:
+    """Score every row with Local Outlier Factor over the chosen viewpoint.
 
-    columns    : list of column names to observe (the viewpoint's columns)
-    row_filter : optional dict like {"column": "Latitude", "min": 32.5, "max": 35.0}
-                 (the viewpoint's rows: WHO the entities are compared against)
+    This is the statistical component: it decides how unusual each row is. The
+    agent decides only WHAT to look at.
 
-    Returns a text summary: how many rows, the score spread, and the 5 most
-    anomalous rows so the agent can see what this viewpoint finds.
+    Args:
+        columns: column names to observe -- the viewpoint's columns. At least 2.
+        row_filter: optional, narrows WHO each row is compared against. Shape:
+            {"column": "Latitude", "min": 32.5, "max": 35.0}. Omit it to compare
+            every row against the whole dataset.
+
+    Returns a text summary: rows scored, the score spread, and the 5 most
+    anomalous rows. Bad input comes back as an ERROR string explaining the fix.
     """
     # -- check the inputs, answering with readable errors ----------------------
     bad = [c for c in columns if c not in DATA.columns]

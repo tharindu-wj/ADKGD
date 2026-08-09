@@ -7,8 +7,15 @@ modules, so every tool that imports it reads the ONE loaded frame.
 from data.california_housing import DATA
 
 
-def describe_column(name):
-    """Tool 2: how one column is distributed, so the agent learns the scales."""
+def describe_column(name: str) -> str:
+    """Describe how one column is distributed, so the agent learns its scale.
+
+    Args:
+        name: the exact column name, as given by list_columns.
+
+    Returns median, 1st and 99th percentiles, min and max. Unknown names come
+    back as an ERROR string listing what to do instead.
+    """
     if name not in DATA.columns:
         return (f"ERROR: '{name}' is not a column. "
                 "Call list_columns() to see the valid names.")

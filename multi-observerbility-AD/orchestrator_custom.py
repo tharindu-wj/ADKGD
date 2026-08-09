@@ -190,7 +190,7 @@ if __name__ == "__main__":
     print("=" * 76)
     print(json.dumps(spec, indent=2))
 
-    run_path = save_run(goal, backend_name, spec, trace)
+    run_path = save_run(goal, backend_name, spec, trace, orchestrator="custom")
     print(f"\nRun saved to {run_path}  ({len(trace)} steps, full untruncated trace)")
     print("Replaying the viewpoint later needs no LLM at all:")
     print("    from tools.run_lof import run_lof")

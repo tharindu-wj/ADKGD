@@ -16,8 +16,12 @@ DATASET, so it lives in data/california_housing.py beside the frame it describes
 from data.california_housing import COLUMN_MEANINGS
 
 
-def list_columns():
-    """Tool 1: what data exists. Usually the agent's first call."""
+def list_columns() -> str:
+    """List every column in the dataset with a plain-English meaning.
+
+    Usually the agent's first call: it says what data exists without revealing a
+    single row. Takes no arguments.
+    """
     lines = ["Available columns:"]
     for name, meaning in COLUMN_MEANINGS.items():
         lines.append(f"  {name}: {meaning}")
