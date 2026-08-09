@@ -17,9 +17,9 @@ ADDING A TOOL
 Ask first whether the tool leaks per-entity information -- that decision
 outlives the MVP (PROJECT_SPEC 6.5).
 
-Imports run one way only: registry -> tool files -> (run_lof, for DATA).
-Nothing in tools/ imports an orchestrator or LLM/, so adding an orchestration
-is a pure addition.
+Imports run one way only: registry -> tool files -> data/. No tool imports
+another tool, and nothing in tools/ imports an orchestrator or LLM/, so adding
+an orchestration is a pure addition.
 """
 
 from tools.describe_column import describe_column

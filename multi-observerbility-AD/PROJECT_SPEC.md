@@ -127,8 +127,8 @@ route to A2. This shapes the roadmap (§8).
 ### Goals
 1. **G1 — Derivation:** an agent turns a one-sentence observer point into a valid,
    executable viewpoint spec, using tools, without seeing raw data rows. *(done)*
-2. **G2 — Interchangeable minds:** the same loop runs on a scripted dummy, Claude,
-   or Gemini, so architecture effects and model effects can be separated. *(done)*
+2. **G2 — Interchangeable minds:** the same loop runs on a scripted dummy or
+   Gemini, so architecture effects and model effects can be separated. *(done)*
 3. **G3 — Evidence trail:** every run persists its spec *and* full reasoning trace
    for later analysis; failed runs included. *(done)*
 4. **G4 — Measurement:** compare derived viewpoints against hand-built and random
@@ -156,7 +156,7 @@ route to A2. This shapes the roadmap (§8).
 | FR-4 | All anomaly scores produced by `run_lof` (standardise → LOF k=20); no other scoring path exists | DONE |
 | FR-5 | Agent loop hard-capped by `max_steps`; prompt budget stated to the model separately | DONE |
 | FR-6 | Every run saved to `runs/` as JSON: spec + full untruncated trace + status (`completed` / `exhausted`) | DONE |
-| FR-7 | ≥3 interchangeable backends behind one contract: dummy (offline), Claude (subscription CLI), Gemini (free API) | DONE |
+| FR-7 | Interchangeable backends behind one contract: dummy (offline), Gemini (free API). A Claude-via-CLI backend was removed 9 Aug 2026 — LangChain has no equivalent, so keeping it would leave the two orchestrations incomparable | DONE |
 | FR-8 | Dummy backend deterministic and network-free — the permanent regression test | DONE |
 | FR-9 | Any saved spec replayable with zero LLM calls | DONE |
 | FR-10 | Null-model harness: derived spec vs hand-built spec vs random column set, same metrics | PLANNED |
@@ -209,18 +209,21 @@ user sets goal (CLI)
 | `orchestrator_langchain.py` | **Entry point 2 — planned.** The LangChain orchestration; a pure addition |
 | `LLM/build_system_prompt.py` | The system prompt + prompt builder shared by all real backends |
 | `LLM/llm_dummy.py` | Backend 1 — scripted. **The contract is documented here; read it first** |
-| `LLM/llm_claude.py` | Backend 2 — Claude via the Claude Code CLI (`claude -p`), no API key |
-| `LLM/llm_gemini.py` | Backend 3 — Gemini REST API (`gemini-3.5-flash-lite`, pinned), free tier |
+| `LLM/llm_gemini.py` | Backend 2 — Gemini REST API (`gemini-3.5-flash-lite`, pinned), free tier |
 | `tools/registry.py` | The tool index (`TOOLS`) — the seam both orchestrations bind to |
-| `tools/list_columns.py` | Tool 1, plus `COLUMN_MEANINGS` (its only consumer) |
+| `tools/list_columns.py` | Tool 1 — a pure formatter |
 | `tools/describe_column.py` | Tool 2 |
-| `tools/run_lof.py` | Tool 3 — the only scoring path (INV-3); also loads and owns `DATA` |
+| `tools/run_lof.py` | Tool 3 — the only scoring path (INV-3) |
+| `data/california_housing.py` | `DATA` + `COLUMN_MEANINGS`. A leaf: imports nothing from the project, fetched once, shared by every tool |
+| `utils/save_run.py` | Writes `runs/*.json`. Outside both orchestrations so they cannot drift apart on schema |
 | `runs/` | One JSON per run, never overwritten |
 | `.env` | `GEMINI_KEY=...` — gitignored, at the **repo root** |
 
-Neither `LLM/` nor `tools/` imports an orchestrator, and `tools/` imports nothing
-from `LLM/`. That one-way rule is what makes adding a second orchestration a pure
-addition rather than a refactor. No `__init__.py` is needed: the entry points sit
+Imports run one way only — `orchestrator → tools/ → data/`. No tool imports
+another tool, neither `LLM/` nor `tools/` imports an orchestrator, `tools/`
+imports nothing from `LLM/`, and `data/` imports nothing from the project at all.
+That rule is what makes adding a second orchestration, a new tool, or a second
+dataset a pure addition rather than a refactor. No `__init__.py` is needed: the entry points sit
 at the repo root, so both folders import as namespace packages from any working
 directory.
 
@@ -250,7 +253,7 @@ tool set cannot drift between them.
 | Standardisation inside `run_lof` | Without it, the largest-valued column (Population, up to 35,682) decides every distance and every viewpoint gives the same answer |
 | Row filter minimum (100 rows) | In a tiny population everything looks unusual — a filter could manufacture anomalies |
 | Crash/exhaustion still saves the trace | A failed run is evidence, not garbage |
-| Typo-proof CLI | `-claude` (one dash) errors loudly instead of silently running the dummy |
+| Typo-proof CLI | `-gemini` (one dash) errors loudly instead of silently running the dummy |
 
 ### 6.5 A deliberate MVP relaxation — flagged for graduation
 `run_lof` shows the agent the **top-5 flagged rows**. Excellent for learning (you
@@ -267,8 +270,8 @@ Five live runs to date (all in `runs/`, each with full trace):
 
 | Run | Backend | Goal | Derived columns | Note |
 |---|---|---|---|---|
-| 195548 | Claude | default (impossible places) | AveRooms, AveOccup | catches the prison block, misses Tahoe |
-| 202000 | Claude | default | AveRooms, AveBedrms | compared 2 candidate viewpoints unprompted; catches Tahoe, misses the prison block (rank 4,259) |
+| 195548 | Claude (removed) | default (impossible places) | AveRooms, AveOccup | catches the prison block, misses Tahoe |
+| 202000 | Claude (removed) | default | AveRooms, AveBedrms | compared 2 candidate viewpoints unprompted; catches Tahoe, misses the prison block (rank 4,259) |
 | 203857 | Gemini | default | AveRooms, AveBedrms, AveOccup | examined all ratios; catches both |
 | 205603 | Gemini | regional misfit | — (exhausted) | killed by 20-req/day quota on aliased model; trace saved |
 | 205659 | Gemini | regional misfit | MedInc, Latitude, Longitude | **novel strategy**: put coordinates *into* the LOF space so "region" = the k-nearest spatial neighbours — a third operationalisation of context nobody scripted |
@@ -296,7 +299,7 @@ Five live runs to date (all in `runs/`, each with full trace):
 
 | Phase | Content | Exit condition |
 |---|---|---|
-| **P1. Baselines** (next) | FR-10: derived vs hand-built vs random viewpoints, same metrics. FR-11: N=5 repeats × {Claude, Gemini} × ≥2 goals from `runs/` | If derived ≈ random on every goal, the derivation claim dies here — better in week one than month eight |
+| **P1. Baselines** (next) | FR-10: derived vs hand-built vs random viewpoints, same metrics. FR-11: N=5 repeats × {custom, LangChain} orchestrations × ≥2 goals from `runs/` | If derived ≈ random on every goal, the derivation claim dies here — better in week one than month eight |
 | **P2. Harden** | FR-12: splits, aggregate-only diagnostics, spec freezing/hashing; pin models; anonymised-column condition (the dataset is in every LLM's training corpus) | MVP relaxations closed; results reproducible end-to-end |
 | **P3. Multi-observer** | FR-13: cells ② (one agent, two goals), ②½ (two agents, one goal — redundancy control), ③ (two agents, two goals). Contradiction between observers becomes the object of study | Measured: does two-goals-one-mind contaminate? Do complementary observers beat redundant ones? |
 | **P4. Cross-view (A2/A3)** | Swap-injected A2 ground truth; cross-view evidence exchange; explain-away (A3) adjudication — demote-only, applied by code | The thesis experiments |
@@ -349,7 +352,7 @@ Five live runs to date (all in `runs/`, each with full trace):
 
 ```bash
 python orchestrator_custom.py                      # dummy regression: must finalise, save a run
-python orchestrator_custom.py -claude x            # must exit with the unrecognised-flag error
+python orchestrator_custom.py -gemini x            # must exit with the unrecognised-flag error
 python orchestrator_custom.py --gemini "any goal"  # live check (needs .env key; free tier)
 ```
 

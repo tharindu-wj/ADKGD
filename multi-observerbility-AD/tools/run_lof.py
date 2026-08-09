@@ -4,24 +4,15 @@ The two-plane rule (PROJECT_SPEC 3.4) lives or dies here: the LLM chooses what
 to look at, this file decides how unusual each row is. No other module may
 compute, threshold or rank an anomaly score (INV-3).
 
-This module also owns DATA, because it is the heaviest user of it. Loading it
-here (rather than in an orchestrator) is what keeps tools importable by BOTH
-orchestrators without either one owning the dataset. Python caches modules, so
-describe_column importing DATA from here shares the one loaded frame.
+The dataset used to live in this file. It now lives in data/california_housing.py
+so that describe_column can reach it without importing a tool. Nothing about
+INV-3 moved with it: scoring still happens here and nowhere else.
 """
 
 import numpy as np
-import pandas as pd
-from sklearn.datasets import fetch_california_housing
 from sklearn.neighbors import LocalOutlierFactor
 
-# =============================================================================
-# DATA - loaded once, used by every tool that needs it.
-# One row = one census block group in California, 1990.
-# =============================================================================
-
-raw = fetch_california_housing()
-DATA = pd.DataFrame(raw.data, columns=list(raw.feature_names))
+from data.california_housing import DATA
 
 
 def run_lof(columns, row_filter=None):

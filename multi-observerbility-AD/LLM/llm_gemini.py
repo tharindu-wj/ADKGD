@@ -24,7 +24,7 @@ Same as every backend (see llm_dummy.py for the full statement):
 Two Gemini-specific perks worth knowing:
   - `responseMimeType: application/json` makes the API GUARANTEE syntactically
     valid JSON, so no fence-stripping regex is needed here.
-  - Unlike the Claude CLI, temperature IS controllable -- which matters later
+  - Temperature IS controllable here -- which matters later
     for the derivation-variance experiments.
 """
 

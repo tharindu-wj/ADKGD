@@ -3,7 +3,7 @@
     user sets goal
           |
           v
-       AGENT (an LLM backend -- dummy, Claude or Gemini)
+       AGENT (an LLM backend -- dummy or Gemini)
           |   ^
           |   |  "loop: evaluate and ask again"
           v   |
@@ -23,10 +23,13 @@ THE FILES
     orchestrator_custom.py       this file: the agent loop, saving runs, the CLI
     LLM/build_system_prompt.py   the system prompt + prompt builder the real backends share
     LLM/llm_dummy.py             backend 1: scripted, offline, deterministic (regression test)
-    LLM/llm_claude.py            backend 2: your Claude subscription via the Claude Code CLI
-    LLM/llm_gemini.py            backend 3: Google Gemini via API key (free tier), plain HTTP
+    LLM/llm_gemini.py            backend 2: Google Gemini via API key (free tier), plain HTTP
     tools/registry.py            the tool index: name -> function. Read this to see the tools
-    tools/<name>.py              one file per tool; run_lof.py also owns the dataset
+    tools/<name>.py              one file per tool, and nothing else
+    data/california_housing.py   the frame + the column vocabulary; a leaf, loaded once
+    utils/save_run.py            writes runs/*.json -- shared by BOTH orchestrations
+
+Import direction is one way only:  orchestrator -> tools/ -> data/
 
 TWO ORCHESTRATIONS, ONE SET OF PARTS
 ------------------------------------
@@ -36,25 +39,28 @@ LLM/ and the SAME tools from tools/registry.py -- so the two can be compared as
 experimental conditions rather than as two different systems. Nothing in LLM/ or
 tools/ imports an orchestrator, which is what keeps adding one a pure addition.
 
-All three backends implement one identical contract -- llm(messages) -> one of two
+Both backends implement one identical contract -- llm(messages) -> one of two
 dict shapes -- documented in LLM/llm_dummy.py. The loop below neither knows nor
 cares which one it is talking to. To add another backend (Ollama, OpenAI, ...),
 write a new LLM/llm_<name>.py with one function and wire it into the __main__ block.
 
+(A Claude backend driven through the Claude Code CLI existed and was removed on
+9 Aug 2026. It needed no API key, but LangChain has no equivalent for it --
+ChatAnthropic requires a paid key -- so keeping it would have left the two
+orchestrations with different backend sets and made them incomparable.)
+
 Run it:
-    python orchestrator_custom.py             offline, scripted
-    python orchestrator_custom.py --claude    live, uses your Claude login
+    python orchestrator_custom.py                    offline, scripted
+    python orchestrator_custom.py --gemini "<goal>"  live, uses your Gemini key
 """
 
 import json
-import os
 import sys
-from datetime import datetime
 
-from LLM.llm_claude import CLAUDE_CLI_MODEL, claude_llm
 from LLM.llm_dummy import dummy_llm
 from LLM.llm_gemini import GEMINI_MODEL, gemini_llm
 from tools.registry import TOOLS
+from utils.save_run import save_run
 
 # =============================================================================
 # THE AGENT LOOP - this is the part that IS the agent. Read it top to bottom:
@@ -131,33 +137,6 @@ def derive_viewpoint(goal, llm=dummy_llm, max_steps=12):
     return None, trace
 
 
-def save_run(goal, backend_name, spec, trace):
-    """Write one run -- spec plus the full agent trace -- to its own file.
-
-    Files land in runs/, named by timestamp and backend, e.g.
-        runs/run_20260808_141507_claude.json
-
-    One file per run (never overwritten) is what makes the variance experiment
-    possible later: run the same goal five times, then compare the five files
-    to see how differently the agent explored and what it settled on.
-    """
-    os.makedirs("runs", exist_ok=True)
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = os.path.join("runs", f"run_{run_id}_{backend_name}.json")
-
-    with open(path, "w") as f:
-        json.dump({
-            "run_id": run_id,
-            "backend": backend_name,
-            "goal": goal,
-            "status": "completed" if spec else "exhausted",   # did the agent finalise,
-            "steps_taken": len(trace),                        # or run out of steps?
-            "final_spec": spec,          # None if exhausted; else duplicated from the
-            "trace": trace,              # last trace entry so it is easy to grab
-        }, f, indent=2)
-    return path
-
-
 # =============================================================================
 # MAIN
 # =============================================================================
@@ -166,15 +145,14 @@ if __name__ == "__main__":
     # Pick a backend with a flag; everything that is not a flag becomes the goal
     # (quotes optional -- the words are joined back together):
     #     python orchestrator_custom.py
-    #     python orchestrator_custom.py --claude "find neighbourhoods that do not fit their region"
+    #     python orchestrator_custom.py --gemini "find neighbourhoods that do not fit their region"
     #     python orchestrator_custom.py --gemini find blocks whose housing looks impossible
     # NOTE: VS Code's Run button passes NO arguments -- use a terminal for these.
     BACKENDS = {
-        "--claude": ("claude", claude_llm, f"Claude via CLI, model '{CLAUDE_CLI_MODEL}'"),
         "--gemini": ("gemini", gemini_llm, f"Gemini API, model '{GEMINI_MODEL}'"),
     }
     # Split argv into flags (anything starting with "-") and goal words. Doing it
-    # by prefix means a typo like "-claude" is caught as a bad flag instead of
+    # by prefix means a typo like "-gemini" is caught as a bad flag instead of
     # silently becoming part of the goal text.
     flags = [a for a in sys.argv[1:] if a.startswith("-")]
     goal_words = [a for a in sys.argv[1:] if not a.startswith("-")]
@@ -200,7 +178,7 @@ if __name__ == "__main__":
 
     if backend_name == "dummy" and goal_words:
         print("NOTE: the dummy backend replays a fixed script written for the default")
-        print("      goal -- it cannot react to yours. Use --claude or --gemini.")
+        print("      goal -- it cannot react to yours. Use --gemini.")
 
     spec, trace = derive_viewpoint(goal, llm=llm)
 

@@ -1,6 +1,6 @@
 """The system prompt every real backend shares.
 
-Claude and Gemini (and any backend added later) must teach their model the SAME
+Gemini (and any backend added later) must teach its model the SAME
 two response shapes, or the agent loop cannot understand the replies. Keeping
 the prompt in one file means it cannot drift out of sync between backends --
 edit it here, and every backend picks up the change.

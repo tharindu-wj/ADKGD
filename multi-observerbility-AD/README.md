@@ -16,21 +16,20 @@ user sets goal ──> AGENT (LLM backend) ──> TOOLS (plain functions) ─�
 
 ```bash
 python orchestrator_custom.py             # offline dummy — free, deterministic, no setup
-python orchestrator_custom.py --claude    # live: your Claude subscription via the CLI
 python orchestrator_custom.py --gemini    # live: Google Gemini free tier via API key
 
 # Everything that is not a flag becomes the goal (quotes optional):
 python orchestrator_custom.py --gemini "find neighbourhoods that do not fit their region"
-python orchestrator_custom.py --claude find blocks whose housing looks impossible
+python orchestrator_custom.py --gemini find blocks whose housing looks impossible
 ```
 
 With no goal given, the default is used: *"find census rows that cannot describe
 a real place"*. The dummy always replays its fixed script — give custom goals to
-`--claude` or `--gemini`, which actually read them.
+`--gemini`, which actually reads them.
 
 > VS Code's ▶ Run button passes **no arguments** — it always runs the dummy.
-> Use a terminal for `--claude` / `--gemini`. The banner's first line and the run
-> filename (`_dummy` / `_claude` / `_gemini`) always tell you which backend ran.
+> Use a terminal for `--gemini`. The banner's first line and the run filename
+> (`_dummy` / `_gemini`) always tell you which backend ran.
 
 > **If it is at the root you run it; if it is in a folder you import it.**
 > `python tools/run_lof.py` fails — those files are libraries, not entry points.
@@ -42,10 +41,11 @@ a real place"*. The dummy always replays its fixed script — give custom goals 
 | `orchestrator_custom.py` | **Entry point.** The hand-written agent loop, run saving, the CLI |
 | `LLM/build_system_prompt.py` | The system prompt + prompt builder shared by every real backend |
 | `LLM/llm_dummy.py` | Backend 1 — scripted stand-in. **Read this first**: its docstring states the backend contract |
-| `LLM/llm_claude.py` | Backend 2 — Claude subscription through the Claude Code CLI (`claude -p`), no API key |
-| `LLM/llm_gemini.py` | Backend 3 — Gemini REST API, plain `requests`, free tier |
+| `LLM/llm_gemini.py` | Backend 2 — Gemini REST API, plain `requests`, free tier |
 | `tools/registry.py` | The tool index: name → function. **Read this second**: it is what both orchestrations bind to |
-| `tools/<name>.py` | One file per tool. `run_lof.py` also owns the dataset |
+| `tools/<name>.py` | One file per tool, and nothing else |
+| `data/california_housing.py` | The frame + the column vocabulary. A leaf — imports nothing from the project, loaded once and shared |
+| `utils/save_run.py` | Writes `runs/*.json`. Lives outside the orchestrators so both write an identical schema |
 | `main.ipynb` | Earlier notebook exploration (per-viewpoint LOF on California housing) |
 | `runs/` | One JSON per run: the final spec **plus the full agent trace** |
 | `.env` | Your Gemini key (`GEMINI_KEY=...`) — gitignored, never commit it |
@@ -88,11 +88,6 @@ model just names the one it wants.
 wrong-column mistake, so you can watch the error-correction behaviour). It is
 the regression test: if the dummy breaks, the *loop* broke, not a model.
 
-**Claude** — no API key. Uses the `claude` CLI in print mode with the Claude
-Code login you already have; `find_claude_cli()` locates the binary (PATH →
-native install → VS Code extension bundle). Each call counts against your
-subscription's usage window. Model set by `CLAUDE_CLI_MODEL` (`"sonnet"`).
-
 **Gemini** — put `GEMINI_KEY=<your key>` in `.env` in the repo root (or set
 `GEMINI_API_KEY` in the environment); free keys at aistudio.google.com/apikey.
 The model is **pinned to `gemini-3.5-flash-lite`**, learned the hard way: the
@@ -128,7 +123,7 @@ run_lof(spec["columns"], spec["row_filter"])
 ## Observations so far (why the trace matters)
 
 Same goal, same data, same prompt — different runs derive **different
-viewpoints**, each with a coherent rationale: one Claude run chose
+viewpoints**, each with a coherent rationale: one Gemini run chose
 `[AveRooms, AveBedrms]` (catches the 132-room Tahoe blocks but ranks the
 1,243-person prison block 4,259th of 20,640); another chose
 `[AveRooms, AveOccup]` (the reverse); Gemini examined all three ratios and kept

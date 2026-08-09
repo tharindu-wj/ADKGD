@@ -1,11 +1,10 @@
 """Tool 2: how one column is distributed, so the agent learns the scales.
 
-DATA is imported from run_lof rather than loaded again: Python caches modules,
-so both tools read the one frame. (If a third consumer ever appears, that is the
-moment to give the dataset its own module.)
+DATA comes from data/california_housing.py, not from another tool. Python caches
+modules, so every tool that imports it reads the ONE loaded frame.
 """
 
-from tools.run_lof import DATA
+from data.california_housing import DATA
 
 
 def describe_column(name):

@@ -8,21 +8,12 @@ crashing the loop.
 One tool per file, registered in tools/registry.py. Both orchestrators (the
 hand-written loop and the LangChain one) import the same functions from here,
 so a tool is written once and behaves identically under either.
+
+This tool is now a pure formatter: the column vocabulary it prints describes the
+DATASET, so it lives in data/california_housing.py beside the frame it describes.
 """
 
-#: What each column means, in the agent's language. This is the ONLY place the
-#: column vocabulary is written down, and it lives here because list_columns is
-#: its only consumer -- if it ever gains a second one, give it its own module.
-COLUMN_MEANINGS = {
-    "MedInc": "median household income, in tens of thousands of dollars",
-    "HouseAge": "median age of the houses, in years",
-    "AveRooms": "average rooms per household (rooms / households)",
-    "AveBedrms": "average bedrooms per household (bedrooms / households)",
-    "Population": "people living in the block group",
-    "AveOccup": "average people per household (population / households)",
-    "Latitude": "degrees north; higher = further north",
-    "Longitude": "degrees east; more negative = further west",
-}
+from data.california_housing import COLUMN_MEANINGS
 
 
 def list_columns():
