@@ -6,7 +6,7 @@
 | **Institution** | Flinders University — STEM9003 |
 | **Version** | 1.0 — 8 August 2026 |
 | **Status** | MVP operational (3 LLM backends, live runs verified) |
-| **Codebase** | `multi-observerbility-AD/` — Python, plain functions; one entry point, `LLM/`, `tools/` |
+| **Codebase** | `multi-observerbility-AD/` — Python, plain functions; one folder per agent, shared `tools/` `data/` `utils/` |
 | **Audience** | Human contributors *and* AI coding agents. Read §3 before touching anything. |
 
 ---
@@ -207,9 +207,11 @@ user sets goal (CLI)
 |---|---|
 | `orchestrator_custom.py` | **Entry point 1.** The hand-written agent loop, run persistence, CLI |
 | `orchestrator_langchain.py` | **Entry point 2 — planned.** The LangChain orchestration; a pure addition |
-| `LLM/build_system_prompt.py` | The system prompt + prompt builder shared by all real backends |
-| `LLM/llm_dummy.py` | Backend 1 — scripted. **The contract is documented here; read it first** |
-| `LLM/llm_gemini.py` | Backend 2 — Gemini REST API (`gemini-3.5-flash-lite`, pinned), free tier |
+| `agent_custom_single/orchestrator_custom.py` | **Entry point 1.** The hand-written loop, CLI, run persistence |
+| `agent_custom_single/build_system_prompt.py` | The system prompt shared by that agent's backends |
+| `agent_custom_single/llm_dummy.py` | Backend 1 — scripted. **The contract is documented here; read it first** |
+| `agent_custom_single/llm_gemini.py` | Backend 2 — Gemini REST API (`gemini-3.5-flash-lite`, pinned), free tier |
+| `agent_adk_single/agent.py` | **Entry point 2.** ADK `root_agent`; run with `adk run` / `adk web` |
 | `tools/registry.py` | The tool index (`TOOLS`) — the seam both orchestrations bind to |
 | `tools/list_columns.py` | Tool 1 — a pure formatter |
 | `tools/describe_column.py` | Tool 2 |
@@ -220,8 +222,8 @@ user sets goal (CLI)
 | `.env` | `GEMINI_KEY=...` — gitignored, at the **repo root** |
 
 Imports run one way only — `orchestrator → tools/ → data/`. No tool imports
-another tool, neither `LLM/` nor `tools/` imports an orchestrator, `tools/`
-imports nothing from `LLM/`, and `data/` imports nothing from the project at all.
+another tool, no agent folder is imported by `tools/`, `tools/` imports nothing
+from any agent, and `data/` imports nothing from the project at all.
 That rule is what makes adding a second orchestration, a new tool, or a second
 dataset a pure addition rather than a refactor. No `__init__.py` is needed: the entry points sit
 at the repo root, so both folders import as namespace packages from any working
@@ -237,7 +239,7 @@ A backend is **one function**: `llm(messages) -> dict`, returning exactly one of
 ```
 
 No provider tool-use API is used anywhere: the loop owns the tools; the model names
-the one it wants, in JSON text. Adding a backend = one new `LLM/llm_<name>.py` file
+the one it wants, in JSON text. Adding a backend = one new `agent_custom_single/llm_<name>.py` file
 with one function, plus one entry in the `BACKENDS` dict.
 
 The tools have a second, equally binding contract: `name → plain function → str`,
@@ -309,7 +311,7 @@ Five live runs to date (all in `runs/`, each with full trace):
 ## 9. Contributing
 
 ### 9.1 For humans
-- **Read order:** this document → `README.md` → `LLM/llm_dummy.py` (the backend
+- **Read order:** this document → `README.md` → `agent_custom_single/llm_dummy.py` (the backend
   contract) → `tools/registry.py` (the tool contract, and the shape every tool file
   follows) → `orchestrator_custom.py` top to bottom. Each folder has exactly one
   file to read first; those two are it.
@@ -318,12 +320,12 @@ Five live runs to date (all in `runs/`, each with full trace):
   doesn't merge.
 - **Adding a tool:** one new `tools/<name>.py` with one function returning a string;
   register it in `tools/registry.py`; document it in the `Tools:` block of
-  `LLM/build_system_prompt.py`. Never put a tool function in an orchestrator — the
+  `agent_custom_single/build_system_prompt.py`. Never put a tool function in an agent — the
   other orchestration would not see it. Ask first whether the tool leaks per-entity
   information — that decision outlives the MVP.
-- **Adding a backend:** copy the shape of `LLM/llm_gemini.py`; implement the
+- **Adding a backend:** copy the shape of `agent_custom_single/llm_gemini.py`; implement the
   two-shape contract; add one `BACKENDS` entry; test with the default goal.
-- **Before any change is done:** run `python orchestrator_custom.py` (dummy). If the
+- **Before any change is done:** run `python agent_custom_single/orchestrator_custom.py` (dummy). If the
   scripted run breaks, the *loop* broke. This is the cheapest test in the project.
 
 ### 9.2 For AI agents — invariants (MUST hold after your change)
@@ -336,11 +338,11 @@ Five live runs to date (all in `runs/`, each with full trace):
   is ever used as a score, threshold, or ranking key.
 - **INV-4** `max_steps` (in `derive_viewpoint`) ≥ the prompt's stated tool budget + 2.
   If you change either number, change both files (`orchestrator_custom.py`,
-  `LLM/build_system_prompt.py`) — and every orchestration, not just this one.
+  `agent_custom_single/build_system_prompt.py`) — and every orchestration, not just this one.
 - **INV-5** Every run — completed, exhausted, or crashed — writes a `runs/` file with
   the full untruncated trace before the process exits.
-- **INV-6** `LLM/llm_dummy.py` stays deterministic and offline, and every
-  orchestration's dummy run — today `python orchestrator_custom.py` — must complete
+- **INV-6** `agent_custom_single/llm_dummy.py` stays deterministic and offline, and every
+  orchestration's dummy run — today `python agent_custom_single/orchestrator_custom.py` — must complete
   cleanly before you report done.
 - **INV-7** No secrets in code, prompts, logs, or commits. Keys come from the
   environment or gitignored `.env`.
@@ -351,9 +353,9 @@ Five live runs to date (all in `runs/`, each with full trace):
 **Verification commands**
 
 ```bash
-python orchestrator_custom.py                      # dummy regression: must finalise, save a run
-python orchestrator_custom.py -gemini x            # must exit with the unrecognised-flag error
-python orchestrator_custom.py --gemini "any goal"  # live check (needs .env key; free tier)
+python agent_custom_single/orchestrator_custom.py                      # dummy regression: must finalise, save a run
+python agent_custom_single/orchestrator_custom.py -gemini x            # must exit with the unrecognised-flag error
+python agent_custom_single/orchestrator_custom.py --gemini "any goal"  # live check (needs .env key; free tier)
 ```
 
 ### 9.3 Things that look like improvements but are regressions

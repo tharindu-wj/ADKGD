@@ -18,49 +18,64 @@
           v
        runs/run_<timestamp>_<backend>.json  (spec + full agent trace)
 
-THE FILES
----------
-    orchestrator_custom.py       this file: the agent loop, saving runs, the CLI
-    LLM/build_system_prompt.py   the system prompt + prompt builder the real backends share
-    LLM/llm_dummy.py             backend 1: scripted, offline, deterministic (regression test)
-    LLM/llm_gemini.py            backend 2: Google Gemini via API key (free tier), plain HTTP
+THIS FOLDER (agent_custom_single/) -- everything only the custom loop uses
+--------------------------------------------------------------------------
+    orchestrator_custom.py       this file: the agent loop, the CLI, saving runs
+    build_system_prompt.py       the system prompt + prompt builder the backends share
+    llm_dummy.py                 backend 1: scripted, offline, deterministic (regression test)
+    llm_gemini.py                backend 2: Google Gemini via API key (free tier), plain HTTP
+
+SHARED WITH THE OTHER AGENTS (one level up, in the project root)
+---------------------------------------------------------------
     tools/registry.py            the tool index: name -> function. Read this to see the tools
     tools/<name>.py              one file per tool, and nothing else
     data/california_housing.py   the frame + the column vocabulary; a leaf, loaded once
-    utils/save_run.py            writes runs/*.json -- shared by BOTH orchestrations
+    utils/save_run.py            writes runs/*.json -- shared by EVERY agent
 
-Import direction is one way only:  orchestrator -> tools/ -> data/
+Import direction is one way only:  agent -> tools/ -> data/
+Nothing in tools/, data/ or utils/ imports an agent, which is what keeps adding
+an agent a pure addition rather than a refactor.
 
-TWO ORCHESTRATIONS, ONE SET OF PARTS
-------------------------------------
-This file is the hand-written loop. A second orchestration built on LangChain
-will sit beside it as orchestrator_langchain.py and import the SAME backends from
-LLM/ and the SAME tools from tools/registry.py -- so the two can be compared as
-experimental conditions rather than as two different systems. Nothing in LLM/ or
-tools/ imports an orchestrator, which is what keeps adding one a pure addition.
+ONE FOLDER PER AGENT
+--------------------
+Each agent gets its own folder and owns whatever only it needs. This loop owns
+its LLM backends because only it uses them: the ADK agents next door
+(agent_adk_single/, agent_adk_multiple/) let ADK talk to Gemini natively and
+never touch these files. What every agent shares -- the tools, the dataset, the
+run writer -- stays in the project root, so all agents are compared on identical
+parts and only their ORCHESTRATION differs.
 
 Both backends implement one identical contract -- llm(messages) -> one of two
-dict shapes -- documented in LLM/llm_dummy.py. The loop below neither knows nor
+dict shapes -- documented in llm_dummy.py. The loop below neither knows nor
 cares which one it is talking to. To add another backend (Ollama, OpenAI, ...),
-write a new LLM/llm_<name>.py with one function and wire it into the __main__ block.
+write a new llm_<name>.py here with one function and wire it into __main__.
 
 (A Claude backend driven through the Claude Code CLI existed and was removed on
-9 Aug 2026. It needed no API key, but LangChain has no equivalent for it --
-ChatAnthropic requires a paid key -- so keeping it would have left the two
+9 Aug 2026. It needed no API key, but frameworks have no equivalent for it --
+ChatAnthropic requires a paid key -- so keeping it would have left the
 orchestrations with different backend sets and made them incomparable.)
 
-Run it:
-    python orchestrator_custom.py                    offline, scripted
-    python orchestrator_custom.py --gemini "<goal>"  live, uses your Gemini key
+Run it from the PROJECT ROOT:
+    python agent_custom_single/orchestrator_custom.py                    offline, scripted
+    python agent_custom_single/orchestrator_custom.py --gemini "<goal>"  live, Gemini key
 """
 
 import json
+import pathlib
 import sys
 
-from LLM.llm_dummy import dummy_llm
-from LLM.llm_gemini import GEMINI_MODEL, gemini_llm
-from tools.registry import TOOLS
-from utils.save_run import save_run
+# The shared tools/, data/ and utils/ packages live one level up, in the project
+# root. Running this file puts THIS folder on sys.path, not the root, so add the
+# root explicitly -- exactly as agent_adk_single/agent.py does. That is what lets
+# every agent call the SAME tool functions rather than keeping copies.
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from llm_dummy import dummy_llm  # noqa: E402
+from llm_gemini import GEMINI_MODEL, gemini_llm  # noqa: E402
+from tools.registry import TOOLS  # noqa: E402
+from utils.save_run import save_run  # noqa: E402
 
 # =============================================================================
 # THE AGENT LOOP - this is the part that IS the agent. Read it top to bottom:
@@ -77,7 +92,7 @@ def derive_viewpoint(goal, llm=dummy_llm, max_steps=12):
     agent reached its spec, so it gets saved alongside the spec itself.
 
     max_steps is the HARD limit; the "at most 10 tool calls" line in
-    LLM/build_system_prompt.py is only a request the model usually honours.
+    build_system_prompt.py is only a request the model usually honours.
     Keep max_steps at least 2 above the prompt's number: the finalising reply
     consumes a step too, and an error-recovery retry costs another.
     """
@@ -144,9 +159,9 @@ def derive_viewpoint(goal, llm=dummy_llm, max_steps=12):
 if __name__ == "__main__":
     # Pick a backend with a flag; everything that is not a flag becomes the goal
     # (quotes optional -- the words are joined back together):
-    #     python orchestrator_custom.py
-    #     python orchestrator_custom.py --gemini "find neighbourhoods that do not fit their region"
-    #     python orchestrator_custom.py --gemini find blocks whose housing looks impossible
+    #     python agent_custom_single/orchestrator_custom.py
+    #     python agent_custom_single/orchestrator_custom.py --gemini "find neighbourhoods that do not fit their region"
+    #     python agent_custom_single/orchestrator_custom.py --gemini find blocks whose housing looks impossible
     # NOTE: VS Code's Run button passes NO arguments -- use a terminal for these.
     BACKENDS = {
         "--gemini": ("gemini", gemini_llm, f"Gemini API, model '{GEMINI_MODEL}'"),

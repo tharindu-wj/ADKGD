@@ -13,13 +13,15 @@ ADDING A TOOL
 -------------
     1. one new tools/<name>.py with one function returning a string
     2. one line here
-    3. one line in the Tools: block of LLM/build_system_prompt.py
+    3. one line in the Tools: block of each agent that should see it
+       (agent_custom_single/build_system_prompt.py; the ADK agents list tools
+       directly in their agent.py)
 Ask first whether the tool leaks per-entity information -- that decision
 outlives the MVP (PROJECT_SPEC 6.5).
 
 Imports run one way only: registry -> tool files -> data/. No tool imports
-another tool, and nothing in tools/ imports an orchestrator or LLM/, so adding
-an orchestration is a pure addition.
+another tool, and nothing in tools/ imports an agent or an LLM backend, so
+adding an agent is a pure addition.
 """
 
 from tools.describe_column import describe_column

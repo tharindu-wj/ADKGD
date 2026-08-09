@@ -12,7 +12,7 @@ IMPORT DIRECTION -- one way only
     orchestrator  ->  tools/  ->  data/
 
 This module is a LEAF: it imports nothing from the project. It must never import
-a tool, an orchestrator, or anything in LLM/. That is what keeps adding a new
+a tool, an agent, or an LLM backend. That is what keeps adding a new
 tool, or a second orchestration, a pure addition.
 
 LOADED ONCE, SHARED BY ALL

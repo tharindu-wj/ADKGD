@@ -15,12 +15,12 @@ user sets goal ──> AGENT (LLM backend) ──> TOOLS (plain functions) ─�
 ## Quick start
 
 ```bash
-python orchestrator_custom.py             # offline dummy — free, deterministic, no setup
-python orchestrator_custom.py --gemini    # live: Google Gemini free tier via API key
+python agent_custom_single/orchestrator_custom.py             # offline dummy — free, deterministic, no setup
+python agent_custom_single/orchestrator_custom.py --gemini    # live: Google Gemini free tier via API key
 
 # Everything that is not a flag becomes the goal (quotes optional):
-python orchestrator_custom.py --gemini "find neighbourhoods that do not fit their region"
-python orchestrator_custom.py --gemini find blocks whose housing looks impossible
+python agent_custom_single/orchestrator_custom.py --gemini "find neighbourhoods that do not fit their region"
+python agent_custom_single/orchestrator_custom.py --gemini find blocks whose housing looks impossible
 ```
 
 With no goal given, the default is used: *"find census rows that cannot describe
@@ -38,15 +38,14 @@ a real place"*. The dummy always replays its fixed script — give custom goals 
 
 | File | What it is |
 |---|---|
-| `orchestrator_custom.py` | **Entry point.** The hand-written agent loop, run saving, the CLI |
-| `LLM/build_system_prompt.py` | The system prompt + prompt builder shared by every real backend |
-| `LLM/llm_dummy.py` | Backend 1 — scripted stand-in. **Read this first**: its docstring states the backend contract |
-| `LLM/llm_gemini.py` | Backend 2 — Gemini REST API, plain `requests`, free tier |
+| `agent_custom_single/` | **Agent 1 — the hand-written loop.** Owns its LLM backends: `orchestrator_custom.py` (entry point), `build_system_prompt.py`, `llm_dummy.py` (**read this first** — it states the backend contract), `llm_gemini.py` |
+| `agent_adk_single/` | **Agent 2 — Google ADK.** `agent.py` defines `root_agent`; run with `adk run` / `adk web` |
+| `agent_adk_multiple/` | **Agent 3 — planned.** ADK `ParallelAgent`: two observers with isolated branches |
 | `tools/registry.py` | The tool index: name → function. **Read this second**: it is what both orchestrations bind to |
 | `tools/<name>.py` | One file per tool, and nothing else |
 | `data/california_housing.py` | The frame + the column vocabulary. A leaf — imports nothing from the project, loaded once and shared |
 | `utils/save_run.py` | Writes `runs/*.json`. Lives outside the orchestrators so both write an identical schema |
-| `main.ipynb` | Earlier notebook exploration (per-viewpoint LOF on California housing) |
+| `baseline/multiviewpoint.ipynb` | The hand-built baseline viewpoints (per-viewpoint LOF on California housing) that agent-derived ones are compared against |
 | `runs/` | One JSON per run: the final spec **plus the full agent trace** |
 | `.env` | Your Gemini key (`GEMINI_KEY=...`) — gitignored, never commit it |
 
@@ -76,7 +75,7 @@ backend returning one of two JSON shapes:
 {"thinking": "...", "final_spec": {...}}               # "I'm done — here is my viewpoint"
 ```
 
-Adding a backend (Ollama, OpenAI, ...) = one new `LLM/llm_<name>.py` with one
+Adding a backend (Ollama, OpenAI, ...) = one new `agent_custom_single/llm_<name>.py` with one
 function of that shape, plus one line in the `BACKENDS` dict in
 `orchestrator_custom.py`.
 No provider "tool use" API is needed anywhere — the loop owns the tools; the
@@ -113,7 +112,7 @@ Google's `retryDelay` hint and waits, up to 3 retries.
 The console truncates tool results for readability; the trace never does. One
 file per run, never overwritten — so comparing runs (same goal, different
 backends or repeats) is just reading `runs/`. Replaying a saved viewpoint needs
-no LLM — and no backend either, since `tools/` imports nothing from `LLM/`:
+no LLM — and no backend either, since `tools/` imports nothing from any agent:
 
 ```python
 from tools.run_lof import run_lof

@@ -35,7 +35,7 @@ import time
 
 import requests
 
-from LLM.build_system_prompt import build_prompt
+from build_system_prompt import build_prompt
 
 #: Which model to call -- PINNED, deliberately. We tried the "gemini-flash-latest"
 #: alias first; it silently resolved to gemini-3.6-flash, whose free tier allows
@@ -54,7 +54,7 @@ def load_gemini_key():
         if os.environ.get(name):
             return os.environ[name].strip()
 
-    # .env stays at the REPO ROOT -- one level up from this LLM/ folder. Anchoring
+    # .env stays at the REPO ROOT -- one level up from this agent folder. Anchoring
     # to __file__ (not the working directory) means every orchestration finds the
     # same key file no matter where it was launched from.
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

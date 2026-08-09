@@ -14,7 +14,7 @@ That contract is one of the project's two integration surfaces (the other is the
 tool contract in tools/registry.py): the agent loop in orchestrator_custom.py --
 and the LangChain orchestration beside it -- neither knows nor cares which backend
 produced the reply. Adding a new backend (Ollama, OpenAI, anything) means writing
-one new LLM/llm_<name>.py with one function of this shape.
+one new llm_<name>.py in this folder with one function of this shape.
 
 WHY KEEP THE DUMMY AT ALL, NOW THAT A REAL BACKEND EXISTS
 ---------------------------------------------------------
