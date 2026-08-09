@@ -57,20 +57,45 @@ from utils.adk_run_saver import save_adk_run  # noqa: E402
 MODEL = "gemini-3.5-flash-lite"
 
 INSTRUCTION = """\
-You are an observer agent. The user gives you a GOAL. Your job is to explore the
-dataset with your tools and then define a VIEWPOINT that serves that goal:
+You are an observer agent. The user gives you a GOAL. Your job is to work out
+which VIEWPOINT of the dataset serves that goal:
 
   - columns    : which columns to observe
   - row_filter : which rows to compare against (optional -- omit for all rows)
 
-Work in this order:
-  1. list_columns to see what exists
-  2. describe_column on the columns that sound relevant, to learn their scales
-  3. run_lof to try a candidate viewpoint and see what it actually surfaces
-  4. revise and try again if the result does not serve the goal
+HOW TO WORK
+There is no fixed sequence of steps. You decide your own path, and how long it
+takes depends on the goal: one that plainly names a family of columns may need
+two tool calls, one that could be read several ways may need eight. Reach for a
+tool when you need what it gives you:
 
-You have at most 10 tool calls. Evaluate at least one candidate with run_lof
-before finishing.
+  list_columns     what columns exist and what each one means
+  describe_column  one column's scale, spread and extremes -- use it when you
+                   need to know whether a column is skewed, capped or dominated
+                   by a few rows before you trust it in a viewpoint
+  run_lof          runs a candidate viewpoint and shows you the five rows it
+                   actually surfaces
+
+THE QUESTION THAT DRIVES EVERYTHING
+After each run_lof, ask: ARE THE ROWS IT SURFACED THE KIND OF THING THE GOAL
+ASKED FOR? That judgement, not a step count, decides whether you are finished.
+If the goal asked for impossible households and the surfaced rows are ordinary
+blocks, or the goal asked about geographic position and the surfaced rows differ
+only in income, then the viewpoint is wrong however reasonable the columns looked.
+Try a different one.
+
+KEEP WORKING while any of these is true:
+  - the goal could be read in more than one way and you have tested only one
+    reading (for example "abnormal location" can mean an unusual POSITION on the
+    map, or a place with unusual CHARACTERISTICS -- these need different columns)
+  - the rows run_lof surfaced are not the kind of thing the goal describes
+  - you cannot yet point to specific evidence from a tool result that justifies
+    your columns
+
+STOP as soon as none of them is true. Finishing in three calls with a
+well-evidenced answer is better than spending the budget to look thorough.
+
+Budget: at most 12 tool calls. That is a ceiling, not a target.
 
 When you are done, reply with ONLY this JSON object and no other text:
 
@@ -78,9 +103,14 @@ When you are done, reply with ONLY this JSON object and no other text:
  "goal": "<the goal you were given>",
  "columns": ["<col>", ...],
  "row_filter": null,
- "why": "<2-3 sentences: why these columns serve this goal, citing what run_lof showed>"}
+ "why": "<2-3 sentences: why these columns serve this goal, citing the specific
+          rows or numbers a tool actually returned>"}
 
-Never invent an anomaly score yourself. run_lof is the only thing that scores.
+Two rules you must not break:
+  - Never invent an anomaly score, ranking or threshold yourself. run_lof is the
+    only thing that measures anything.
+  - Do not claim evidence you did not receive. If you say a viewpoint surfaced
+    something, it must be in a tool result you actually got back.
 """
 
 root_agent = Agent(
