@@ -1,5 +1,7 @@
 papers
 docs
+docs_v1
+docs_v2
 __pycache__
 checkpoints
 logs
@@ -12,3 +14,4 @@ data/YAGO*
 *.pt
 experiments/kgsage/outputs
 .env
+multi-observerbility-AD/runs
