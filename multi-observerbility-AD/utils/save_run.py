@@ -28,7 +28,7 @@ from datetime import datetime
 RUNS_DIR = pathlib.Path(__file__).resolve().parents[1] / "runs"
 
 
-def save_run(goal, backend_name, spec, trace, orchestrator="custom"):
+def save_run(goal, backend_name, spec, trace, orchestrator="custom", goals=None):
     """Write one run -- spec plus the full agent trace -- to its own file.
 
     Files land in runs/, named by timestamp, orchestrator and backend, e.g.
@@ -46,7 +46,9 @@ def save_run(goal, backend_name, spec, trace, orchestrator="custom"):
     backend_name:
         "dummy", "gemini", ... Used in the filename and recorded in the file.
     spec:
-        The derived viewpoint dict, or None if the agent never finalised.
+        The derived viewpoint dict, or None if the agent never finalised. May
+        also be a LIST of specs -- one per goal -- when an agent was given
+        several goals at once; see the schema note below.
     trace:
         One entry per step: thinking, tool, args, and the FULL tool result.
         The console truncates long results for readability; the trace never does.
@@ -56,24 +58,58 @@ def save_run(goal, backend_name, spec, trace, orchestrator="custom"):
         which orchestration produced it, and the comparison between them is
         unmeasurable. `backend` alone does not distinguish them -- both say
         "gemini".
+    goals:
+        The individual goals the agent was given, split out of `goal`. One item
+        means the cell-1 condition (one agent, one goal); two or more means
+        cell 2 (one agent, several goals at once). The condition is read off
+        len(goals) -- there is no separate label to keep in sync.
 
     Returns
     -------
     The path written, so the caller can tell the user where the run landed.
+
+    SCHEMA NOTE (INV-8: append-only)
+    --------------------------------
+    Older runs carry `final_spec` (a single dict). Multi-goal runs carry
+    `final_specs` (a list, one per goal) and leave `final_spec` null. Nothing was
+    renamed, so every run file ever written stays readable. Analysis code reads
+    both shapes in one line:
+
+        specs = d.get("final_specs") or ([d["final_spec"]] if d.get("final_spec") else [])
     """
     os.makedirs(RUNS_DIR, exist_ok=True)
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = RUNS_DIR / f"run_{run_id}_{orchestrator}_{backend_name}.json"
+
+    # Timestamps are second-resolution, so two runs finishing in the same second
+    # would land on the same filename and the second would silently destroy the
+    # first. Never overwrite a run: add a suffix instead. Real agent runs take
+    # seconds, but scripted batches (the variance experiment runs one goal N
+    # times) can easily collide, and a lost run is a lost measurement.
+    suffix = 2
+    while path.exists():
+        run_id = f"{datetime.now():%Y%m%d_%H%M%S}-{suffix}"
+        path = RUNS_DIR / f"run_{run_id}_{orchestrator}_{backend_name}.json"
+        suffix += 1
+
+    # Accept either one spec or a list of them, and normalise into both fields:
+    # single-goal runs keep the historical `final_spec`, multi-goal runs use
+    # `final_specs`. Callers never have to care which they are producing.
+    spec_list = [s for s in (spec if isinstance(spec, list) else [spec]) if s]
+    single_spec = spec_list[0] if len(spec_list) == 1 else None
+    multi_specs = spec_list if len(spec_list) > 1 else None
 
     with open(path, "w") as f:
         json.dump({
             "run_id": run_id,
             "orchestrator": orchestrator,   # "custom" | "adk"
             "backend": backend_name,        # "dummy" | "gemini"
-            "goal": goal,
-            "status": "completed" if spec else "exhausted",   # did the agent finalise,
-            "steps_taken": len(trace),                        # or run out of steps?
-            "final_spec": spec,          # None if exhausted; else duplicated from the
-            "trace": trace,              # last trace entry so it is easy to grab
+            "goal": goal,                   # the raw message, verbatim
+            "goals": goals if goals is not None else [goal],  # 1 = cell 1, 2+ = cell 2
+            "status": "completed" if spec_list else "exhausted",
+            "steps_taken": len(trace),
+            "final_spec": single_spec,      # set when there is exactly one spec
+            "final_specs": multi_specs,     # set when there are several
+            "trace": trace,
         }, f, indent=2)
     return str(path)

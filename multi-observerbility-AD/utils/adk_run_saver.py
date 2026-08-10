@@ -58,21 +58,75 @@ def _text_of(event_or_content) -> str:
     return text.replace("﻿", "").strip()
 
 
-def _parse_spec(text: str):
-    """Pull the final ViewSpec out of the agent's closing message.
+def _parse_specs(text: str) -> list:
+    """Pull the ViewSpecs out of the agent's closing message. Always a list.
 
-    The instruction asks for bare JSON, but models sometimes wrap it in prose or
-    a ```json fence -- so take everything from the first '{' to the last '}'.
-    Returns None if there is no valid JSON, which save_run records as
+    The instruction asks for {"specs": [...]} -- one entry per goal -- but models
+    sometimes wrap it in prose or a ```json fence, so take everything from the
+    first '{' to the last '}'. A bare single spec (no "specs" wrapper) is also
+    accepted and returned as a one-element list, because that is what the agent
+    naturally produces for a single goal and there is no reason to reject it.
+
+    Returns [] when there is no valid JSON, which save_run records as
     status="exhausted": a run that produced no spec is still evidence.
     """
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
-        return None
+        return []
     try:
-        return json.loads(match.group(0))
+        payload = json.loads(match.group(0))
     except json.JSONDecodeError:
-        return None
+        return []
+
+    if isinstance(payload, dict) and isinstance(payload.get("specs"), list):
+        return [s for s in payload["specs"] if isinstance(s, dict)]
+    if isinstance(payload, dict) and "columns" in payload:
+        return [payload]          # a bare single spec
+    return []
+
+
+#: A numbered goal marker: "Goal 1:", "Goal 2.", "goal 3)". The DIGIT and the
+#: delimiter are both required, which is what stops an ordinary mention like
+#: "compare with goal 2 style analysis" from being read as a new goal.
+#: Not anchored to line starts, deliberately -- see _parse_goals.
+_GOAL_MARKER = re.compile(r"\bgoal\s*\d+\s*[:.)]\s*", re.IGNORECASE)
+
+#: A bare "Goal:" prefix on a single unnumbered goal, stripped for tidiness.
+_BARE_PREFIX = re.compile(r"^\s*goal\s*[:.)]\s*", re.IGNORECASE)
+
+
+def _parse_goals(message: str) -> list:
+    """Split the user's message into individual goals.
+
+    Both layouts work, because the two ways of running an agent differ:
+
+        Goal 1: find X  Goal 2: find Y        <- one line  (`adk run`)
+        Goal 1: find X
+        Goal 2: find Y                        <- several lines (`adk web`)
+
+    `adk run` is a line-based REPL: it reads ONE line per turn, so a multi-line
+    message piped into it silently loses everything after the first newline.
+    That is why the marker is not anchored to line starts -- on the terminal the
+    goals have to share a line.
+
+    A message with no numbered markers is one unnumbered goal and comes back as
+    a single item, so single-goal runs -- the cell-1 condition -- keep working
+    with nothing to remember.
+
+    The experimental condition is read off len(goals): 1 = cell 1 (one agent,
+    one goal), 2+ = cell 2 (one agent, several goals held at once).
+    """
+    message = (message or "").strip()
+    if not message:
+        return []
+
+    # Everything before the first marker is preamble, so drop parts[0].
+    parts = _GOAL_MARKER.split(message)
+    goals = [p.strip() for p in parts[1:] if p.strip()]
+    if goals:
+        return goals
+
+    return [_BARE_PREFIX.sub("", message).strip()]
 
 
 def build_trace(events):
@@ -139,20 +193,22 @@ def save_adk_run(callback_context):
     ]
 
     trace, final_text = build_trace(events)
-    spec = _parse_spec(final_text)
+    specs = _parse_specs(final_text)
 
-    if spec is not None:
-        trace.append({"step": len(trace) + 1, "thinking": "", "final_spec": spec})
+    if specs:
+        trace.append({"step": len(trace) + 1, "thinking": "", "final_specs": specs})
 
-    goal = _text_of(callback_context.user_content) or "(no goal recorded)"
+    message = _text_of(callback_context.user_content) or "(no goal recorded)"
+    goals = _parse_goals(message)
 
     path = save_run(
-        goal=goal,
+        goal=message,          # the raw message, verbatim
         backend_name=BACKEND_NAME,
-        spec=spec,
+        spec=specs,            # save_run unpacks: 1 spec -> final_spec, N -> final_specs
         trace=trace,
         orchestrator="adk",
+        goals=goals,
     )
-    print(f"\n[run saved] {path}  ({len(trace)} steps, "
-          f"{'completed' if spec else 'no spec parsed'})")
+    print(f"\n[run saved] {path}  ({len(trace)} steps, {len(goals)} goal(s), "
+          f"{len(specs)} spec(s){'' if specs else ' -- none parsed'})")
     return None
