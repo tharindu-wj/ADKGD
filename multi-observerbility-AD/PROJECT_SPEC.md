@@ -150,7 +150,7 @@ route to A2. This shapes the roadmap (§8).
 
 | ID | Requirement | Status |
 |---|---|---|
-| FR-1 | Accept a goal as a command-line argument; sensible default otherwise | DONE |
+| FR-1 | Accept a goal as a command-line argument; sensible default otherwise. Gemini is the default backend; `--dummy` selects the offline scripted one | DONE |
 | FR-2 | Agent gathers information **only** through registered tools | DONE |
 | FR-3 | Tools return text; errors returned as `ERROR: ...` strings so the agent can read and self-correct | DONE |
 | FR-4 | All anomaly scores produced by `run_lof` (standardise → LOF k=20); no other scoring path exists | DONE |
@@ -342,7 +342,7 @@ Five live runs to date (all in `runs/`, each with full trace):
 - **INV-5** Every run — completed, exhausted, or crashed — writes a `runs/` file with
   the full untruncated trace before the process exits.
 - **INV-6** `agent_custom_single/llm_dummy.py` stays deterministic and offline, and every
-  orchestration's dummy run — today `python agent_custom_single/orchestrator_custom.py` — must complete
+  orchestration's dummy run — today `python agent_custom_single/orchestrator_custom.py --dummy` — must complete
   cleanly before you report done.
 - **INV-7** No secrets in code, prompts, logs, or commits. Keys come from the
   environment or gitignored `.env`.
@@ -353,9 +353,9 @@ Five live runs to date (all in `runs/`, each with full trace):
 **Verification commands**
 
 ```bash
-python agent_custom_single/orchestrator_custom.py                      # dummy regression: must finalise, save a run
-python agent_custom_single/orchestrator_custom.py -gemini x            # must exit with the unrecognised-flag error
-python agent_custom_single/orchestrator_custom.py --gemini "any goal"  # live check (needs .env key; free tier)
+python agent_custom_single/orchestrator_custom.py --dummy              # offline regression: must finalise, save a run
+python agent_custom_single/orchestrator_custom.py -dummy x             # must exit with the unrecognised-flag error
+python agent_custom_single/orchestrator_custom.py "any goal"           # live check, Gemini is the default (needs .env key)
 ```
 
 ### 9.3 Things that look like improvements but are regressions

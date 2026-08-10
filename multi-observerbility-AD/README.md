@@ -15,21 +15,21 @@ user sets goal ──> AGENT (LLM backend) ──> TOOLS (plain functions) ─�
 ## Quick start
 
 ```bash
-python agent_custom_single/orchestrator_custom.py             # offline dummy — free, deterministic, no setup
-python agent_custom_single/orchestrator_custom.py --gemini    # live: Google Gemini free tier via API key
+# Gemini is the default — just give a goal (quotes optional):
+python agent_custom_single/orchestrator_custom.py "find neighbourhoods that do not fit their region"
+python agent_custom_single/orchestrator_custom.py find blocks whose housing looks impossible
 
-# Everything that is not a flag becomes the goal (quotes optional):
-python agent_custom_single/orchestrator_custom.py --gemini "find neighbourhoods that do not fit their region"
-python agent_custom_single/orchestrator_custom.py --gemini find blocks whose housing looks impossible
+python agent_custom_single/orchestrator_custom.py --dummy     # offline scripted regression test — free, deterministic
 ```
 
-With no goal given, the default is used: *"find census rows that cannot describe
-a real place"*. The dummy always replays its fixed script — give custom goals to
-`--gemini`, which actually reads them.
+With no goal given, the default goal is used: *"find census rows that cannot
+describe a real place"*. `--dummy` always replays its fixed script and cannot
+react to a custom goal; it exists to prove the **loop** still works without
+spending quota or needing a network.
 
-> VS Code's ▶ Run button passes **no arguments** — it always runs the dummy.
-> Use a terminal for `--gemini`. The banner's first line and the run filename
-> (`_dummy` / `_gemini`) always tell you which backend ran.
+> Running with no arguments now **calls the API** against your free-tier quota —
+> including VS Code's ▶ Run button, which passes no arguments. The banner's first
+> line and the run filename (`_gemini` / `_dummy`) always tell you which ran.
 
 > **If it is at the root you run it; if it is in a folder you import it.**
 > `python tools/run_lof.py` fails — those files are libraries, not entry points.

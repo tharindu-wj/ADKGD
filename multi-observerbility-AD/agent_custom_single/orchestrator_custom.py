@@ -56,8 +56,12 @@ ChatAnthropic requires a paid key -- so keeping it would have left the
 orchestrations with different backend sets and made them incomparable.)
 
 Run it from the PROJECT ROOT:
-    python agent_custom_single/orchestrator_custom.py                    offline, scripted
-    python agent_custom_single/orchestrator_custom.py --gemini "<goal>"  live, Gemini key
+    python agent_custom_single/orchestrator_custom.py "<goal>"   live Gemini -- the DEFAULT
+    python agent_custom_single/orchestrator_custom.py --dummy    offline scripted regression test
+
+Gemini is the default because that is what you actually want to run; --dummy is
+the free, offline, deterministic check that the LOOP itself still works. If the
+dummy run breaks, the loop broke -- not the model, not your key, not the network.
 """
 
 import json
@@ -157,17 +161,23 @@ def derive_viewpoint(goal, llm=dummy_llm, max_steps=12):
 # =============================================================================
 
 if __name__ == "__main__":
-    # Pick a backend with a flag; everything that is not a flag becomes the goal
-    # (quotes optional -- the words are joined back together):
-    #     python agent_custom_single/orchestrator_custom.py
-    #     python agent_custom_single/orchestrator_custom.py --gemini "find neighbourhoods that do not fit their region"
-    #     python agent_custom_single/orchestrator_custom.py --gemini find blocks whose housing looks impossible
-    # NOTE: VS Code's Run button passes NO arguments -- use a terminal for these.
+    # Gemini is the DEFAULT -- just give a goal. Everything that is not a flag
+    # becomes the goal (quotes optional; the words are joined back together):
+    #     python agent_custom_single/orchestrator_custom.py "find blocks that do not fit their region"
+    #     python agent_custom_single/orchestrator_custom.py find blocks whose housing looks impossible
+    #     python agent_custom_single/orchestrator_custom.py --dummy    offline regression test
+    #
+    # NOTE: running with no arguments now CALLS THE API (against your free-tier
+    # quota) on the default goal. Use --dummy for the free, offline, deterministic
+    # run -- that is the one to use when checking that the LOOP still works.
+    # VS Code's Run button passes no arguments, so it will hit the API too.
+    DEFAULT_BACKEND = "--gemini"
     BACKENDS = {
         "--gemini": ("gemini", gemini_llm, f"Gemini API, model '{GEMINI_MODEL}'"),
+        "--dummy": ("dummy", dummy_llm, "dummy LLM -- scripted, offline, deterministic"),
     }
     # Split argv into flags (anything starting with "-") and goal words. Doing it
-    # by prefix means a typo like "-gemini" is caught as a bad flag instead of
+    # by prefix means a typo like "-dummy" is caught as a bad flag instead of
     # silently becoming part of the goal text.
     flags = [a for a in sys.argv[1:] if a.startswith("-")]
     goal_words = [a for a in sys.argv[1:] if not a.startswith("-")]
@@ -175,14 +185,12 @@ if __name__ == "__main__":
     unrecognised = [a for a in flags if a not in BACKENDS]
     if unrecognised:
         sys.exit(f"Unrecognised flag(s): {unrecognised}. "
-                 f"Valid flags: {sorted(BACKENDS)} -- or none for the offline dummy.")
+                 f"Valid flags: {sorted(BACKENDS)} -- or none for the default "
+                 f"({DEFAULT_BACKEND}).")
     if len(flags) > 1:
         sys.exit(f"Pick ONE backend, not several: {flags}")
 
-    if flags:
-        backend_name, llm, banner = BACKENDS[flags[0]]
-    else:
-        backend_name, llm, banner = "dummy", dummy_llm, "dummy LLM -- scripted, fully offline"
+    backend_name, llm, banner = BACKENDS[flags[0] if flags else DEFAULT_BACKEND]
 
     print("=" * 76)
     print(f"OBSERVER AGENT -- custom orchestration  ({banner})")
@@ -193,7 +201,7 @@ if __name__ == "__main__":
 
     if backend_name == "dummy" and goal_words:
         print("NOTE: the dummy backend replays a fixed script written for the default")
-        print("      goal -- it cannot react to yours. Use --gemini.")
+        print("      goal -- it cannot react to yours. Drop --dummy to use Gemini.")
 
     spec, trace = derive_viewpoint(goal, llm=llm)
 
