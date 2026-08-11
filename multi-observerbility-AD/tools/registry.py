@@ -24,6 +24,7 @@ another tool, and nothing in tools/ imports an agent or an LLM backend, so
 adding an agent is a pure addition.
 """
 
+from tools.compare_viewpoint_verdicts import compare_viewpoint_verdicts
 from tools.describe_column import describe_column
 from tools.list_columns import list_columns
 from tools.run_lof import run_lof
@@ -33,4 +34,5 @@ TOOLS = {
     "list_columns": list_columns,
     "describe_column": describe_column,
     "run_lof": run_lof,
+    "compare_viewpoint_verdicts": compare_viewpoint_verdicts,
 }

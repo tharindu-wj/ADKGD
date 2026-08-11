@@ -28,7 +28,8 @@ from datetime import datetime
 RUNS_DIR = pathlib.Path(__file__).resolve().parents[1] / "runs"
 
 
-def save_run(goal, backend_name, spec, trace, orchestrator="custom", goals=None):
+def save_run(user_prompt, backend_name, specs, trace, orchestrator="custom",
+             findings=None, summary=None):
     """Write one run -- spec plus the full agent trace -- to its own file.
 
     Files land in runs/, named by timestamp, orchestrator and backend, e.g.
@@ -41,14 +42,18 @@ def save_run(goal, backend_name, spec, trace, orchestrator="custom", goals=None)
 
     Parameters
     ----------
-    goal:
-        The observer point, verbatim -- the sentence the user supplied.
+    user_prompt:
+        Exactly what the user typed, verbatim. For the custom loop that is a
+        goal; for the ADK agent it is a broad question it then decomposes.
+        Deliberately NOT called "goal": every observer's own goal lives in its
+        spec, and having both meanings share one word made run files hard to
+        read.
     backend_name:
         "dummy", "gemini", ... Used in the filename and recorded in the file.
-    spec:
-        The derived viewpoint dict, or None if the agent never finalised. May
-        also be a LIST of specs -- one per goal -- when an agent was given
-        several goals at once; see the schema note below.
+    specs:
+        The derived viewpoints, one per observer point, as a list. An empty list
+        means the agent never finalised. A single dict is also accepted and
+        wrapped, so callers with one viewpoint need not build a list themselves.
     trace:
         One entry per step: thinking, tool, args, and the FULL tool result.
         The console truncates long results for readability; the trace never does.
@@ -58,24 +63,37 @@ def save_run(goal, backend_name, spec, trace, orchestrator="custom", goals=None)
         which orchestration produced it, and the comparison between them is
         unmeasurable. `backend` alone does not distinguish them -- both say
         "gemini".
-    goals:
-        The individual goals the agent was given, split out of `goal`. One item
-        means the cell-1 condition (one agent, one goal); two or more means
-        cell 2 (one agent, several goals at once). The condition is read off
-        len(goals) -- there is no separate label to keep in sync.
+    findings, summary:
+        The findings-phase output, present only when the agent answered a broad
+        question (self-authored observer points -> viewpoints -> verdict
+        comparison -> explained findings). None otherwise; written only when set.
 
     Returns
     -------
     The path written, so the caller can tell the user where the run landed.
 
-    SCHEMA NOTE (INV-8: append-only)
-    --------------------------------
-    Older runs carry `final_spec` (a single dict). Multi-goal runs carry
-    `final_specs` (a list, one per goal) and leave `final_spec` null. Nothing was
-    renamed, so every run file ever written stays readable. Analysis code reads
-    both shapes in one line:
+    SCHEMA NOTE
+    -----------
+    The schema was simplified once, on 11 Aug 2026, breaking the append-only
+    rule (PROJECT_SPEC INV-8) deliberately and while no analysis code existed to
+    break. Two changes:
 
-        specs = d.get("final_specs") or ([d["final_spec"]] if d.get("final_spec") else [])
+      `goal` / `goals`  ->  `user_prompt`
+          `goal` at the top level collided with each spec's OWN `goal` -- the
+          observer point -- in the same file, and `goals` had decayed into a
+          one-item copy of it once the agent began authoring its own observer
+          points. Now `goal` appears in exactly one place and means one thing.
+
+      `final_spec` + `final_specs`  ->  `final_specs` only
+          Carrying a singular field beside a plural one meant every reader
+          needed a branch, for no gain: a run with one viewpoint is simply a
+          list of length one.
+
+    Runs written before that date keep the old fields -- they are evidence and
+    are left untouched. Analysis code that must read both eras:
+
+        prompt = d.get("user_prompt") or d.get("goal")
+        specs  = d.get("final_specs") or ([d["final_spec"]] if d.get("final_spec") else [])
     """
     os.makedirs(RUNS_DIR, exist_ok=True)
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -92,24 +110,25 @@ def save_run(goal, backend_name, spec, trace, orchestrator="custom", goals=None)
         path = RUNS_DIR / f"run_{run_id}_{orchestrator}_{backend_name}.json"
         suffix += 1
 
-    # Accept either one spec or a list of them, and normalise into both fields:
-    # single-goal runs keep the historical `final_spec`, multi-goal runs use
-    # `final_specs`. Callers never have to care which they are producing.
-    spec_list = [s for s in (spec if isinstance(spec, list) else [spec]) if s]
-    single_spec = spec_list[0] if len(spec_list) == 1 else None
-    multi_specs = spec_list if len(spec_list) > 1 else None
+    # Always a list, even for one viewpoint -- readers never need a branch.
+    # A caller passing a single dict gets it wrapped.
+    spec_list = [s for s in (specs if isinstance(specs, list) else [specs]) if s]
+
+    record = {
+        "run_id": run_id,
+        "orchestrator": orchestrator,   # "custom" | "adk"
+        "backend": backend_name,        # "dummy" | "gemini"
+        "user_prompt": user_prompt,     # what the user typed, verbatim
+        "status": "completed" if spec_list else "exhausted",
+        "steps_taken": len(trace),
+        "final_specs": spec_list,       # one entry per observer point; each
+        "trace": trace,                 # entry carries its OWN goal
+    }
+    if findings is not None:
+        record["findings"] = findings   # findings-phase only (broad questions)
+    if summary is not None:
+        record["summary"] = summary
 
     with open(path, "w") as f:
-        json.dump({
-            "run_id": run_id,
-            "orchestrator": orchestrator,   # "custom" | "adk"
-            "backend": backend_name,        # "dummy" | "gemini"
-            "goal": goal,                   # the raw message, verbatim
-            "goals": goals if goals is not None else [goal],  # 1 = cell 1, 2+ = cell 2
-            "status": "completed" if spec_list else "exhausted",
-            "steps_taken": len(trace),
-            "final_spec": single_spec,      # set when there is exactly one spec
-            "final_specs": multi_specs,     # set when there are several
-            "trace": trace,
-        }, f, indent=2)
+        json.dump(record, f, indent=2)
     return str(path)

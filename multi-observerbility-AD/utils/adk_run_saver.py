@@ -58,6 +58,23 @@ def _text_of(event_or_content) -> str:
     return text.replace("﻿", "").strip()
 
 
+def _parse_payload(text: str) -> dict:
+    """The agent's whole closing JSON object, or {} when there is none.
+
+    _parse_specs pulls the viewpoint specs out of this; the findings-phase
+    fields ("findings", "summary") ride along here so the run file can keep
+    them too. Tolerates prose and ```json fences the same way _parse_specs does.
+    """
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return {}
+    try:
+        payload = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _parse_specs(text: str) -> list:
     """Pull the ViewSpecs out of the agent's closing message. Always a list.
 
@@ -83,50 +100,6 @@ def _parse_specs(text: str) -> list:
     if isinstance(payload, dict) and "columns" in payload:
         return [payload]          # a bare single spec
     return []
-
-
-#: A numbered goal marker: "Goal 1:", "Goal 2.", "goal 3)". The DIGIT and the
-#: delimiter are both required, which is what stops an ordinary mention like
-#: "compare with goal 2 style analysis" from being read as a new goal.
-#: Not anchored to line starts, deliberately -- see _parse_goals.
-_GOAL_MARKER = re.compile(r"\bgoal\s*\d+\s*[:.)]\s*", re.IGNORECASE)
-
-#: A bare "Goal:" prefix on a single unnumbered goal, stripped for tidiness.
-_BARE_PREFIX = re.compile(r"^\s*goal\s*[:.)]\s*", re.IGNORECASE)
-
-
-def _parse_goals(message: str) -> list:
-    """Split the user's message into individual goals.
-
-    Both layouts work, because the two ways of running an agent differ:
-
-        Goal 1: find X  Goal 2: find Y        <- one line  (`adk run`)
-        Goal 1: find X
-        Goal 2: find Y                        <- several lines (`adk web`)
-
-    `adk run` is a line-based REPL: it reads ONE line per turn, so a multi-line
-    message piped into it silently loses everything after the first newline.
-    That is why the marker is not anchored to line starts -- on the terminal the
-    goals have to share a line.
-
-    A message with no numbered markers is one unnumbered goal and comes back as
-    a single item, so single-goal runs -- the cell-1 condition -- keep working
-    with nothing to remember.
-
-    The experimental condition is read off len(goals): 1 = cell 1 (one agent,
-    one goal), 2+ = cell 2 (one agent, several goals held at once).
-    """
-    message = (message or "").strip()
-    if not message:
-        return []
-
-    # Everything before the first marker is preamble, so drop parts[0].
-    parts = _GOAL_MARKER.split(message)
-    goals = [p.strip() for p in parts[1:] if p.strip()]
-    if goals:
-        return goals
-
-    return [_BARE_PREFIX.sub("", message).strip()]
 
 
 def build_trace(events):
@@ -193,22 +166,27 @@ def save_adk_run(callback_context):
     ]
 
     trace, final_text = build_trace(events)
+    payload = _parse_payload(final_text)
     specs = _parse_specs(final_text)
 
     if specs:
         trace.append({"step": len(trace) + 1, "thinking": "", "final_specs": specs})
 
-    message = _text_of(callback_context.user_content) or "(no goal recorded)"
-    goals = _parse_goals(message)
+    message = _text_of(callback_context.user_content) or "(nothing recorded)"
+
+    # Findings-phase output: the deliverable of phase 3, kept in the run file.
+    findings = payload.get("findings") if isinstance(payload.get("findings"), list) else None
+    summary = payload.get("summary") if isinstance(payload.get("summary"), str) else None
 
     path = save_run(
-        goal=message,          # the raw message, verbatim
+        user_prompt=message,   # the question the user asked, verbatim
         backend_name=BACKEND_NAME,
-        spec=specs,            # save_run unpacks: 1 spec -> final_spec, N -> final_specs
+        specs=specs,           # always a list, one entry per observer point
         trace=trace,
         orchestrator="adk",
-        goals=goals,
+        findings=findings,
+        summary=summary,
     )
-    print(f"\n[run saved] {path}  ({len(trace)} steps, {len(goals)} goal(s), "
-          f"{len(specs)} spec(s){'' if specs else ' -- none parsed'})")
+    print(f"\n[run saved] {path}  ({len(trace)} steps, {len(specs)} observer "
+          f"point(s), {len(findings) if findings else 0} finding(s))")
     return None

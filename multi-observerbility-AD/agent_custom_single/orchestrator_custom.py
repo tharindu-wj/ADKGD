@@ -214,10 +214,12 @@ if __name__ == "__main__":
     print(json.dumps(spec, indent=2))
 
     run_path = save_run(goal, backend_name, spec, trace, orchestrator="custom")
+    # `goal` is this loop's user_prompt: here the user types a goal directly,
+    # whereas the ADK agent is asked a broad question and derives its own.
     print(f"\nRun saved to {run_path}  ({len(trace)} steps, full untruncated trace)")
     print("Replaying the viewpoint later needs no LLM at all:")
     print("    from tools.run_lof import run_lof")
-    print(f"    spec = json.load(open({run_path!r}))['final_spec']")
+    print(f"    spec = json.load(open({run_path!r}))['final_specs'][0]")
     print("    run_lof(spec['columns'], spec['row_filter'])")
 
 
