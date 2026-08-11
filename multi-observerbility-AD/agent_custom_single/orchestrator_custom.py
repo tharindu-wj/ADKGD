@@ -10,7 +10,7 @@
        TOOLS (plain python functions)
           1. list_columns()      what data exists
           2. describe_column()   how one column is distributed
-          3. run_lof()           the statistical component: LOF anomaly scores
+          3. run_lof_per_viewpoint()           the statistical component: LOF anomaly scores
           |
           v
        FINAL SPEC (a plain dict: which columns, which rows, and why)
@@ -78,6 +78,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from llm_dummy import dummy_llm  # noqa: E402
 from llm_gemini import GEMINI_MODEL, gemini_llm  # noqa: E402
+from data.active import NAME as DATASET_NAME  # noqa: E402
 from tools.registry import TOOLS  # noqa: E402
 from utils.save_run import save_run  # noqa: E402
 
@@ -213,14 +214,15 @@ if __name__ == "__main__":
     print("=" * 76)
     print(json.dumps(spec, indent=2))
 
-    run_path = save_run(goal, backend_name, spec, trace, orchestrator="custom")
+    run_path = save_run(goal, backend_name, spec, trace, orchestrator="custom",
+                        dataset=DATASET_NAME)
     # `goal` is this loop's user_prompt: here the user types a goal directly,
     # whereas the ADK agent is asked a broad question and derives its own.
     print(f"\nRun saved to {run_path}  ({len(trace)} steps, full untruncated trace)")
     print("Replaying the viewpoint later needs no LLM at all:")
-    print("    from tools.run_lof import run_lof")
+    print("    from tools.run_lof_per_viewpoint import run_lof_per_viewpoint")
     print(f"    spec = json.load(open({run_path!r}))['final_specs'][0]")
-    print("    run_lof(spec['columns'], spec['row_filter'])")
+    print("    run_lof_per_viewpoint(spec['columns'], spec['row_filter'])")
 
 
 # =============================================================================

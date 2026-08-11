@@ -10,10 +10,11 @@ hand-written loop and the LangChain one) import the same functions from here,
 so a tool is written once and behaves identically under either.
 
 This tool is now a pure formatter: the column vocabulary it prints describes the
-DATASET, so it lives in data/california_housing.py beside the frame it describes.
+DATASET, so it lives in the dataset's own module beside the frame it describes.
+data/active.py decides which dataset that is; no tool knows or cares.
 """
 
-from data.california_housing import COLUMN_MEANINGS
+from data.active import COLUMN_MEANINGS
 
 
 def list_columns() -> str:

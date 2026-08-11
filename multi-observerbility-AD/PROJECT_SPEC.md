@@ -153,7 +153,7 @@ route to A2. This shapes the roadmap (§8).
 | FR-1 | Accept a goal as a command-line argument; sensible default otherwise. Gemini is the default backend; `--dummy` selects the offline scripted one | DONE |
 | FR-2 | Agent gathers information **only** through registered tools | DONE |
 | FR-3 | Tools return text; errors returned as `ERROR: ...` strings so the agent can read and self-correct | DONE |
-| FR-4 | All anomaly scores produced by `run_lof` (standardise → LOF k=20); no other scoring path exists | DONE |
+| FR-4 | All anomaly scores produced by `run_lof_per_viewpoint` (standardise → LOF k=20); no other scoring path exists | DONE |
 | FR-5 | Agent loop hard-capped by `max_steps`; prompt budget stated to the model separately | DONE |
 | FR-6 | Every run saved to `runs/` as JSON: spec + full untruncated trace + status (`completed` / `exhausted`) | DONE |
 | FR-7 | Interchangeable backends behind one contract: dummy (offline), Gemini (free API). A Claude-via-CLI backend was removed 9 Aug 2026 — LangChain has no equivalent, so keeping it would leave the two orchestrations incomparable | DONE |
@@ -192,7 +192,7 @@ user sets goal (CLI)
  TOOLS (plain functions returning text)              STATISTICAL PLANE
    1. list_columns()      what data exists            (deterministic code)
    2. describe_column()   distribution of one column
-   3. run_lof()           standardise -> LOF(k=20) -> scores
+   3. run_lof_per_viewpoint()           standardise -> LOF(k=20) -> scores
       |
       v
  FINAL SPEC (dict: observer, goal, columns, row_filter, why)
@@ -215,8 +215,9 @@ user sets goal (CLI)
 | `tools/registry.py` | The tool index (`TOOLS`) — the seam both orchestrations bind to |
 | `tools/list_columns.py` | Tool 1 — a pure formatter |
 | `tools/describe_column.py` | Tool 2 |
-| `tools/run_lof.py` | Tool 3 — the only scoring path (INV-3) |
-| `data/california_housing.py` | `DATA` + `COLUMN_MEANINGS`. A leaf: imports nothing from the project, fetched once, shared by every tool |
+| `tools/run_lof_per_viewpoint.py` | Tool 3 — the only scoring path (INV-3) |
+| `data/active.py` | **The dataset switch.** Tools import from here, never from a concrete dataset; changing datasets is changing its one import line |
+| `data/california_housing.py` | The reference dataset: `NAME`, `ENTITY`, `DATA`, `COLUMN_MEANINGS` (the four-name contract every dataset module honours). A leaf: imports nothing from the project, fetched once, shared by every tool |
 | `utils/save_run.py` | Writes `runs/*.json`. Outside both orchestrations so they cannot drift apart on schema |
 | `runs/` | One JSON per run, never overwritten |
 | `.env` | `GEMINI_KEY=...` — gitignored, at the **repo root** |
@@ -252,13 +253,13 @@ tool set cannot drift between them.
 |---|---|
 | Errors as text, not exceptions | The model reads the error and corrects itself (observed live: wrong column name → fixed next step) |
 | `max_steps` ≥ prompt budget + 2 | The finalising reply consumes a step; an error retry costs another. The prompt number is a request; `max_steps` is the wall |
-| Standardisation inside `run_lof` | Without it, the largest-valued column (Population, up to 35,682) decides every distance and every viewpoint gives the same answer |
+| Standardisation inside `run_lof_per_viewpoint` | Without it, the largest-valued column (Population, up to 35,682) decides every distance and every viewpoint gives the same answer |
 | Row filter minimum (100 rows) | In a tiny population everything looks unusual — a filter could manufacture anomalies |
 | Crash/exhaustion still saves the trace | A failed run is evidence, not garbage |
 | Typo-proof CLI | `-gemini` (one dash) errors loudly instead of silently running the dummy |
 
 ### 6.5 A deliberate MVP relaxation — flagged for graduation
-`run_lof` shows the agent the **top-5 flagged rows**. Excellent for learning (you
+`run_lof_per_viewpoint` shows the agent the **top-5 flagged rows**. Excellent for learning (you
 watch the agent react to findings); forbidden in the research version, because an
 agent that sees *which* entities scored high can tune its viewpoint toward them.
 FR-12 restores the lock (aggregate-only diagnostics), alongside data splits and spec
@@ -334,7 +335,7 @@ Five live runs to date (all in `runs/`, each with full trace):
   a third shape; extend via new *fields*, not new shapes.
 - **INV-2** Tools return `str`. Failures are `"ERROR: ..."` strings to the model —
   never exceptions across the tool boundary.
-- **INV-3** No code path outside `run_lof` produces anomaly scores, and no LLM output
+- **INV-3** No code path outside `run_lof_per_viewpoint` produces anomaly scores, and no LLM output
   is ever used as a score, threshold, or ranking key.
 - **INV-4** `max_steps` (in `derive_viewpoint`) ≥ the prompt's stated tool budget + 2.
   If you change either number, change both files (`orchestrator_custom.py`,

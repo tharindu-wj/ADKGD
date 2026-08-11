@@ -32,7 +32,7 @@ spending quota or needing a network.
 > line and the run filename (`_gemini` / `_dummy`) always tell you which ran.
 
 > **If it is at the root you run it; if it is in a folder you import it.**
-> `python tools/run_lof.py` fails — those files are libraries, not entry points.
+> `python tools/run_lof_per_viewpoint.py` fails — those files are libraries, not entry points.
 
 ## The files
 
@@ -43,7 +43,8 @@ spending quota or needing a network.
 | `agent_adk_multiple/` | **Agent 3 — planned.** ADK `ParallelAgent`: two observers with isolated branches |
 | `tools/registry.py` | The tool index: name → function. **Read this second**: it is what both orchestrations bind to |
 | `tools/<name>.py` | One file per tool, and nothing else |
-| `data/california_housing.py` | The frame + the column vocabulary. A leaf — imports nothing from the project, loaded once and shared |
+| `data/active.py` | The dataset switch: tools import from here, so changing datasets is one import line |
+| `data/california_housing.py` | The reference dataset (`NAME`, `ENTITY`, `DATA`, `COLUMN_MEANINGS`). A leaf — imports nothing from the project, loaded once and shared |
 | `utils/save_run.py` | Writes `runs/*.json`. Lives outside the orchestrators so both write an identical schema |
 | `baseline/multiviewpoint.ipynb` | The hand-built baseline viewpoints (per-viewpoint LOF on California housing) that agent-derived ones are compared against |
 | `runs/` | One JSON per run: the final spec **plus the full agent trace** |
@@ -60,7 +61,7 @@ itself instead of crashing:
 |---|---|---|
 | `list_columns()` | `tools/list_columns.py` | What data exists — names and meanings |
 | `describe_column(name)` | `tools/describe_column.py` | Distribution of one column (median, p99, max) so the agent learns the scales |
-| `run_lof(columns, row_filter)` | `tools/run_lof.py` | The statistical component: standardise → LOF(k=20) → score summary + top-5 rows |
+| `run_lof_per_viewpoint(columns, row_filter)` | `tools/run_lof_per_viewpoint.py` | The statistical component: standardise → LOF(k=20) → score summary + top-5 rows |
 
 **The loop** (`derive_viewpoint`) is ~30 lines: ask the backend what to do, run
 the tool it names, feed the text result back, repeat — until the backend returns
@@ -115,8 +116,8 @@ backends or repeats) is just reading `runs/`. Replaying a saved viewpoint needs
 no LLM — and no backend either, since `tools/` imports nothing from any agent:
 
 ```python
-from tools.run_lof import run_lof
-run_lof(spec["columns"], spec["row_filter"])
+from tools.run_lof_per_viewpoint import run_lof_per_viewpoint
+run_lof_per_viewpoint(spec["columns"], spec["row_filter"])
 ```
 
 ## Observations so far (why the trace matters)
@@ -137,7 +138,7 @@ studies.
 1. **`max_steps` (code) must stay ≥ the prompt's tool budget + 2** — the
    finalising reply consumes a step, and an error-recovery retry costs another.
    The prompt number is a request; `max_steps` is the wall.
-2. **The top-5 rows in `tools/run_lof.py`'s output are a deliberate MVP relaxation.**
+2. **The top-5 rows in `tools/run_lof_per_viewpoint.py`'s output are a deliberate MVP relaxation.**
    Seeing what it found is great for learning — but an agent that sees *which*
    rows scored high can tune its viewpoint toward them. The research version
    returns aggregate diagnostics only; restore that lock when this graduates

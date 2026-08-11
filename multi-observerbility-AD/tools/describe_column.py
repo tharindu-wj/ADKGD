@@ -1,10 +1,11 @@
 """Tool 2: how one column is distributed, so the agent learns the scales.
 
-DATA comes from data/california_housing.py, not from another tool. Python caches
-modules, so every tool that imports it reads the ONE loaded frame.
+DATA comes from data/active.py (whichever dataset that currently points at),
+not from another tool. Python caches modules, so every tool that imports it
+reads the ONE loaded frame.
 """
 
-from data.california_housing import DATA
+from data.active import DATA
 
 
 def describe_column(name: str) -> str:

@@ -1,93 +1,74 @@
-"""Tool 4: compare what several FINISHED viewpoints each say about the same blocks.
+"""Tool 4: which entities did MORE THAN ONE finished viewpoint flag?
 
-WHERE THIS SITS IN THE WORKFLOW
--------------------------------
-run_lof answers "what does THIS viewpoint find?" -- one viewpoint at a time.
-This tool answers the next question: "what does EACH viewpoint say about the
-same block?" It executes every viewpoint, aligns their results per block, and
-returns the disagreement structure -- which blocks are flagged by all viewpoints,
-which by several, which by exactly one. That table is the raw material for the
-final explanation ("extreme as a location, ordinary as everything else").
+run_lof_per_viewpoint answers "what does THIS viewpoint find?", one viewpoint at
+a time. This tool runs them all, flags each viewpoint's top FLAG_FRACTION, and
+reports the OVERLAP -- the entities more than one viewpoint flagged. Every
+viewpoint's percentile is printed for those, so an entity two viewpoints both
+rate at the 99th reads differently from one that scraped in at the 90th.
 
-It belongs AFTER derivation: the viewpoints passed in are final. It is not for
-choosing between candidate column sets while still exploring -- that would let
-per-block results steer derivation, which is the tuning loop the project avoids.
+It belongs AFTER derivation: the viewpoints passed in are final. Using it to
+choose between candidate column sets would let per-entity results steer
+derivation, which is the tuning loop the project avoids.
 
-WHY CELLS ARE PERCENTILE RANKS, NOT YES/NO FLAGS
-------------------------------------------------
-Raw LOF values are not comparable across viewpoints with different columns, and
-binary flags cannot support the sentence the explanation step needs ("99.9th
-percentile here, 37th there"). Percentile ranks are both comparable and quotable.
-The scoring itself is identical to run_lof (standardise -> LOF k=20) and MUST
-stay identical -- k or preprocessing drifting between the two tools would make
-their outputs quietly contradict each other.
-
-The ~8 scoring lines are duplicated from run_lof ON PURPOSE: no tool imports
-another tool (tools/registry.py). If you change the scoring recipe, change it in
-BOTH files.
-
-WHAT THE DISPLAY TRUNCATES (the one place this tool editorialises)
-------------------------------------------------------------------
-Each viewpoint flags its top 1% -- hundreds of blocks; the union would drown a
-prompt. The TABLE therefore shows only each viewpoint's top-10 blocks (union of
-those), while the agreement SUMMARY counts the full top-1% sets. So the rows are
-"the strongest examples", the summary is the true totals. Both say so explicitly
-in the output.
+The ~8 scoring lines are copied from run_lof_per_viewpoint ON PURPOSE -- no tool
+imports another tool (tools/registry.py). Change the recipe in one, change it
+in both, or the two tools will quietly disagree about the same viewpoint.
 """
 
 import numpy as np
 from sklearn.neighbors import LocalOutlierFactor
 
-from data.california_housing import DATA
+from data.active import DATA
 
 #: Fraction of each viewpoint's scored population counted as "flagged".
-FLAG_FRACTION = 0.01
+#: Measured trade-off on california_housing (entities flagged by 2+ of three
+#: baseline viewpoints):
+#:      top 1%  ->  25 entities vs 5.8 expected by chance  (4.3x)
+#:      top 10% -> 764 entities vs 619 expected by chance  (1.2x)
+#: A wider cut finds more overlap, but most of the extra is coincidence.
+FLAG_FRACTION = 0.10
 
-#: Rows shown in the table: the union of each viewpoint's strongest TOP_SHOW blocks.
+#: Maximum rows in the table. The overlap is usually far bigger.
 TOP_SHOW = 10
 
-#: Same neighbourhood size as run_lof -- keep the two in sync.
+#: Same neighbourhood size as run_lof_per_viewpoint -- keep the two in sync.
 NEIGHBOURS_K = 20
 
-#: Guard rails. ONE viewpoint is allowed on purpose: with a single observer point
-#: there is nothing to compare, but the per-block table is still the deliverable.
-#: Requiring two used to make an agent INVENT a second observer point just to
-#: satisfy this tool -- tooling corrupting the analysis, which must never happen.
+#: ONE viewpoint is allowed on purpose. Requiring two used to make an agent
+#: INVENT a second observer point just to satisfy this tool.
 MAX_VIEWPOINTS = 5
 MIN_ROWS = 100
 
 
-def compare_viewpoint_verdicts(viewpoints: list[dict]) -> str:
-    """Execute several finished viewpoints and align their verdicts per block.
+def compare_viewpoints(viewpoints: list[dict]) -> str:
+    """Run finished viewpoints and report the entities more than one of them flagged.
 
-    Use this AFTER you have derived all your viewpoints, to see how they agree
-    and disagree about individual blocks -- which blocks every viewpoint flags,
-    and which are flagged by exactly one. The output is the evidence base for
-    explaining findings; it is not for choosing columns while still exploring.
+    Use this AFTER every viewpoint is final. Each viewpoint flags its top 10%;
+    the entities appearing in two or more of those sets are the result.
 
-    Works with a single viewpoint too: you get its flagged blocks and their
-    percentiles, with no comparison section. Never add a viewpoint you did not
-    mean just to have something to compare.
+    One viewpoint is fine -- there is no overlap to find, so you get its
+    strongest entities instead. Never add a viewpoint you did not mean just to
+    have something to compare.
 
     Args:
         viewpoints: 1 to 5 finished viewpoints, each a dict like
-            {"observer": "geographic-isolation",
-             "columns": ["Latitude", "Longitude"],
+            {"observer": "<short name for the observer point>",
+             "columns": ["<col>", "<col>"],
              "row_filter": null}
-            row_filter, when present, has the same shape run_lof uses:
-            {"column": "Latitude", "min": 32.5, "max": 35.0}.
+            row_filter, when present, has the same shape run_lof_per_viewpoint
+            uses: {"column": "<col>", "min": <num>, "max": <num>}.
 
-    Returns a text report: one row per notable block with each viewpoint's
-    percentile rank (higher = more anomalous, * = inside that viewpoint's top
-    1%, -- = outside that viewpoint's row filter, so it has no verdict), plus
-    agreement totals over the full flagged sets. Bad input comes back as an
-    ERROR string explaining the fix.
+    Returns a text report: the overlapping entities with every viewpoint's
+    percentile rank (higher = more anomalous, * = in that viewpoint's flagged
+    top 10%, -- = outside its row filter so it has no verdict), then counts by
+    how many viewpoints agreed and what chance alone would have produced. Bad
+    input comes back as an ERROR string explaining the fix.
     """
     # -- validate, answering with readable errors ------------------------------
     if not isinstance(viewpoints, list) or not viewpoints:
         return ("ERROR: give your finished viewpoints as a list, each a dict with "
                 '"observer", "columns" and optional "row_filter". One viewpoint is '
-                "fine -- you will get its flagged blocks with no comparison.")
+                "fine -- you will get its flagged entities with no comparison.")
     if len(viewpoints) > MAX_VIEWPOINTS:
         return f"ERROR: compare at most {MAX_VIEWPOINTS} viewpoints; {len(viewpoints)} given."
 
@@ -104,8 +85,8 @@ def compare_viewpoint_verdicts(viewpoints: list[dict]) -> str:
             return (f"ERROR: viewpoint {i + 1} names unknown column(s) {unknown}. "
                     "Call list_columns for the valid names.")
 
-        # Row filter: same semantics as run_lof. The mask records WHO this
-        # viewpoint scores -- blocks outside it get no verdict, shown as "--".
+        # Row filter: same semantics as run_lof_per_viewpoint. The mask records
+        # WHO this viewpoint scores -- entities outside it get no verdict ("--").
         mask = np.ones(len(DATA), dtype=bool)
         rf = vp.get("row_filter")
         if rf:
@@ -118,13 +99,12 @@ def compare_viewpoint_verdicts(viewpoints: list[dict]) -> str:
                 return (f"ERROR: viewpoint {i + 1}'s row filter keeps only "
                         f"{int(mask.sum())} rows. Widen it.")
 
-        raw_name = str(vp.get("observer") or vp.get("name") or f"V{i + 1}")
-        names.append(raw_name[:16])
+        names.append(str(vp.get("observer") or vp.get("name") or f"V{i + 1}")[:16])
         columns_per_vp.append(cols)
         masks.append(mask)
 
-    # -- score every viewpoint (identical recipe to run_lof; see docstring) ----
-    percentiles, flagged, strongest = [], [], []
+    # -- score each viewpoint alone (same recipe as the other tool; see docstring)
+    percentiles, flagged = [], []
     for cols, mask in zip(columns_per_vp, masks):
         frame = DATA.loc[mask]
         X = frame[list(cols)].to_numpy(dtype=float)
@@ -135,66 +115,63 @@ def compare_viewpoint_verdicts(viewpoints: list[dict]) -> str:
 
         n = len(frame)
         ranks = scores.argsort().argsort()                   # 0 .. n-1, ascending
-        pct = {block: ranks[j] / (n - 1) * 100 for j, block in enumerate(frame.index)}
-
+        percentiles.append({b: ranks[j] / (n - 1) * 100 for j, b in enumerate(frame.index)})
         n_flag = max(1, int(round(FLAG_FRACTION * n)))
-        order = np.argsort(scores)[::-1]
-        flag_set = set(frame.index[order[:n_flag]].tolist())
-        top_show = frame.index[order[:TOP_SHOW]].tolist()
+        flagged.append(set(frame.index[np.argsort(scores)[::-1][:n_flag]].tolist()))
 
-        percentiles.append(pct)
-        flagged.append(flag_set)
-        strongest.append(top_show)
+    # -- the answer: entities flagged by more than one viewpoint ---------------
+    k = len(viewpoints)
+    counts = {b: sum(b in f for f in flagged) for b in set().union(*flagged)}
 
-    # -- align: rows = union of each viewpoint's strongest blocks --------------
-    rows = sorted(set().union(*strongest),
-                  key=lambda b: (-sum(b in f for f in flagged),
-                                 -max(p.get(b, 0.0) for p in percentiles)))
+    # Rank by the WEAKEST verdict any scoring viewpoint gave, so entities every
+    # viewpoint rates highly beat ones that scraped into a flagged set by a hair.
+    def weakest(b):
+        return min((p[b] for p in percentiles if b in p), default=0.0)
 
-    header = f"{'block':>7}  " + "  ".join(f"{n:>16}" for n in names) + "   flagged_by"
-    if len(viewpoints) == 1:
-        preamble = (f"One viewpoint, so nothing to compare. It flags its top "
-                    f"{FLAG_FRACTION:.0%}; the table shows its strongest "
-                    f"{TOP_SHOW} blocks ({len(rows)} rows); the total below covers "
-                    "the full flagged set.")
+    need = 2 if k > 1 else 1                # with one viewpoint there is no overlap
+    shared = [b for b, c in counts.items() if c >= need]
+    rows = sorted(shared, key=lambda b: (-counts[b], -weakest(b)))[:TOP_SHOW]
+
+    # -- report ----------------------------------------------------------------
+    if k == 1:
+        headline = (f"One viewpoint, so there is no overlap to find. Its top "
+                    f"{FLAG_FRACTION:.0%} is {len(shared):,} entities; the strongest "
+                    f"{len(rows)} are below.")
+    elif shared:
+        headline = (f"Compared {k} viewpoints, each flagging its top {FLAG_FRACTION:.0%}. "
+                    f"{len(shared):,} entities were flagged by MORE THAN ONE viewpoint -- "
+                    f"strongest agreement first, {len(rows)} shown.")
     else:
-        preamble = (f"Compared {len(viewpoints)} viewpoints. Each flags its top "
-                    f"{FLAG_FRACTION:.0%}; the table shows the union of each "
-                    f"viewpoint's strongest {TOP_SHOW} blocks ({len(rows)} rows); "
-                    "the totals below cover the full flagged sets.")
-    lines = [
-        preamble,
-        "",
-        "Cells: percentile rank (higher = more anomalous), * = flagged, "
-        "-- = outside that viewpoint's row filter (no verdict).",
-        "",
-        header,
-        "-" * len(header),
-    ]
-    for block in rows:
-        cells = []
-        for pct, flag_set in zip(percentiles, flagged):
-            if block not in pct:
-                cells.append(f"{'--':>16}")
-            else:
-                mark = "*" if block in flag_set else " "
-                cells.append(f"{pct[block]:>15.1f}{mark}")
-        by = [names[i] for i in range(len(names)) if block in flagged[i]]
-        lines.append(f"{block:>7}  " + "  ".join(cells) + "   " + (", ".join(by) or "none"))
+        headline = (f"Compared {k} viewpoints, each flagging its top {FLAG_FRACTION:.0%}. "
+                    f"NO entity was flagged by more than one: every anomaly here belongs "
+                    f"to a single perspective.")
 
-    # -- agreement totals over the FULL flagged sets ---------------------------
-    union_flagged = set().union(*flagged)
-    if len(viewpoints) == 1:
-        lines += ["",
-                  f"Only one viewpoint, so there is nothing to compare: it flags "
-                  f"{len(union_flagged):,} blocks in total, of which the table shows "
-                  f"its strongest {min(TOP_SHOW, len(rows))}."]
-    else:
-        counts = {block: sum(block in f for f in flagged) for block in union_flagged}
-        lines += ["", f"Agreement across the full flagged sets ({len(union_flagged):,} blocks):"]
-        for level in range(len(viewpoints), 0, -1):
+    header = f"{'entity':>7}  " + "  ".join(f"{n:>16}" for n in names) + "   flagged_by"
+    lines = [headline, "",
+             "Cells: percentile rank (higher = more anomalous), * = flagged, "
+             "-- = outside that viewpoint's row filter (no verdict).",
+             "", header, "-" * len(header)]
+
+    for b in rows:
+        cells = [f"{'--':>16}" if b not in p
+                 else f"{p[b]:>15.1f}" + ("*" if b in f else " ")
+                 for p, f in zip(percentiles, flagged)]
+        by = [names[i] for i in range(k) if b in flagged[i]]
+        lines.append(f"{b:>7}  " + "  ".join(cells) + "   " + (", ".join(by) or "none"))
+
+    # -- counts over the FULL flagged sets, not the rows shown -----------------
+    # With one viewpoint the headline already gave the only number there is.
+    if k > 1:
+        lines += ["", f"Across the full flagged sets ({len(counts):,} entities):"]
+        for level in range(k, 0, -1):
             n_level = sum(1 for c in counts.values() if c == level)
-            label = "all " + str(level) if level == len(viewpoints) else f"exactly {level}"
+            label = f"all {level}" if level == k else f"exactly {level}"
             lines.append(f"  flagged by {label} viewpoint(s): {n_level:,}")
+        # Without this, real agreement is indistinguishable from the artefact of
+        # flagging 10% of the data k separate times.
+        n_scored = min(len(p) for p in percentiles)
+        expected = k * (k - 1) / 2 * FLAG_FRACTION ** 2 * n_scored
+        lines.append(f"  -> {len(shared):,} flagged by more than one, against roughly "
+                     f"{expected:,.0f} expected if they agreed only by chance.")
 
     return "\n".join(lines)

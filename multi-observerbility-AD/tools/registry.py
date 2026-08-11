@@ -24,15 +24,15 @@ another tool, and nothing in tools/ imports an agent or an LLM backend, so
 adding an agent is a pure addition.
 """
 
-from tools.compare_viewpoint_verdicts import compare_viewpoint_verdicts
+from tools.compare_viewpoints import compare_viewpoints
 from tools.describe_column import describe_column
 from tools.list_columns import list_columns
-from tools.run_lof import run_lof
+from tools.run_lof_per_viewpoint import run_lof_per_viewpoint
 
 #: The dispatch table: tool name -> function. This is what makes them "tools".
 TOOLS = {
     "list_columns": list_columns,
     "describe_column": describe_column,
-    "run_lof": run_lof,
-    "compare_viewpoint_verdicts": compare_viewpoint_verdicts,
+    "run_lof_per_viewpoint": run_lof_per_viewpoint,
+    "compare_viewpoints": compare_viewpoints,
 }

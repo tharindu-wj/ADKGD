@@ -12,10 +12,10 @@ INV-3 moved with it: scoring still happens here and nowhere else.
 import numpy as np
 from sklearn.neighbors import LocalOutlierFactor
 
-from data.california_housing import DATA
+from data.active import DATA
 
 
-def run_lof(columns: list[str], row_filter: dict | None = None) -> str:
+def run_lof_per_viewpoint(columns: list[str], row_filter: dict | None = None) -> str:
     """Score every row with Local Outlier Factor over the chosen viewpoint.
 
     This is the statistical component: it decides how unusual each row is. The

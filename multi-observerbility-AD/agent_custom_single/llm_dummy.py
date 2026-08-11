@@ -53,14 +53,14 @@ DUMMY_SCRIPT = [
         "thinking": ("AveOccup reaches 1243 against a 99th percentile of 5.4, and "
                      "AveRooms reaches 141 against 10.4 -- impossible households exist. "
                      "First attempt: score all household columns together."),
-        "tool": "run_lof",
+        "tool": "run_lof_per_viewpoint",
         "args": {"columns": ["AveRooms", "AveBedrms", "AveOccup", "Population"]},
     },
     {
         "thinking": ("Those top rows are genuinely impossible (households of 1200+). "
                      "But Population measures SIZE, not consistency -- my goal is about "
                      "ratios that contradict each other. Loop: try ratios only."),
-        "tool": "run_lof",
+        "tool": "run_lof_per_viewpoint",
         "args": {"columns": ["AveRooms", "AveBedrms", "AveOccup"]},
     },
     {

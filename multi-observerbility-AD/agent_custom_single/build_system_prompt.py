@@ -25,14 +25,15 @@ or finish:
                   "why": "<2-3 sentences>"}}
 
 Tools:
-  list_columns     args: {}
-  describe_column  args: {"name": "<column>"}
-  run_lof          args: {"columns": ["<col>", ...],
-                          "row_filter": null | {"column": "<col>", "min": <num>, "max": <num>}}
+  list_columns           args: {}
+  describe_column        args: {"name": "<column>"}
+  run_lof_per_viewpoint  args: {"columns": ["<col>", ...],
+                                "row_filter": null |
+                                  {"column": "<col>", "min": <num>, "max": <num>}}
 
-Rules: use at least 2 columns in run_lof and in your final_spec. You have at most
-10 tool calls -- explore briefly, evaluate at least one candidate viewpoint with
-run_lof, then finalise.
+Rules: use at least 2 columns in run_lof_per_viewpoint and in your final_spec.
+You have at most 10 tool calls -- explore briefly, evaluate at least one
+candidate viewpoint with run_lof_per_viewpoint, then finalise.
 """
 
 

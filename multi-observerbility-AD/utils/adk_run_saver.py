@@ -32,6 +32,7 @@ hook observes, it never changes what the agent said.
 import json
 import re
 
+from data.active import NAME as DATASET_NAME
 from utils.save_run import save_run
 
 #: Which model backend these agents talk to. ADK is configured for Gemini in
@@ -114,6 +115,7 @@ def build_trace(events):
     trace = []
     pending = {}        # function_call id -> the step entry awaiting its result
     final_text = ""
+    last_text = ""      # fallback -- see the note below step 3
 
     for event in events:
         # 1. The model asked for tools. One event can carry several calls.
@@ -141,12 +143,19 @@ def build_trace(events):
                 entry["result"] = answer if isinstance(answer, str) else json.dumps(answer)
 
         # 3. The closing message -- the agent's final answer, holding the spec.
-        if event.is_final_response() and not calls:
+        # is_final_response() is the intended signal, but a live run on 12 Aug
+        # 2026 produced a closing text event it did NOT mark final, and the specs
+        # silently vanished from the run file. So ALSO remember the last
+        # text-bearing, call-free event as a fallback: if no event is marked
+        # final, the closing message is still whatever text came last.
+        if not calls:
             text = _text_of(event)
             if text:
-                final_text = text
+                last_text = text
+                if event.is_final_response():
+                    final_text = text
 
-    return trace, final_text
+    return trace, final_text or last_text
 
 
 def save_adk_run(callback_context):
@@ -186,6 +195,7 @@ def save_adk_run(callback_context):
         orchestrator="adk",
         findings=findings,
         summary=summary,
+        dataset=DATASET_NAME,  # which dataset data/active.py served this run
     )
     print(f"\n[run saved] {path}  ({len(trace)} steps, {len(specs)} observer "
           f"point(s), {len(findings) if findings else 0} finding(s))")

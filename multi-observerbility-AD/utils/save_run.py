@@ -29,7 +29,7 @@ RUNS_DIR = pathlib.Path(__file__).resolve().parents[1] / "runs"
 
 
 def save_run(user_prompt, backend_name, specs, trace, orchestrator="custom",
-             findings=None, summary=None):
+             findings=None, summary=None, dataset=None):
     """Write one run -- spec plus the full agent trace -- to its own file.
 
     Files land in runs/, named by timestamp, orchestrator and backend, e.g.
@@ -67,6 +67,11 @@ def save_run(user_prompt, backend_name, specs, trace, orchestrator="custom",
         The findings-phase output, present only when the agent answered a broad
         question (self-authored observer points -> viewpoints -> verdict
         comparison -> explained findings). None otherwise; written only when set.
+    dataset:
+        NAME of the dataset the run observed (data/active.py at the time).
+        Written only when set -- added 12 Aug 2026 as a new field, which the
+        append-only rule (INV-8) permits. Runs from before that date carry no
+        dataset field and are all california_housing.
 
     Returns
     -------
@@ -124,6 +129,8 @@ def save_run(user_prompt, backend_name, specs, trace, orchestrator="custom",
         "final_specs": spec_list,       # one entry per observer point; each
         "trace": trace,                 # entry carries its OWN goal
     }
+    if dataset is not None:
+        record["dataset"] = dataset     # which dataset was active (see docstring)
     if findings is not None:
         record["findings"] = findings   # findings-phase only (broad questions)
     if summary is not None:
