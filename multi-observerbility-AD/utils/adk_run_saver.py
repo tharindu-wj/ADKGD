@@ -301,12 +301,23 @@ def save_adk_multi_run(callback_context):
             "steps_taken": len(trace),
             "trace": trace,
         }
-        # Only when it failed, and only if the stream said why. Without this a
-        # dead observer is indistinguishable from a lazy one.
+        # Only when it failed. Without these two a dead observer is
+        # indistinguishable from a lazy one, which is exactly why run
+        # 20260818_083909 could not be diagnosed.
         if not spec:
             why = stop_reason(own)
             if why:
                 record["stop_reason"] = why
+            # ALWAYS written when there is no spec, even as "" -- the empty
+            # string is itself the finding. Three cases, three appearances:
+            #   ""              the observer emitted nothing at all
+            #   reasoning prose the model thought and never answered (ADK drops
+            #                   thought-only responses on the floor:
+            #                   llm_agent.py checks `not part.thought`)
+            #   broken JSON     it tried to answer and the parse failed
+            # Untruncated, like the trace (INV-5): a truncated diagnostic is the
+            # one that cuts off just before the interesting part.
+            record["raw_final_text"] = final_text
         observers.append(record)
 
     # -- the comparer: everything not attributable to an observer ----------------
@@ -316,14 +327,23 @@ def save_adk_multi_run(callback_context):
     comparer_trace, comparer_text = build_trace(comparer_events)
     payload = _parse_payload(comparer_text)
 
-    observers.append({
+    comparer_record = {
         "observer": _COMPARER_NAME,
         "goal": None,                       # the comparer has no observer point
         "status": "completed" if payload else "exhausted",
         "spec": None,                       # it derives nothing
         "steps_taken": len(comparer_trace),
         "trace": comparer_trace,
-    })
+    }
+    if not payload:
+        why = stop_reason(comparer_events)
+        if why:
+            comparer_record["stop_reason"] = why
+        # Same reasoning as the observers above. A comparer that ran the tool and
+        # then failed to report is the worst case to debug blind: the numbers
+        # exist in its trace but nothing says why they never became findings.
+        comparer_record["raw_final_text"] = comparer_text
+    observers.append(comparer_record)
 
     findings = payload.get("findings") if isinstance(payload.get("findings"), list) else None
     summary = payload.get("summary") if isinstance(payload.get("summary"), str) else None

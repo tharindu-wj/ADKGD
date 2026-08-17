@@ -262,6 +262,8 @@ tool set cannot drift between them.
 | Row filter minimum (100 rows) | In a tiny population everything looks unusual — a filter could manufacture anomalies |
 | Crash/exhaustion still saves the trace | A failed run is evidence, not garbage |
 | Typo-proof CLI | `-gemini` (one dash) errors loudly instead of silently running the dummy |
+| `retry_options` on the ADK model | google-genai does **no** retry unless asked (`stop_after_attempt(1)`), and ADK re-raises a 429 before `after_agent_callback` can fire — so a rate-limited run would write no file, breaking INV-5. Worse in the parallel cell: `ParallelAgent` uses `asyncio.TaskGroup`, so one 429 cancels the sibling observer and the comparer too. Set identically in **both** ADK agent files; they must not differ in whether they survive a rate limit |
+| `raw_final_text` + `stop_reason` on a failed observer | Run 083909 could not be diagnosed at all. These separate the three silent-stop cases — emitted nothing, thought-only (ADK drops responses whose parts are all `thought`), or unparseable JSON — from a genuine API error |
 
 ### 6.5 A deliberate MVP relaxation — flagged for graduation
 `run_lof_per_viewpoint` shows the agent the **top-5 flagged rows**. Excellent for learning (you

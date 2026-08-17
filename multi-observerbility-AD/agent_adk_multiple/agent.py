@@ -85,6 +85,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from google.adk.agents.llm_agent import Agent  # noqa: E402
 from google.adk.agents.parallel_agent import ParallelAgent  # noqa: E402
 from google.adk.agents.sequential_agent import SequentialAgent  # noqa: E402
+from google.adk.models.google_llm import Gemini  # noqa: E402
 from google.genai import types  # noqa: E402
 
 from data.active import ENTITY, NAME  # noqa: E402
@@ -98,7 +99,40 @@ from utils.adk_run_saver import (  # noqa: E402
 #: Pinned, exactly as in agent_adk_single. An alias can silently resolve to a
 #: different model between runs, which would wreck a variance experiment -- and
 #: here it would also confound the one-mind/two-mind comparison.
-MODEL = "gemini-3.5-flash-lite"
+MODEL_NAME = "gemini-3.5-flash-lite"
+
+#: RETRY IS NOT OPTIONAL IN A PARALLEL CELL, and ADK gives you none by default.
+#:
+#: google-genai builds `stop_after_attempt(1), reraise=True` when retry_options
+#: is None -- literally no retry. ADK then re-raises a 429 as
+#: _ResourceExhaustedError (models/google_llm.py). ParallelAgent merges its
+#: sub-agents with asyncio.TaskGroup, which CANCELS the siblings and propagates,
+#: so one 429 in either observer would:
+#:      kill the other observer, mid-derivation
+#:      skip the comparer entirely
+#:      skip after_agent_callback -- so NO RUN FILE IS WRITTEN AT ALL
+#: That last one breaks INV-5: a failed run is supposed to be evidence, and here
+#: it would leave nothing behind. NFR-4 already promises rate limits are absorbed
+#: by retry; this is where the ADK path keeps that promise.
+#:
+#: The exposure is worse here than in the single-agent cell for a structural
+#: reason: two observers fire CONCURRENTLY, doubling the instantaneous request
+#: rate against a free-tier per-minute ceiling.
+#:
+#: 429 is already in google-genai's retriable set (408, 429, 500, 502, 503, 504).
+#: initial_delay is 4s rather than the library's 1s because a free-tier
+#: per-minute window needs waiting out, not nibbling at; with exponential jitter
+#: and 5 attempts that spans about a minute.
+#:
+#: DUPLICATED in agent_adk_single/agent.py on purpose -- no agent folder imports
+#: another, the same rule that duplicates the LOF recipe across the two tools.
+#: Change it in one, change it in both, or the two cells stop being comparable:
+#: a cell that retries survives where a cell that does not dies, and which runs
+#: reach the analysis would then depend on the machinery.
+MODEL = Gemini(
+    model=MODEL_NAME,
+    retry_options=types.HttpRetryOptions(attempts=5, initial_delay=4, max_delay=60),
+)
 
 #: PER-AGENT, not shared. One shared pool would let observer_a spend the budget
 #: and starve observer_b, and a starved observer is not an independent one.

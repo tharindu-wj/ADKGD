@@ -54,6 +54,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from google.adk.agents.llm_agent import Agent  # noqa: E402
+from google.adk.models.google_llm import Gemini  # noqa: E402
+from google.genai import types  # noqa: E402
 
 from data.active import ENTITY, NAME  # noqa: E402
 from tools.compare_viewpoints import compare_viewpoints  # noqa: E402
@@ -64,7 +66,23 @@ from utils.adk_run_saver import save_adk_run  # noqa: E402
 
 #: Pinned deliberately. An alias like "gemini-flash-latest" can silently resolve
 #: to a different model between runs, which would wreck a variance experiment.
-MODEL = "gemini-3.5-flash-lite"
+MODEL_NAME = "gemini-3.5-flash-lite"
+
+#: google-genai does NOT retry unless you ask: with retry_options=None it builds
+#: `stop_after_attempt(1), reraise=True`. ADK then re-raises a 429 as
+#: _ResourceExhaustedError, which propagates out before after_agent_callback can
+#: fire -- so a rate-limited run writes no file, breaking INV-5 (a failed run is
+#: evidence) and quietly costing a measurement. NFR-4 promises retry absorbs
+#: rate limits; this is where the ADK path keeps that promise.
+#:
+#: DUPLICATED in agent_adk_multiple/agent.py on purpose -- no agent folder
+#: imports another. Change it in one, change it in both: cell 2 and cell 3 must
+#: not differ in whether they survive a rate limit, or which runs reach the
+#: analysis becomes a property of the machinery rather than of the agents.
+MODEL = Gemini(
+    model=MODEL_NAME,
+    retry_options=types.HttpRetryOptions(attempts=5, initial_delay=4, max_delay=60),
+)
 
 # The prompt is assembled from two pieces: an f-string head that names the
 # active dataset, then a dataset-blind body that only ever says "entity".
