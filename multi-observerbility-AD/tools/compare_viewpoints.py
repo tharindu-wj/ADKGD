@@ -40,6 +40,20 @@ MAX_VIEWPOINTS = 5
 MIN_ROWS = 100
 
 
+def _filter_signature(row_filter):
+    """A row filter reduced to something two filters can be compared by.
+
+    None and {} both mean "every row", so they must compare equal -- otherwise
+    two identical viewpoints would look different and the duplicate warning
+    below would never fire.
+    """
+    if not row_filter:
+        return None
+    return (row_filter.get("column"),
+            row_filter.get("min", -np.inf),
+            row_filter.get("max", np.inf))
+
+
 def compare_viewpoints(viewpoints: list[dict]) -> str:
     """Run finished viewpoints and report the entities more than one of them flagged.
 
@@ -103,6 +117,18 @@ def compare_viewpoints(viewpoints: list[dict]) -> str:
         columns_per_vp.append(cols)
         masks.append(mask)
 
+    # -- are any two of these the SAME viewpoint? ------------------------------
+    # Two observers can independently land on identical columns and filter. Their
+    # overlap is then 100% by arithmetic, not by agreement, and a reader shown
+    # only the table would take it for overwhelming corroboration. Say so.
+    # Column ORDER does not matter to LOF, so compare as a sorted set.
+    signatures = [(tuple(sorted(cols)), _filter_signature(vp.get("row_filter")))
+                  for cols, vp in zip(columns_per_vp, viewpoints)]
+    duplicates = [(names[i], names[j])
+                  for i in range(len(signatures))
+                  for j in range(i + 1, len(signatures))
+                  if signatures[i] == signatures[j]]
+
     # -- score each viewpoint alone (same recipe as the other tool; see docstring)
     percentiles, flagged = [], []
     for cols, mask in zip(columns_per_vp, masks):
@@ -147,10 +173,21 @@ def compare_viewpoints(viewpoints: list[dict]) -> str:
                     f"to a single perspective.")
 
     header = f"{'entity':>7}  " + "  ".join(f"{n:>16}" for n in names) + "   flagged_by"
-    lines = [headline, "",
-             "Cells: percentile rank (higher = more anomalous), * = flagged, "
-             "-- = outside that viewpoint's row filter (no verdict).",
-             "", header, "-" * len(header)]
+    lines = [headline]
+
+    # Before anything else, if two viewpoints are the same one twice.
+    for a, b in duplicates:
+        lines += ["",
+                  f"WARNING: {a} and {b} are the SAME viewpoint -- identical "
+                  f"columns and row filter. Their agreement is arithmetic, not "
+                  f"evidence: any entity one flags, the other flags too. Report "
+                  f"that they converged on one viewpoint; do not report their "
+                  f"overlap as corroboration."]
+
+    lines += ["",
+              "Cells: percentile rank (higher = more anomalous), * = flagged, "
+              "-- = outside that viewpoint's row filter (no verdict).",
+              "", header, "-" * len(header)]
 
     for b in rows:
         cells = [f"{'--':>16}" if b not in p

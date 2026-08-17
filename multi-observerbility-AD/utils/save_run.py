@@ -29,7 +29,8 @@ RUNS_DIR = pathlib.Path(__file__).resolve().parents[1] / "runs"
 
 
 def save_run(user_prompt, backend_name, specs, trace, orchestrator="custom",
-             findings=None, summary=None, dataset=None):
+             findings=None, summary=None, dataset=None, cell=None, observers=None,
+             status_override=None):
     """Write one run -- spec plus the full agent trace -- to its own file.
 
     Files land in runs/, named by timestamp, orchestrator and backend, e.g.
@@ -72,6 +73,29 @@ def save_run(user_prompt, backend_name, specs, trace, orchestrator="custom",
         Written only when set -- added 12 Aug 2026 as a new field, which the
         append-only rule (INV-8) permits. Runs from before that date carry no
         dataset field and are all california_housing.
+    cell:
+        Which experiment cell produced this run: "2.5" (two agents, ONE shared
+        goal -- the redundancy control) or "3" (two agents, one goal each).
+        None for single-agent runs, which are cell 2 by construction. Added
+        18 Aug 2026; append-only, so older runs simply lack it.
+    status_override:
+        Replaces the default status, which is "completed" as soon as ONE spec
+        exists. A two-observer cell needs a third value: "partial" means some
+        observers finished and some did not. Run 20260818_083909 recorded
+        "completed" with one of two observers dead, and nothing at the top level
+        said otherwise -- so a reader scanning statuses would have counted it as
+        a clean two-observer run. Values: "completed" | "partial" | "exhausted".
+    observers:
+        Two-observer runs only. One entry per AGENT, in report order, each
+        {"observer", "goal", "status", "spec", "steps_taken", "trace"} -- the
+        comparer included, with goal and spec None.
+
+        Why this exists rather than reusing `final_specs` alone: the experiment
+        asks whether TWO MINDS derive different viewpoints from the same goals
+        than one mind does, and that question needs each spec attached to the
+        agent that produced it, with its own trace and its own status. A flat
+        spec list cannot say which observer failed. `final_specs` and `trace`
+        stay populated alongside it so existing readers keep working (INV-8).
 
     Returns
     -------
@@ -124,13 +148,17 @@ def save_run(user_prompt, backend_name, specs, trace, orchestrator="custom",
         "orchestrator": orchestrator,   # "custom" | "adk"
         "backend": backend_name,        # "dummy" | "gemini"
         "user_prompt": user_prompt,     # what the user typed, verbatim
-        "status": "completed" if spec_list else "exhausted",
+        "status": status_override or ("completed" if spec_list else "exhausted"),
         "steps_taken": len(trace),
         "final_specs": spec_list,       # one entry per observer point; each
         "trace": trace,                 # entry carries its OWN goal
     }
     if dataset is not None:
         record["dataset"] = dataset     # which dataset was active (see docstring)
+    if cell is not None:
+        record["cell"] = cell           # "2.5" | "3" -- two-observer runs only
+    if observers is not None:
+        record["observers"] = observers  # per-agent goal, spec, status, trace
     if findings is not None:
         record["findings"] = findings   # findings-phase only (broad questions)
     if summary is not None:

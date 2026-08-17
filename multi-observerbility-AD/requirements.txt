@@ -1,0 +1,31 @@
+# Multi-viewpoint anomaly detection -- pinned dependencies.
+#
+# WHY EVERYTHING IS PINNED, NOT RANGED
+# ------------------------------------
+# These runs are experimental artifacts (runs/*.json is committed to git and is
+# the evidence base for the derivation-variance analysis). A dependency that
+# changes behaviour between runs does not just risk a bug, it silently
+# invalidates the comparison -- the same reasoning that pins the MODEL in every
+# agent file rather than using a "-latest" alias (PROJECT_SPEC section 7,
+# finding 4: model aliases resolve unpredictably).
+#
+# google-adk is pinned hardest of all. In 2.6.3, ParallelAgent and
+# SequentialAgent carry deprecation notices pointing at the new graph-based
+# Workflow, and agent_adk_multiple depends on ParallelAgent's per-sub-agent
+# BRANCH ISOLATION for its central claim -- that two observers cannot see each
+# other's results. An upgrade that alters how branches are scoped would change
+# what the experiment measures without changing a line of our code.
+# Migrate to Workflow AFTER the cells are measured, not during.
+
+google-adk==2.6.3
+
+# The statistical plane (PROJECT_SPEC 3.4). scikit-learn owns LocalOutlierFactor,
+# which is the only scoring path in the project (INV-3).
+numpy==2.3.1
+pandas==2.3.1
+scikit-learn==1.7.1
+
+# The custom orchestration's Gemini backend talks REST directly -- no LLM SDK
+# (NFR-2). ADK brings its own google-genai client; that is ADK's dependency,
+# not ours, and nothing outside agent_adk_*/ imports it.
+requests==2.32.4

@@ -134,7 +134,7 @@ route to A2. This shapes the roadmap (§8).
 4. **G4 — Measurement:** compare derived viewpoints against hand-built and random
    baselines; measure derivation variance across repeats and models. *(next)*
 5. **G5 — Multi-observer:** two agents, two goals, disagreement as signal — the
-   research experiments (cells ②, ②½, ③). *(planned)*
+   research experiments (cells ②, ②½, ③). *(built; not yet run live)*
 
 ### Non-goals
 - **Not** claiming detection-performance superiority over classical methods.
@@ -162,7 +162,7 @@ route to A2. This shapes the roadmap (§8).
 | FR-10 | Null-model harness: derived spec vs hand-built spec vs random column set, same metrics | PLANNED |
 | FR-11 | Variance harness: N repeats per goal per backend; spec agreement + steps summarised from `runs/` | PLANNED |
 | FR-12 | Research guards restored on graduation: FIT/DEV/EVAL splits, aggregate-only diagnostics, spec freezing with content hashes | PLANNED |
-| FR-13 | Multi-observer cells: one agent two goals; two agents same goal (redundancy control); two agents two goals | PLANNED |
+| FR-13 | Multi-observer cells: one agent two goals (cell ②, `agent_adk_single`); two agents same goal (cell ②½, redundancy control); two agents two goals (cell ③) | DONE — `agent_adk_multiple`, 18 Aug 2026; goal count selects the cell |
 
 ### Non-functional
 
@@ -211,14 +211,19 @@ user sets goal (CLI)
 | `agent_custom_single/build_system_prompt.py` | The system prompt shared by that agent's backends |
 | `agent_custom_single/llm_dummy.py` | Backend 1 — scripted. **The contract is documented here; read it first** |
 | `agent_custom_single/llm_gemini.py` | Backend 2 — Gemini REST API (`gemini-3.5-flash-lite`, pinned), free tier |
-| `agent_adk_single/agent.py` | **Entry point 2.** ADK `root_agent`; run with `adk run` / `adk web` |
+| `agent_adk_single/agent.py` | **Entry point 2.** ADK `root_agent` — ONE mind, 1–2 self-authored observer points (cell ②) |
+| `agent_adk_multiple/agent.py` | **Entry point 3.** TWO observers, one goal each, isolated by ADK branch; `SequentialAgent(ParallelAgent(a,b), comparer)`. Goals are GIVEN, not authored: one goal ⇒ cell ②½, two ⇒ cell ③ |
+| `AGENTIC_DESIGN.md` | The two-observer design: diagrams, the Google Cloud pattern mapping, and exactly what ADK isolates (verified against 2.6.3 source) |
+| `requirements.txt` | Pinned, including `google-adk==2.6.3`. `ParallelAgent`'s branch isolation is load-bearing for cell ③, so the framework is pinned like the model |
 | `tools/registry.py` | The tool index (`TOOLS`) — the seam both orchestrations bind to |
 | `tools/list_columns.py` | Tool 1 — a pure formatter |
 | `tools/describe_column.py` | Tool 2 |
 | `tools/run_lof_per_viewpoint.py` | Tool 3 — the only scoring path (INV-3) |
+| `tools/compare_viewpoints.py` | Tool 4 — runs finished viewpoints, reports the overlap, the chance baseline, and a warning when two viewpoints are identical |
 | `data/active.py` | **The dataset switch.** Tools import from here, never from a concrete dataset; changing datasets is changing its one import line |
 | `data/california_housing.py` | The reference dataset: `NAME`, `ENTITY`, `DATA`, `COLUMN_MEANINGS` (the four-name contract every dataset module honours). A leaf: imports nothing from the project, fetched once, shared by every tool |
-| `utils/save_run.py` | Writes `runs/*.json`. Outside both orchestrations so they cannot drift apart on schema |
+| `utils/save_run.py` | Writes `runs/*.json`. Outside every orchestration so they cannot drift apart on schema |
+| `utils/adk_run_saver.py` | Translates an ADK event stream into that schema. `save_adk_run` for one mind; `save_adk_multi_run` for two, which splits the trace per agent into `observers` |
 | `runs/` | One JSON per run, never overwritten |
 | `.env` | `GEMINI_KEY=...` — gitignored, at the **repo root** |
 
@@ -279,6 +284,35 @@ Five live runs to date (all in `runs/`, each with full trace):
 | 205603 | Gemini | regional misfit | — (exhausted) | killed by 20-req/day quota on aliased model; trace saved |
 | 205659 | Gemini | regional misfit | MedInc, Latitude, Longitude | **novel strategy**: put coordinates *into* the LOF space so "region" = the k-nearest spatial neighbours — a third operationalisation of context nobody scripted |
 
+**Two-observer runs (18 Aug 2026, `agent_adk_multiple`)**
+
+| Run | Cell | Outcome |
+|---|---|---|
+| 081042 | ②½ | both observers completed; both named themselves `data-quality-auditor`, so the comparison table had two identically-headed columns |
+| 081938 | ③ | both completed; clean |
+| 083909 | ③ | **DO NOT USE.** `observer_a` made five tool calls, scored `[AveRooms, AveBedrms, AveOccup]`, then emitted nothing — no spec. Its state key was empty, so `{spec_a?}` rendered blank. The comparer **invented a viewpoint for it**: labelled `observer_a` (the heading from its own instruction, there being no self-chosen name to copy) with exactly those three columns, then reported 456 shared entities and ten findings as agreement between two observers. One of them had never committed a viewpoint. The run file said `status: completed`. |
+
+Whether the model reconstructed those columns from priors — this dataset is in
+every LLM's training corpus, §10 — or guessed the canonical trio for that goal is
+immaterial: the finding was fabricated, and nothing in the artifact said so. Four
+fixes, all structural rather than prompt-level:
+
+1. **INV-10 rule 5** — `pin_viewpoints` replaces the tool argument with the specs
+   in state. Fabrication is now impossible, not merely forbidden.
+2. **`capture_spec`** — each observer writes its own spec to state from the event
+   stream, instead of relying on ADK's `output_key`, which only fires on
+   `is_final_response()` — the same signal that lost every spec on 12 Aug.
+3. **`status: "partial"`** — a run where some observers died no longer reports
+   `completed`.
+4. **`stop_reason`** — `Event` inherits `error_code` / `error_message` /
+   `finish_reason` from `LlmResponse`, so a silent stop is now recorded. Run
+   083909 could not be diagnosed at all; the answer was in the stream and was
+   being discarded.
+
+Standing lesson: **every instruction that says "never do X" is a bug waiting to
+happen if code could enforce X instead.** The comparer was told not to invent a
+viewpoint, in capitals, and invented one on the third run.
+
 **Findings worth carrying forward**
 
 1. **Derivation variance is real and interpretable.** Same goal, same prompt →
@@ -304,7 +338,7 @@ Five live runs to date (all in `runs/`, each with full trace):
 |---|---|---|
 | **P1. Baselines** (next) | FR-10: derived vs hand-built vs random viewpoints, same metrics. FR-11: N=5 repeats × {custom, LangChain} orchestrations × ≥2 goals from `runs/` | If derived ≈ random on every goal, the derivation claim dies here — better in week one than month eight |
 | **P2. Harden** | FR-12: splits, aggregate-only diagnostics, spec freezing/hashing; pin models; anonymised-column condition (the dataset is in every LLM's training corpus) | MVP relaxations closed; results reproducible end-to-end |
-| **P3. Multi-observer** | FR-13: cells ② (one agent, two goals), ②½ (two agents, one goal — redundancy control), ③ (two agents, two goals). Contradiction between observers becomes the object of study | Measured: does two-goals-one-mind contaminate? Do complementary observers beat redundant ones? |
+| **P3. Multi-observer** (built, unrun) | FR-13 cells ②/②½/③ all implemented. Isolation verified at the framework level: ADK branch filtering blocks sibling events AND blocks the comparer from reading either observer's trace. Remaining: run them live and compare | Measured: does two-goals-one-mind contaminate? Do complementary observers beat redundant ones? |
 | **P4. Cross-view (A2/A3)** | Swap-injected A2 ground truth; cross-view evidence exchange; explain-away (A3) adjudication — demote-only, applied by code | The thesis experiments |
 
 ---
@@ -348,8 +382,29 @@ Five live runs to date (all in `runs/`, each with full trace):
 - **INV-7** No secrets in code, prompts, logs, or commits. Keys come from the
   environment or gitignored `.env`.
 - **INV-8** Run-file schema: append fields only; never rename or repurpose existing
-  fields (`run_id`, `backend`, `goal`, `status`, `steps_taken`, `final_spec`, `trace`).
+  fields (`run_id`, `backend`, `goal`, `status`, `steps_taken`, `final_spec`, `trace`,
+  and since 18 Aug 2026 `cell` and `observers`). Two-observer runs populate
+  `final_specs` and `trace` as well as `observers`, so single-agent readers keep working.
 - **INV-9** Do not add SDK dependencies for backends; CLI and REST only (NFR-2).
+- **INV-10** **The observer isolation rules** (`agent_adk_multiple`). All four are
+  load-bearing for cell ③; breaking any one silently turns two observers back into
+  one mind, and the run files would not show it.
+  1. No observer's instruction may reference another observer's state key. ADK's
+     branch filter blocks sibling *events*, but session state is **not**
+     branch-scoped, so this one is on us.
+  2. The comparer never gets `run_lof_per_viewpoint`. An agent that can re-score
+     can hunt for columns that make a nicer story.
+  3. No edge from the comparer back to an observer. Sequential, never a loop — a
+     comparer that can request revision is Google's Review-and-Critique pattern,
+     and it reopens the tuning loop §6.5 forbids.
+  4. Both observers run the same pinned model with instructions differing **only**
+     in which goal key they read. Any other asymmetry confounds the experiment.
+  5. **The comparer never chooses what gets compared.** `pin_viewpoints`
+     (a `before_tool_callback`) replaces the `viewpoints` argument with the specs
+     actually in state, so the model cannot add, drop or edit one. Enforced in
+     code because the prompt rule *was not enough* — see the incident below.
+     This is INV-3 one level up: the LLM does not decide what gets measured,
+     only what the measurement means.
 
 **Verification commands**
 
@@ -357,7 +412,16 @@ Five live runs to date (all in `runs/`, each with full trace):
 python agent_custom_single/orchestrator_custom.py --dummy              # offline regression: must finalise, save a run
 python agent_custom_single/orchestrator_custom.py -dummy x             # must exit with the unrecognised-flag error
 python agent_custom_single/orchestrator_custom.py "any goal"           # live check, Gemini is the default (needs .env key)
+python -c "import agent_adk_multiple.agent"                            # two-observer wiring: imports and builds
+adk run agent_adk_multiple                                             # then: "Goal 1: ..." (cell 2.5) or two goals (cell 3)
 ```
+
+The two-observer wiring is covered by offline checks that need no LLM call:
+instruction templating (does `{goal_a}` resolve, do the literal JSON braces
+survive, is the *other* goal absent), the `{spec_a?}` degradation path when a
+observer dies, the identical-viewpoint warning, and per-agent trace attribution.
+Run them before any live run — the free-tier quota is 20 requests/day/model and a
+two-observer run spends three agents' worth.
 
 ### 9.3 Things that look like improvements but are regressions
 - Returning structured objects from tools "for cleanliness" → breaks INV-2 and the
