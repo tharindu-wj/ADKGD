@@ -1,1 +1,4 @@
 AD algos: https://pyod.readthedocs.io/en/latest/index.html
+
+
+Countries: https://github.com/ZhenfengLei/KGDatasets/tree/master/Countries/Countries_S1
