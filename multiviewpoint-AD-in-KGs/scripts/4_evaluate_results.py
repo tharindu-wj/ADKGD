@@ -1,6 +1,6 @@
 """Validate what an agent run found. Nothing is scored here.
 
-The agents chose, scripts/5_run_agents.py carried out their choice and wrote
+The agents chose, scripts/3_run_agentic_detector.py carried out their choice and wrote
 the ranking into the run file. This reads that ranking and checks it against
 the answer key -- so the numbers below describe what the agents ACTUALLY found,
 not what a scorer would produce if run again now.
@@ -16,9 +16,9 @@ Our_TopK%_RankingList.py, so the numbers sit beside its.
 This is the ONLY step that reads ground_truth.tsv. No model is loaded and no
 scorer is imported, so a run stays checkable long after its model is gone.
 
-    python scripts/6_evaluate.py                       the newest run
-    python scripts/6_evaluate.py --run runs/run_...json
-    python scripts/6_evaluate.py --k 1 2 3 4 5 10 --show 15
+    python scripts/4_evaluate_results.py                       the newest run
+    python scripts/4_evaluate_results.py --run runs/run_...json
+    python scripts/4_evaluate_results.py --k 1 2 3 4 5 10 --show 15
 """
 import json
 import sys
@@ -49,14 +49,26 @@ if path and not path.is_absolute():
 if path is None:
     found = sorted((ROOT / "runs").glob("run_*.json"))
     if not found:
-        raise SystemExit("no runs yet. Run scripts/5_run_agents.py first.")
+        raise SystemExit("no runs yet. Run scripts/3_run_agentic_detector.py first.")
     path = found[-1]
 
 run = json.loads(path.read_text(encoding="utf-8"))
 findings = run.get("findings") or []
 if not findings:
-    raise SystemExit(f"{path.name} has no findings -- it predates the change "
-                     "that made 5_run_agents.py record them. Rerun it.")
+    # Two different causes, and blaming the wrong one sends the reader looking
+    # for a bug in the file format when the agents simply never answered.
+    if "findings" not in run:
+        raise SystemExit(
+            f"{path.name} predates the change that made "
+            f"3_run_agentic_detector.py record findings. Rerun it.")
+    missing = [i for i, s in enumerate(run.get("specs") or [], 1) if not s]
+    raise SystemExit(
+        f"{path.name} recorded no findings: "
+        f"agent{'s' if len(missing) != 1 else ''} "
+        f"{', '.join(map(str, missing)) or '?'} never produced a usable spec, "
+        f"so there was nothing to carry out.\nThe agents do sometimes stop "
+        f"without answering; nothing retries them. Rerun "
+        f"3_run_agentic_detector.py, or evaluate an earlier run with --run.")
 goals = run.get("goals") or []
 
 # ---- the answer key -------------------------------------------------------
@@ -194,9 +206,11 @@ for finding, frame in zip(findings, frames):
         # percentage says nothing -- 63% is strong on a rare relation and
         # meaningless on one that is 60% of the triples to begin with.
         base = float(truth["relation"].isin(sem["relations"]).mean())
-        print(f"\n  declared frame: normal -- {sem['normal']}")
-        print(f"                  suspicious -- {sem['suspicious']}")
-        print(f"  in scope: {', '.join(sem['relations'])}")
+        print("\n  declared frame")
+        print(f"    in scope:   {', '.join(sem['relations'])}")
+        for field in ("entities", "normal", "suspicious", "impossible"):
+            if sem.get(field):
+                print(f"    {field + ':':<12}{sem[field]}")
         print(f"  semantic consistency: {in_scope}/{len(flagged)} flagged "
               f"triples use a declared relation ({got:.1%})")
         print(f"    vs {base:.1%} if the flags ignored the frame "

@@ -18,8 +18,22 @@ No `pip install -e`, no packaging. Scripts add the repo root to `sys.path`
 themselves, so they work from any working directory.
 
 ```
-python -m pip install pykeen pandas numpy
+python -m pip install pykeen pandas numpy google-adk
 ```
+
+`google-adk` is only needed from step 3 on — steps 1 and 2 and every `check_*`
+script run without it. It brings `google-genai` with it, which is what actually
+talks to Gemini.
+
+The agents also need a key. Put it in a `.env` beside this README:
+
+```
+GOOGLE_API_KEY=...
+```
+
+The name matters: `google-genai` reads `GOOGLE_API_KEY` or `GEMINI_API_KEY` and
+nothing else, so a `.env` using any other spelling is loaded and then silently
+ignored, and `adk web` comes up with no key.
 
 On this machine:
 
@@ -36,14 +50,23 @@ Linux run is not throttled to one thread.
 
 ## Run order
 
+A script's name says what it is for. **Numbered scripts are the pipeline, and
+the number is the order.** Unnumbered `check_*` scripts are test rigs: they
+exercise one tool or one scorer directly, with no agent involved, and nothing
+in the pipeline depends on them.
+
 ```
-python scripts/1_contaminate.py            build the fixture
-python scripts/2_train.py                  train an embedding model on it
-python scripts/3_detect_neighbourhood.py   test one scorer
-python scripts/3_detect_plausibility.py    test the other
+python scripts/1_inject_anomalies.py           build the fixture + the answer key
+python scripts/2_train_plausibility_scorer.py  the model that scorer reads
+python scripts/3_run_agentic_detector.py       run the agents, record what they found
+python scripts/4_evaluate_results.py           score that run against the answer key
+
+python scripts/check_profiler.py               read every profiler tool's output
+python scripts/check_scorer_neighbourhood.py   one scorer, no model needed
+python scripts/check_scorer_plausibility.py    the other, needs a trained model
 ```
 
-### 1. Contaminate
+### 1. Inject anomalies
 
 Reads the clean graph and injects known errors, so there is something to detect
 and an answer key to score against.
@@ -62,8 +85,8 @@ hard they are:
 | `type_valid` | tail from the SAME pool, wrong value | `honduras locatedin western_europe` |
 
 ```
-python scripts/1_contaminate.py
-python scripts/1_contaminate.py --ratio 0.15 --invalid-frac 0.3 --seed 7
+python scripts/1_inject_anomalies.py
+python scripts/1_inject_anomalies.py --ratio 0.15 --invalid-frac 0.3 --seed 7
 ```
 
 Three guards print every run and **must all read 0**:
@@ -75,14 +98,14 @@ GUARDS  fake-but-actually-true 0   self-loops 0   duplicates 0
 The first is the one that quietly ruins results — labelling a true fact as an
 error means punishing a detector for being right.
 
-### 2. Train
+### 2. Train the plausibility scorer's model
 
 Trains a KGE model on the **contaminated** graph — errors included, as
 positives.
 
 ```
-python scripts/2_train.py
-python scripts/2_train.py --model ComplEx --epochs 2000
+python scripts/2_train_plausibility_scorer.py
+python scripts/2_train_plausibility_scorer.py --model ComplEx --epochs 2000
 ```
 
 Writes `models/countries/distmult/`. One folder per architecture, so several
@@ -104,15 +127,15 @@ the model has learned a near-identity component for a symmetric relation.
 Harmless when scoring existing triples, but it is why link-prediction metrics
 from this model should not be quoted.
 
-### 3. Test a scorer
+### Checking one scorer by hand
 
 One script per scorer, so each can be read and run on its own. Both flag the
 worst 10% and score that against the answer key.
 
 ```
-python scripts/3_detect_neighbourhood.py            no model needed, runs in a second
-python scripts/3_detect_plausibility.py             needs models/countries/distmult/
-python scripts/3_detect_plausibility.py --budget 0.05
+python scripts/check_scorer_neighbourhood.py            no model needed, runs in a second
+python scripts/check_scorer_plausibility.py             needs models/countries/distmult/
+python scripts/check_scorer_plausibility.py --budget 0.05
 ```
 
 | scorer | evidence | caught of 115 | precision |
@@ -143,19 +166,30 @@ data/<name>/        dataset files only — sources and generated, no code
 loaders/            where files are and how to read them
   active.py           the dataset switch: one import line
   countries.py        paths and names
-scripts/            the batch pipeline, run in order
-tools/              what an agent is allowed to call         (empty)
+  graph.py            read a TSV of triples
+scripts/            numbered = the pipeline, in order; check_* = test rigs
+tools/              what an agent is allowed to call
   scorers/            neighbourhood.py, plausibility.py — NOT registered as tools
-agents/             root and viewpoint agents                (empty)
-kb/                 domain knowledge for the agents          (empty)
+agents/             the ADK tree, one file per job
+  __init__.py         puts the repo root on sys.path — nothing else
+  config.py           model, budget, state keys, tool sets
+  parsing.py          getting JSON back out of the model's text
+  root_agent.py       the goal-writing agent and its prompt
+  viewpoint_agents.py the auditor factory, its prompt, and the gate
+  agent.py            assembles the tree — what ADK imports
 utils/              detect.py (flagging), evaluate.py (the only label reader)
 models/             generated, gitignored
 ```
 
+`agents/agent.py` is deliberately thin. ADK looks up `agents.agent` and reads
+`root_agent` from it, so it is the front door — and a front door should show
+the shape of the house, not its furniture. The two long prompts live beside the
+agents that use them.
+
 Imports run one way only:
 
 ```
-scripts/  ->  loaders/, tools/scorers/, utils/
+scripts/  ->  agents/, loaders/, tools/scorers/, utils/
 agents/   ->  tools/  ->  tools/scorers/
 ```
 
@@ -180,8 +214,13 @@ answer key has not detected anything. Once there is code in `tools/` and
 `agents/`, this is checkable rather than promised:
 
 ```
-grep -rn "ground_truth\|evaluate" tools/ agents/     # must return nothing
+grep -rnI --exclude-dir=.adk "ground_truth" tools/ agents/   # must return nothing
 ```
+
+`-I` and `--exclude-dir=.adk` are not cosmetic. `adk web` writes a binary
+session database under `agents/.adk/`, and grep reports a match inside it —
+which turns the one check this project relies on into a false positive that a
+reader learns to ignore. The directory is gitignored for the same reason.
 
 ---
 
@@ -189,12 +228,17 @@ grep -rn "ground_truth\|evaluate" tools/ agents/     # must return nothing
 
 | | |
 |---|---|
-| `1_contaminate.py` | done |
-| `2_train.py` | done |
+| `1_inject_anomalies.py`, `2_train_plausibility_scorer.py` | done |
 | `neighbourhood` + `plausibility` scorers | done |
-| `3_detect_*` scripts | done |
-| agent-facing tools, `run_scorer` | next |
-| root and viewpoint agents | after that |
+| `check_*` test rigs | done |
+| agent-facing tools, `run_scorer` | done |
+| root and viewpoint agents, on ADK | done |
+| `declare_semantics` + the gate on `run_scorer` | done |
+| `3_run_agentic_detector.py`, `4_evaluate_results.py` | done |
+| a harness that loops seeds | not built — `--seed` is a flag nothing iterates |
+| reviewer validation | not built — still the gate on everything else |
 
-Everything so far is deterministic: same `--seed`, same output bytes, verified
-across separate processes.
+The pipeline is deterministic apart from the agents: same `--seed`, same output
+bytes, verified across separate processes. The agents are not — two runs of
+`3_run_agentic_detector.py` on one graph can pick different scorers, which is a result to
+measure rather than a bug to fix, and `PLAN.md` tracks what has been seen.

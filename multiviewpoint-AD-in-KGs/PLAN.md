@@ -10,10 +10,11 @@ Diagrams — three views of the same system:
 | pipeline | the scripts, in the order they run | <https://claude.ai/code/artifact/bc114933-2731-48db-b52b-4effc7b474c2> |
 | orchestration | one `runner.run()`, at runtime | <https://claude.ai/code/artifact/edc90ce5-c1db-45e6-9843-0252be2d7b74> |
 
-The architecture sketch is the only one that draws the RAG store and the private
-semantics — neither is built. The other two draw the code as it stands.
+The architecture diagram was redrawn against the code and now shows only what
+exists. The pipeline and orchestration diagrams predate `declare_semantics` and
+the gate, so neither shows them yet.
 
-1,519 lines of Python across 21 files.
+1,775 lines of Python across 27 files.
 
 ---
 
@@ -21,20 +22,20 @@ semantics — neither is built. The other two draw the code as it stands.
 
 | box | state | where |
 |---|---|---|
-| `contaminate` (seed 1 … 20) | **done** | `scripts/1_contaminate.py` |
+| `contaminate` (seed 1 … 20) | **done** | `scripts/1_inject_anomalies.py` |
 | `contaminated graph` | **done** | `data/countries/` |
 | `ground truth`, sealed | **done** | read by the evaluator alone |
 | profiler tools — `list_relations`, `describe_relation`, `sample` | **done** | `tools/`, `utils/profile.py` |
-| Root Agent — writes both goals | **done** | `agents/agent.py` |
-| Viewpoint Agent 1 / 2 | **done** | ADK `ParallelAgent`, branch-isolated |
+| Root Agent — writes both goals | **done** | `agents/root_agent.py` |
+| Viewpoint Agent 1 / 2 | **done** | `agents/viewpoint_agents.py`, ADK `ParallelAgent` |
 | `run_scorer` — the tool an agent calls | **done** | `tools/run_scorer.py` |
 | scorer — `plausibility` | **done** | `tools/scorers/` |
 | scorer — `neighbourhood` | **done** | `tools/scorers/` |
 | flags A / flags B | **done** | saved as `findings` in the run file |
-| overlap + union | **done** | union section in `6_evaluate.py` |
-| `evaluator` | **done** | `scripts/6_evaluate.py` |
+| overlap + union | **done** | union section in `4_evaluate_results.py` |
+| `evaluator` | **done** | `scripts/4_evaluate_results.py` |
 | label firewall | **done, enforced** | the grep passes |
-| **semantics 1 / 2**, private and fenced | **not built** | deferred |
+| **semantics 1 / 2**, private and fenced | **done** | `tools/declare_semantics.py` → `sem_a` / `sem_b` |
 | **domain knowledge (RAG)** | **not built** | deferred: Countries' entity names are already meaningful |
 | **seeds 1 … 20 harness** | **not built** | `--seed` works; nothing loops it |
 
@@ -44,39 +45,46 @@ semantics — neither is built. The other two draw the code as it stands.
 |---|---|
 | profile → root | **done** — the root queries the profiler, then writes goals |
 | root → two goals | **done** |
-| goal → perspective | **partly** — the agent reasons, but the perspective is not recorded separately |
-| perspective → viewpoint | **done** — the spec is `{scorer, budget, why}` |
+| goal → perspective | **done** — `declare_semantics` records it, and the gate makes it precede scoring |
+| perspective → viewpoint | **done** — the spec is `{scorer, budget, why, summary}` |
 
 ## The pipeline as it runs today
 
 ```
-1_contaminate.py   ->  contaminated_kg.tsv + ground_truth.tsv
-2_train.py         ->  models/countries/distmult/
-5_run_agents.py    ->  runs/run_<stamp>_adk.json   goals, specs, findings, trace
-6_evaluate.py      ->  top-K% and the worst triples, per agent and combined
+1_inject_anomalies.py           ->  contaminated_kg.tsv + ground_truth.tsv
+2_train_plausibility_scorer.py  ->  models/countries/distmult/
+3_run_agentic_detector.py       ->  runs/run_<stamp>_adk.json
+                                    goals, semantics, specs, findings, trace
+4_evaluate_results.py           ->  top-K%, worst triples, semantic consistency
 ```
 
-`3_detect_*.py` and `4_check_profiler.py` are test rigs, not pipeline steps —
-they exercise one scorer or one tool directly, without an agent.
+A script's name says what it is for: **numbered scripts are the pipeline and the
+number is the order**; unnumbered `check_*` scripts are test rigs that exercise
+one scorer or one tool directly, without an agent, and nothing depends on them.
 
 ---
 
 ## What the runs show so far
 
-The two runs now in `runs/`, same prompts, same graph:
+Eight runs are now in `runs/`, all on the same graph with the same prompts.
 
-| | run 104432 | run 105412 |
+**Divergence is not reliable, in either direction.** Some runs give two
+different scorers, some give the same one twice. Nothing in the design forces
+either outcome, and `SPEC.md` says that should be measured rather than forced —
+which makes it a result, not a defect, and the first thing a seed harness would
+turn into a rate instead of an anecdote.
+
+**An agent often fails to answer at all.** Counted across every run on disk:
+
+| artifact | how it is captured | landed |
 |---|---|---|
-| agent 1 | plausibility @ 10% | plausibility @ 20% |
-| agent 2 | neighbourhood @ 20% | neighbourhood @ 10% |
+| the frame | a **tool call** (`declare_semantics`) | **12 / 12** |
+| the spec | scraped from the agent's **final message** | **7 / 12** |
 
-**Divergence is not reliable, in either direction.** These two both diverged,
-and the budgets swapped between them. An earlier run — no longer in `runs/` —
-gave the same scorer twice. So across the three observed: two split, one did
-not, and nothing in the design forces either outcome. `SPEC.md` §2.5 says that
-should be measured rather than forced, which makes this a result and not a
-defect — and it is the first thing a seed harness would turn into a rate
-instead of an anecdote.
+Two runs produced no usable spec from either agent — they declared a frame, ran
+a scorer, then stopped without answering, and the run recorded nothing to
+evaluate. Nothing retries. Every artifact written by a tool call has landed;
+the one scraped from free text is the only one that goes missing.
 
 **The agents pick deep budgets.** 10-20% of the graph here, against the 1-5%
 ADKGD reports at, and earlier runs went to 30%. High recall, poor precision: at
@@ -98,17 +106,24 @@ containment with `plausibility` and adjacency with `neighbourhood`; §2.4 of
 | 1 | seed harness | Loop contamination → train → agents → evaluate over N seeds and report a distribution. Turns "the agents diverged once" into a rate. | ~90 |
 | 2 | budget guidance in the prompt | Tell the agent a budget is review cost. Cheapest fix for the biggest gap between agent and ADKGD numbers. | ~10 |
 | 3 | more scorers (TRIC family) | Two scorers is a menu a `for` loop can exhaust; "the agent chose well" stays indistinguishable from luck until it is bigger. | ~80 each |
-| 4 | private semantics stores | Only matters once an agent should remember its own reasoning across steps. | ~60 |
-| 5 | domain KB | Only matters on a graph whose entity names are opaque. Not Countries. | ~60 |
+| 4 | domain KB | Only matters on a graph whose entity names are opaque. Not Countries. | ~60 |
 
 Steps 1 and 2 are cheap and would sharpen everything already built.
 
-Nothing on this list has been built yet. Two small things landed beside it:
+Nothing on this list has been built yet. What has landed beside it:
 
+- **The private semantics store and its gate.** `declare_semantics` writes a
+  frame to `sem_a` / `sem_b`, and a `before_tool_callback` refuses `run_scorer`
+  to any agent that has not written one — so a frame is a commitment made before
+  the evidence, not a description of it. This was item 4 on the old list.
+- **A label-free metric.** Because a frame names its relations, the evaluator
+  can report what share of an agent's flags actually used them, against the base
+  rate. One run has already scored **&minus;21.8 points** — an agent flagging the
+  relation it declared it was *not* auditing.
 - `.env` now says `GOOGLE_API_KEY`, not `GEMINI_KEY`. ADK loads `.env` fine, but
   the `google-genai` client underneath only reads `GOOGLE_API_KEY` or
   `GEMINI_API_KEY` — the invented name was silently ignored, so `adk web` came
-  up without a key. `adk web` works now; `5_run_agents.py` is unaffected, its
+  up without a key. `adk web` works now; `3_run_agentic_detector.py` is unaffected, its
   `find_key()` already accepted all three spellings.
 - Each viewpoint's answer now carries a `summary` field, so what the agent found
   is readable in the `adk web` chat pane rather than only in the events trace.

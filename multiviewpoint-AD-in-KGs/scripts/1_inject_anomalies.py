@@ -9,8 +9,8 @@ type_valid    tail drawn from the SAME pool, wrong value  (belgium locatedin afr
 
 Named for how they are BUILT, not for how hard they are.
 
-    python scripts/1_contaminate.py
-    python scripts/1_contaminate.py --ratio 0.15 --invalid-frac 0.3 --seed 7
+    python scripts/1_inject_anomalies.py
+    python scripts/1_inject_anomalies.py --ratio 0.15 --invalid-frac 0.3 --seed 7
 """
 import sys
 from pathlib import Path

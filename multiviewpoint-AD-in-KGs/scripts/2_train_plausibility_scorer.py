@@ -9,8 +9,8 @@ clean data and inject afterwards and you measure memorisation instead -- every
 real triple was seen, every fake was not, and a detector then separates seen
 from unseen rather than true from false.
 
-    python scripts/2_train.py
-    python scripts/2_train.py --model ComplEx --epochs 2000
+    python scripts/2_train_plausibility_scorer.py
+    python scripts/2_train_plausibility_scorer.py --model ComplEx --epochs 2000
 """
 import os
 import sys
@@ -45,7 +45,7 @@ ap.add_argument("--device", default="auto", help="auto, cpu, or cuda")
 args = ap.parse_args()
 
 if not DATASET.KG.exists():
-    raise SystemExit(f"missing {DATASET.KG}. Run scripts/1_contaminate.py first.")
+    raise SystemExit(f"missing {DATASET.KG}. Run scripts/1_inject_anomalies.py first.")
 
 device = args.device
 if device == "auto":

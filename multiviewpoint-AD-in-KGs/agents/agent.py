@@ -15,14 +15,23 @@ names the other's state key.
     python scripts/3_run_agentic_detector.py
 
 WHERE THINGS LIVE
-    agents/config.py      the model, the budget, the state keys, the tool sets
-    agents/parsing.py     pulling a structured answer out of the model's text
-    agents/root.py        the goal-writing agent and its prompt
-    agents/viewpoint.py   the auditor factory, its prompt, and the gate
+    agents/config.py            the model, budget, state keys, tool sets
+    agents/parsing.py           pulling a structured answer out of model text
+    agents/root_agent.py        the goal-writing agent and its prompt
+    agents/viewpoint_agents.py  the auditor factory, its prompt, and the gate
 
 This module stays thin on purpose: ADK imports `agents.agent` and reads
 `root_agent`, so this is the front door, and a front door should show the shape
 of the house rather than its furniture.
+
+ONE NAME TO BE CAREFUL WITH. `root_agent` means two different things here: the
+module `agents/root_agent.py`, and the SequentialAgent this file exports under
+that name. They do not collide, but only because agents/__init__.py imports no
+submodules -- so when ADK checks `hasattr(agents, "root_agent")` on the package
+first, it finds nothing and moves on to this module, which is what it wants.
+Import a submodule from __init__.py and ADK would find the MODULE under that
+attribute instead. It recovers (it type-checks and falls through), but it logs a
+warning on every start, so leave __init__.py importing nothing.
 """
 from google.adk.agents.parallel_agent import ParallelAgent
 from google.adk.agents.sequential_agent import SequentialAgent
@@ -30,8 +39,8 @@ from google.adk.agents.sequential_agent import SequentialAgent
 from agents.config import (BUDGET, GATED_TOOLS, GOAL_KEYS, MODEL, MODEL_NAME,
                            PROFILER_TOOLS, SEM_KEYS, SPEC_KEYS,
                            VIEWPOINT_NAMES, VIEWPOINT_TOOLS)
-from agents.root import root
-from agents.viewpoint import make_viewpoint
+from agents.root_agent import root
+from agents.viewpoint_agents import make_viewpoint
 
 viewpoints = ParallelAgent(
     name="viewpoints",

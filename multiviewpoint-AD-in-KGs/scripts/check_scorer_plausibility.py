@@ -1,7 +1,7 @@
 """Test the plausibility scorer: rank every triple, flag the worst 10%.
 
-    python scripts/3_detect_plausibility.py
-    python scripts/3_detect_plausibility.py --budget 0.05
+    python scripts/check_scorer_plausibility.py
+    python scripts/check_scorer_plausibility.py --budget 0.05
 """
 import sys
 from pathlib import Path
@@ -28,9 +28,9 @@ args = ap.parse_args()
 MODEL = DATASET.MODELS / args.model
 for p in (DATASET.KG, DATASET.TRUTH):
     if not p.exists():
-        raise SystemExit(f"missing {p}. Run scripts/1_contaminate.py first.")
+        raise SystemExit(f"missing {p}. Run scripts/1_inject_anomalies.py first.")
 if not (MODEL / "trained_model.pkl").exists():
-    raise SystemExit(f"missing {MODEL}. Run scripts/2_train.py first.")
+    raise SystemExit(f"missing {MODEL}. Run scripts/2_train_plausibility_scorer.py first.")
 
 device = args.device
 if device == "auto":

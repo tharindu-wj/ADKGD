@@ -3,7 +3,7 @@
 These strings are what an agent sees and reasons from. If they are confusing
 to you they will be confusing to it, and no prompt will fix that.
 
-    python scripts/4_check_profiler.py
+    python scripts/check_profiler.py
 """
 import sys
 from pathlib import Path
@@ -24,7 +24,7 @@ def banner(text):
 
 
 if not DATASET.KG.exists():
-    raise SystemExit(f"missing {DATASET.KG}. Run scripts/1_contaminate.py first.")
+    raise SystemExit(f"missing {DATASET.KG}. Run scripts/1_inject_anomalies.py first.")
 
 print(f"dataset: {DATASET.NAME}   file: {DATASET.KG.name}")
 print(f"registered tools: {', '.join(TOOLS)}")

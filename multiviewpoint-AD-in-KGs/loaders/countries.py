@@ -9,7 +9,7 @@ NAME = "countries"
 #: the clean graph, checked in so a run never depends on a download
 SOURCE = ("train.txt", "valid.txt", "test.txt")
 
-#: written by scripts/1_contaminate.py
+#: written by scripts/1_inject_anomalies.py
 KG = DIR / "contaminated_kg.tsv"
 TRUTH = DIR / "ground_truth.tsv"
 

@@ -3,3 +3,7 @@ models/
 runs/
 kb/store/
 __pycache__/
+
+# ADK writes a session DB here on every `adk web` / `adk run`.
+# It is a binary, it churns, and it makes the firewall grep report a match.
+.adk/

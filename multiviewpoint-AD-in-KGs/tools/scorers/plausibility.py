@@ -3,7 +3,7 @@
 A fact that contradicts the rest of the graph cannot be fitted as well as one
 the graph supports, even though both were trained on as positives.
 
-Evidence: a KGE model, trained by scripts/2_train.py on this same graph.
+Evidence: a KGE model, trained by scripts/2_train_plausibility_scorer.py on this same graph.
 """
 from pathlib import Path
 
@@ -40,8 +40,8 @@ def score(triples, model_dir=None, device="cpu", kg_path=None, **params):
 def _check_model_matches_graph(model_dir, kg_triples):
     """Refuse to score a graph the model was not trained on.
 
-    Nothing else binds models/ to data/. Re-run 1_contaminate.py without
-    re-running 2_train.py and the old model scores a graph whose anomalies it
+    Nothing else binds models/ to data/. Re-run 1_inject_anomalies.py without
+    re-running 2_train_plausibility_scorer.py and the old model scores a graph whose anomalies it
     never saw -- the memorisation setup the whole protocol exists to avoid.
     Measured when it happened by accident: precision 90.6%, recall 100.0%,
     with no warning. It fails as a plausible number, not an obvious one.
@@ -51,7 +51,7 @@ def _check_model_matches_graph(model_dir, kg_triples):
     saved = model_dir / "training_triples"
     if not saved.exists():
         raise SystemExit(f"{saved} is missing -- cannot verify the model was "
-                         "trained on this graph. Re-run scripts/2_train.py.")
+                         "trained on this graph. Re-run scripts/2_train_plausibility_scorer.py.")
     tf = TriplesFactory.from_path_binary(str(saved))
     i2e = {v: k for k, v in tf.entity_to_id.items()}
     i2r = {v: k for k, v in tf.relation_to_id.items()}
@@ -63,4 +63,4 @@ def _check_model_matches_graph(model_dir, kg_triples):
         raise SystemExit(
             f"STALE MODEL: {model_dir} was trained on a different graph "
             f"({missing} triples the model never saw, {extra} it saw that are "
-            "not in the data).\nRe-run scripts/2_train.py before detecting.")
+            "not in the data).\nRe-run scripts/2_train_plausibility_scorer.py before detecting.")

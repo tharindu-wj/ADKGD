@@ -5,7 +5,7 @@ after every score already exists.
 """
 import pandas as pd
 
-#: the anomaly classes, named for how 1_contaminate.py builds them
+#: the anomaly classes, named for how 1_inject_anomalies.py builds them
 KINDS = ["type_invalid", "type_valid"]
 
 

@@ -1,6 +1,6 @@
 """Run the ADK agent tree once and save the run.
 
-    python scripts/5_run_agents.py
+    python scripts/3_run_agentic_detector.py
     adk run agents                 the same tree, interactively
 
 Needs a Gemini key: GEMINI_KEY / GOOGLE_API_KEY in the environment, or a .env
@@ -32,7 +32,7 @@ ap.add_argument("--quiet", action="store_true")
 args = ap.parse_args()
 
 if not DATASET.KG.exists():
-    raise SystemExit(f"missing {DATASET.KG}. Run scripts/1_contaminate.py first.")
+    raise SystemExit(f"missing {DATASET.KG}. Run scripts/1_inject_anomalies.py first.")
 
 
 def find_key():
@@ -120,12 +120,13 @@ for i, goal in enumerate(goals, 1):
     print(f"  goal {i}: {goal or 'MISSING'}")
 print()
 for i, sem in enumerate(semantics, 1):
-    if sem:
-        print(f"  frame {i}: normal -- {sem['normal']}")
-        print(f"           suspicious -- {sem['suspicious']}")
-        print(f"           in scope: {', '.join(sem['relations'])}")
-    else:
+    if not sem:
         print(f"  frame {i}: MISSING")
+        continue
+    print(f"  frame {i}: in scope -- {', '.join(sem['relations'])}")
+    for field in ("entities", "normal", "suspicious", "impossible"):
+        if sem.get(field):
+            print(f"           {field + ':':<12}{sem[field]}")
 print()
 for i, spec in enumerate(specs, 1):
     print(f"  spec {i}: {spec or 'MISSING'}")
@@ -152,7 +153,7 @@ for i, spec in enumerate(specs, 1):
     if mod.NEEDS_MODEL:
         model_dir = DATASET.MODELS / "distmult"
         if not (model_dir / "trained_model.pkl").exists():
-            raise SystemExit(f"missing {model_dir}. Run scripts/2_train.py first.")
+            raise SystemExit(f"missing {model_dir}. Run scripts/2_train_plausibility_scorer.py first.")
         values = mod.score(triples, model_dir=model_dir, kg_path=DATASET.KG)
     else:
         values = mod.score(triples)

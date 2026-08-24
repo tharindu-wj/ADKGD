@@ -1,7 +1,7 @@
 """Test the neighbourhood scorer: rank every triple, flag the worst 10%.
 
-    python scripts/3_detect_neighbourhood.py
-    python scripts/3_detect_neighbourhood.py --budget 0.05
+    python scripts/check_scorer_neighbourhood.py
+    python scripts/check_scorer_neighbourhood.py --budget 0.05
 """
 import sys
 from pathlib import Path
@@ -25,7 +25,7 @@ args = ap.parse_args()
 
 for p in (DATASET.KG, DATASET.TRUTH):
     if not p.exists():
-        raise SystemExit(f"missing {p}. Run scripts/1_contaminate.py first.")
+        raise SystemExit(f"missing {p}. Run scripts/1_inject_anomalies.py first.")
 
 triples = graph.load_triples(DATASET.KG)
 values = scorer.score(triples)

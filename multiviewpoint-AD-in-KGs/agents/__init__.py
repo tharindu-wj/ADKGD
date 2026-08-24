@@ -10,7 +10,7 @@ stays the front door. Everything else here is split out of it by job:
     config.py      the model, the budget, the state keys, the tool sets
     parsing.py     getting a structured answer back out of the model's text
     root.py        the agent that writes the two goals
-    viewpoint.py   the factory that builds the two auditors
+    viewpoint_agents.py  the factory that builds the two auditors
     agent.py       assembles those into the tree ADK loads
 
 THIS FILE EXISTS FOR ONE REASON. The submodules import `loaders` and `tools`,
