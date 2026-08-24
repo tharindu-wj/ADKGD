@@ -13,10 +13,12 @@ Adding a tool:
 """
 from tools.describe_relation import describe_relation
 from tools.list_relations import list_relations
+from tools.run_scorer import run_scorer
 from tools.sample import sample
 
 TOOLS = {
     "list_relations": list_relations,
     "describe_relation": describe_relation,
     "sample": sample,
+    "run_scorer": run_scorer,
 }
