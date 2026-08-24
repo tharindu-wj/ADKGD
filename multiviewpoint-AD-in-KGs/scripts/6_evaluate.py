@@ -179,3 +179,25 @@ for finding, frame in zip(findings, frames):
     goal = goals[i - 1] if len(goals) >= i else ""
     section(f"AGENT {i}", f"{finding['scorer']} -- {goal}", frame,
             own_pct=finding["budget"] * 100)
+
+    # Semantic consistency: of what this agent flagged, how much involves the
+    # relations it declared it was auditing? Reads the frame and the ranking,
+    # never a label -- so it says whether the agent did what it SAID, which is
+    # a different question from whether what it said was right.
+    sem = finding.get("semantics")
+    if sem:
+        flagged = frame.head(finding["flagged"])
+        in_scope = int(flagged["relation"].isin(sem["relations"]).sum())
+        got = in_scope / len(flagged)
+        # Against what a scorer that ignored the frame entirely would give:
+        # the declared relations' share of the graph. Without this the raw
+        # percentage says nothing -- 63% is strong on a rare relation and
+        # meaningless on one that is 60% of the triples to begin with.
+        base = float(truth["relation"].isin(sem["relations"]).mean())
+        print(f"\n  declared frame: normal -- {sem['normal']}")
+        print(f"                  suspicious -- {sem['suspicious']}")
+        print(f"  in scope: {', '.join(sem['relations'])}")
+        print(f"  semantic consistency: {in_scope}/{len(flagged)} flagged "
+              f"triples use a declared relation ({got:.1%})")
+        print(f"    vs {base:.1%} if the flags ignored the frame "
+              f"-- {100 * (got - base):+.1f} points. No labels involved.")

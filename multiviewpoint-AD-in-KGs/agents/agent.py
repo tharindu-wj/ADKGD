@@ -39,6 +39,7 @@ from google.adk.agents.sequential_agent import SequentialAgent  # noqa: E402
 from google.adk.models.google_llm import Gemini  # noqa: E402
 
 from loaders.active import DATASET  # noqa: E402
+from tools.declare_semantics import declare_semantics, store_key  # noqa: E402
 from tools.describe_relation import describe_relation  # noqa: E402
 from tools.list_relations import list_relations  # noqa: E402
 from tools.run_scorer import run_scorer  # noqa: E402
@@ -53,9 +54,15 @@ BUDGET = 8
 
 GOAL_KEYS = ("goal_a", "goal_b")
 SPEC_KEYS = ("spec_a", "spec_b")
+SEM_KEYS = ("sem_a", "sem_b")
 VIEWPOINT_NAMES = ("viewpoint_a", "viewpoint_b")
 
 PROFILER_TOOLS = [list_relations, describe_relation, sample]
+
+#: Tools that produce a SCORE. These wait behind declare_semantics; everything
+#: else -- the profiler now, a knowledge base later -- stays open, because a
+#: frame is derived from facts and cannot be derived from its own answer.
+GATED_TOOLS = {"run_scorer"}
 
 
 # --------------------------------------------------------------------------- #
@@ -176,10 +183,17 @@ wrong.
 YOUR GOAL:
 GOAL_SLOT
 
-Work out how to look for it, using your tools. You may run a scorer, read the
-triples it flagged, and run a different one if you are not convinced. Judge
-those triples yourself, from what you know about the world -- nothing will tell
-you whether a flag was right, and no answer key exists for you to consult.
+FIRST, before you may score anything, call declare_semantics to say what your
+goal treats as NORMAL, what a violation of that looks like, and which relations
+you are talking about. Look at the graph with the profiler first if that helps
+you decide -- but decide before you score. A scorer will refuse you until you
+have, and that is deliberate: a frame chosen after seeing scores is only a
+description of the scores.
+
+THEN work out how to look for it. You may run a scorer, read the triples it
+flagged, and run a different one if you are not convinced. Judge those triples
+against the frame you declared -- nothing will tell you whether a flag was
+right, and no answer key exists for you to consult.
 
 Scorers available to run_scorer:
   plausibility     what a trained embedding model makes of the triple
@@ -192,8 +206,30 @@ Use at most {BUDGET - 2} tool calls, then answer.
 
 Answer with JSON only:
   {{"scorer": "<name>", "budget": <fraction between 0 and 0.5>,
-    "why": "<one or two sentences>"}}
+    "why": "<one or two sentences>",
+    "summary": "<what run_scorer told you: how many flagged, the worst triple>"}}
 """
+
+
+def require_semantics(tool, args, tool_context):
+    """before_tool_callback: no scoring until this agent has declared a frame.
+
+    Returning a dict makes ADK skip the tool and hand the dict back as its
+    response, so the agent reads this as an ordinary tool error and can fix
+    itself. Returning None lets the call through.
+
+    Enforced here rather than asked for in the prompt: a prompt that says
+    "declare first" is a suggestion, and the ordering is the only thing making
+    the frame a commitment instead of a rationalisation.
+    """
+    if tool.name not in GATED_TOOLS:
+        return None                       # facts are never gated, only scores
+    if tool_context.state.get(store_key(tool_context.agent_name)):
+        return None
+    return {"result": (
+        "ERROR: declare_semantics first. State what NORMAL means under your "
+        "goal, what a violation looks like, and which relations you are "
+        "talking about. Only then will a scorer answer you.")}
 
 
 def make_capture_spec(spec_key: str):
@@ -224,7 +260,10 @@ def make_viewpoint(name: str, goal_key: str, spec_key: str) -> Agent:
         description=("Derives one viewpoint -- which scorer, at what budget -- "
                      "from a single goal, and reports nothing else."),
         instruction=VIEWPOINT_INSTRUCTION.replace("GOAL_SLOT", "{" + goal_key + "}"),
-        tools=PROFILER_TOOLS + [run_scorer],
+        tools=PROFILER_TOOLS + [declare_semantics, run_scorer],
+        # The gate reads the CALLER's name, so one callback serves both twins
+        # and neither can satisfy the other's precondition.
+        before_tool_callback=require_semantics,
         # Strips PREVIOUS turns, so a second question in one `adk run` session
         # cannot leak an earlier run's specs into this one.
         include_contents="none",

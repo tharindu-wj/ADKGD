@@ -61,7 +61,7 @@ from google.adk.runners import Runner          # noqa: E402
 from google.adk.sessions import InMemorySessionService  # noqa: E402
 from google.genai import types                 # noqa: E402
 
-from agents.agent import GOAL_KEYS, SPEC_KEYS, root_agent  # noqa: E402
+from agents.agent import GOAL_KEYS, SEM_KEYS, SPEC_KEYS, root_agent  # noqa: E402
 
 APP, USER, SESSION = "kg_audit", "local", "run"
 
@@ -112,11 +112,20 @@ def parsed(key):
 
 
 goals = [state.get(k) or "" for k in GOAL_KEYS]
+semantics = [parsed(k) for k in SEM_KEYS]
 specs = [parsed(k) for k in SPEC_KEYS]
 
 print("\n" + "=" * 68)
 for i, goal in enumerate(goals, 1):
     print(f"  goal {i}: {goal or 'MISSING'}")
+print()
+for i, sem in enumerate(semantics, 1):
+    if sem:
+        print(f"  frame {i}: normal -- {sem['normal']}")
+        print(f"           suspicious -- {sem['suspicious']}")
+        print(f"           in scope: {', '.join(sem['relations'])}")
+    else:
+        print(f"  frame {i}: MISSING")
 print()
 for i, spec in enumerate(specs, 1):
     print(f"  spec {i}: {spec or 'MISSING'}")
@@ -158,6 +167,10 @@ for i, spec in enumerate(specs, 1):
         "scorer": spec["scorer"],
         "budget": float(spec["budget"]),
         "flagged": n_flag,
+        # The frame this agent committed to BEFORE it was allowed to score.
+        # Kept beside the ranking so the evaluator can ask whether the flags
+        # match what the agent said it was looking for -- no labels needed.
+        "semantics": semantics[i - 1],
         "ranked": [[*triples[j], round(float(v[j]), 6)] for j in order],
     })
     worst = triples[order[0]]
@@ -170,8 +183,10 @@ out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(json.dumps({
     "dataset": DATASET.NAME,
     "orchestration": "adk",
-    "status": "completed" if all(goals) and all(specs) else "incomplete",
+    "status": ("completed" if all(goals) and all(specs) and all(semantics)
+               else "incomplete"),
     "goals": goals,
+    "semantics": semantics,
     "specs": specs,
     "findings": findings,
     "trace": trace,
