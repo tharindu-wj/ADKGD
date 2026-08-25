@@ -18,27 +18,37 @@ MIN_SYMMETRY = 0.5
 
 
 def find(scope_ids, ctx):
-    """All one-way edges on mostly-symmetric relations, worst-first.
+    """All one-way edges on mostly-symmetric relations, INTERLEAVED.
 
-    Ordered by the relation's symmetry, descending -- a single one-way edge
-    on a 98%-symmetric relation is stranger than one on a 60%-symmetric one.
+    Round-robin across relations rather than exhausting one at a time.
+    Measured reason: diplomatic relation alone has 180 gaps, so sorting by
+    relation buried every spouse gap 18 pages deep -- a 30-candidate reading
+    budget never saw them. A page should be a cross-section of the scope,
+    not the front of its largest queue.
     """
     by_relation = collections.defaultdict(list)
     for triple in ctx.triples:
         if triple[1] in scope_ids:
             by_relation[triple[1]].append(triple)
 
-    candidates = []
+    queues = []
     for relation_id, triples in by_relation.items():
         present = set(triples)
         one_way = [t for t in triples if (t[2], t[1], t[0]) not in present]
         symmetry = 1 - len(one_way) / len(triples)
         if symmetry < MIN_SYMMETRY or not one_way:
             continue
-        for head, relation, tail in one_way:
-            note = (f"recorded one way only, on a relation that is "
-                    f"{symmetry:.0%} two-way")
-            candidates.append((symmetry, (head, relation, tail), note))
+        note = (f"recorded one way only, on a relation that is "
+                f"{symmetry:.0%} two-way")
+        queues.append((symmetry, [(t, note) for t in sorted(one_way)]))
 
-    candidates.sort(key=lambda item: (-item[0], item[1]))
-    return [(triple, note) for _, triple, note in candidates]
+    # Most-symmetric relation leads each round, then round-robin.
+    queues.sort(key=lambda q: -q[0])
+    candidates = []
+    position = 0
+    while any(position < len(queue) for _, queue in queues):
+        for _, queue in queues:
+            if position < len(queue):
+                candidates.append(queue[position])
+        position += 1
+    return candidates

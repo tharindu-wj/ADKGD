@@ -11,7 +11,7 @@ ranking key.
 """
 import json
 
-from tools.auditors import SUB_AGENT_NAMES, state_key
+from tools.auditors import SUB_AGENT_NAMES, principal_of, state_key
 
 VERDICTS = ("anomaly", "ok", "out_of_scope", "unsure")
 
@@ -33,7 +33,9 @@ def submit_verdicts(verdicts: list[dict], tool_context=None) -> str:
     Args:
         verdicts: a list of {"id", "verdict", "why"} objects.
     """
-    agent = tool_context.agent_name
+    # A reviewer is the same auditor returning for the second-opinion phase;
+    # its verdicts land in its principal's store like any others.
+    agent = principal_of(tool_context.agent_name)
     if agent not in SUB_AGENT_NAMES:
         return f"ERROR: only an auditor judges; '{agent}' is not one."
 

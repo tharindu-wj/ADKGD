@@ -14,6 +14,7 @@ the other's keys.
 from google.adk.agents.parallel_agent import ParallelAgent
 from google.adk.agents.sequential_agent import SequentialAgent
 
+from agents.reviewers import reviewers
 from agents.root_agent import root
 from agents.sub_agents import sub_agents
 
@@ -23,13 +24,21 @@ auditors = ParallelAgent(
     sub_agents=sub_agents,
 )
 
+#: the second-opinion phase runs only after BOTH audits are complete --
+#: SequentialAgent is what guarantees that ordering
+second_opinions = ParallelAgent(
+    name="second_opinions",
+    description="Each auditor judges the other's flags, blind.",
+    sub_agents=reviewers,
+)
+
 #: the name ADK looks up in `agents.agent`
 root_agent = SequentialAgent(
     name="audit",
     description=("Assign two personas from the card; each auditor declares "
-                 "blind norms, maps them to a scope, and judges what its "
-                 "chosen assistants surface."),
-    sub_agents=[root, auditors],
+                 "blind norms, maps them to a scope, judges what its chosen "
+                 "assistants surface, then judges the other's flags blind."),
+    sub_agents=[root, auditors, second_opinions],
 )
 
 __all__ = ["root_agent"]

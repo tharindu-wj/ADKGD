@@ -535,3 +535,46 @@ Structural generators carry detection; the KGE alone would have been blind.
 Not yet observed: the same candidate judged differently by both agents (the
 scopes and pages did not intersect this run). That is M4's union/disagreement
 report, plus more runs.
+
+---
+
+## 14. Milestone 4 — built and measured (26 Aug 2026)
+
+Built: the evaluator (sole reader of ground_truth), the reciprocity
+interleave fix (a page is now a cross-section, not the front of the largest
+queue), and the second-opinion phase (each auditor judges the other's flags
+BLIND -- neutral note, no verdicts, no hint another auditor exists; reviewer
+agents resolve to their principal's stores). 42/42 offline checks.
+
+**Run 082940 (30 calls, 99.8s, 3 retries absorbed, blindness verified):**
+
+| | formalist | empiricist |
+|---|---|---|
+| judged | 15 (10 own + 5 second-opinion) | 20 (10 own + 10 second-opinion) |
+| anomaly precision vs planted | 7/10 | 7/12 |
+| planted seen but missed | 0 | 0 |
+
+**Composed:** union 15 flags, agreement 7 -- and the agreement set IS the
+planted set (all 7 planted that were served, caught by both). The
+disagreement set has 8 members, all unplanted, in exactly the two designed
+shapes:
+
+1. TRUE facts the formalist flags and the empiricist passes: one-way
+   diplomatic edges ("lacks the reciprocal link" vs "Cape Verde maintains
+   normal diplomatic relations with the EU"). The Russell Brand structure,
+   live, on real triples.
+2. Facts the empiricist flags and the formalist DECLINES to judge:
+   occupation errors ("Goethe was a writer, not a composer") met with a
+   principled out_of_scope ("my norms evaluate schema compliance, not
+   factual accuracy"). The abstention verdict working as designed -- and
+   these unplanted flags are candidate REAL Wikidata errors.
+
+The worked example's three-row structure (§10) is realised: agreement =
+the verified-false; disagreement = the norm-dependent; and no answer key is
+asked to settle what norms legitimately dispute.
+
+M4 exit questions: (1) same-fact dual verdicts -- YES, 8. (2) numbers --
+70%/58% precision, zero misses on served planted; union adds breadth (15 vs
+10/12 flags) though both caught the same 7 planted, BECAUSE second opinions
+propagate every flag to both judges. (3) disagreements read as viewpoints --
+yes: coherent norm-grounded reasons on both sides, n=1 run.

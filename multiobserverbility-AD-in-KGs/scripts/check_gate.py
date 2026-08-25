@@ -137,6 +137,27 @@ ok = submit_verdicts([{"id": "c1", "verdict": "anomaly",
 check("a valid verdict is recorded", ok.startswith("Recorded"))
 check("progress says what remains", "unjudged" in ok or "done" in ok)
 
+# Second-opinion guards -- reuses the state above (agent_1 judged c1 'anomaly').
+print("\nsecond opinions")
+from tools.review_candidates import review_candidates  # noqa: E402
+from tools.auditors import principal_of  # noqa: E402
+
+check("principal resolution", principal_of("sub_agent_1_reviewer") == "sub_agent_1")
+check("a principal cannot fetch reviews",
+      review_candidates(agent_1).startswith("ERROR"))
+reviewer_2 = FakeToolContext("sub_agent_2_reviewer", state)
+page = review_candidates(reviewer_2)
+check("reviewer 2 receives agent 1's flag, blind",
+      "r1." in page and "anomaly" not in page and "auditor" not in page.split("review")[0])
+check("review serving lands in the PRINCIPAL's store", "r1" in state["served_2"])
+ok = submit_verdicts([{"id": "r1", "verdict": "ok",
+                       "why": "really married; a one-sided record is still a real fact"}],
+                     reviewer_2)
+check("reviewer's verdict recorded for the principal",
+      ok.startswith("Recorded") and "r1" in state["verdicts_2"])
+again = review_candidates(reviewer_2)
+check("re-fetch does not duplicate", "already judged" in again or "r2" not in again)
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")
