@@ -405,3 +405,133 @@ Exit questions:
 Observed, for the seed harness later: the root's persona AXIS was
 formalist-vs-external-truth in both runs. Within-run difference is what the
 design needs and it is strong; across-run persona variance is unmeasured.
+
+---
+
+## 12. Finding anomalies — norm-shaped candidate generators (brainstormed 26 Aug)
+
+**The dilemma.** Option 1 (agent reads all 36,543 triples) dies on context.
+Option 2 (one link predictor shortlists for every goal) dies on a fact:
+DistMult is mathematically symmetric -- score(h,r,t) = score(t,r,h) -- so the
+formalist's first signal, a mutual bond recorded one-way, is invisible to it
+IN PRINCIPLE. One scorer cannot serve different norms, and forcing it would
+reopen the predecessor's seam (norms with no causal path into detection).
+
+**DECIDED-pending-agreement: Option 3.** A small menu of CANDIDATE
+GENERATORS, each norm-shaped. Phase 2 extends: norms -> scope -> generators.
+Generators FIND (deterministic, graph-scale); the agent JUDGES (reading-budget
+scale, by its norms). The LLM never scores or ranks -- it removes and
+explains (INV-3 preserved).
+
+Menu v1, grounded in the graph (probed 26 Aug):
+
+| generator | mechanism | serves | measured yield |
+|---|---|---|---|
+| `implausible_links` | KGE low score, precomputed | "false in the world" norms | 3,655 planted negatives to find |
+| `reciprocity_gaps` | one-way edges on mostly-symmetric relations | mutuality norms | **191 real**: 180 diplomatic, 10 unmarried partner, 1 spouse (Russell Brand) |
+| `multiplicity_outliers` | heads with >1 value on typically-unique relations | cardinality norms | **9 real**: double causes of death (Fuller, Cole...) |
+| `type_clashes` | entity types vs relation's typical types | typing norms | 0 here -- the slice is type-clean; absence is still a findable answer |
+
+Unservable norm, recorded honestly: anachronisms -- no date relations in
+codex-s; judge-time world knowledge only.
+
+**Bonus finding.** The 9 double-causes-of-death are a second LIVE
+disagreement family: formalist flags multiplicity, realist judges medical
+coherence and may pass. With Russell Brand that is two real
+true-fact-disagreement families before M3 is built.
+
+**M3 deltas.** `get_candidates` -> `find_candidates(generator, ...)`: one
+tool, menu behind it (fixed tool list as the menu grows). Recall ceiling =
+union of chosen generators. OPEN: gate generator choice behind a commitment
+tool, or inline `why` only? Lean: no third gate -- norms are already frozen,
+generator choice is instrumentation; record choice + why in the run file.
+
+**§12 in plain words.** Each agent is a judge who can only read a small stack
+of files; the generators are its assistants. An assistant is dumb but fast --
+plain code that sweeps all 36,543 triples in seconds and knows exactly one
+kind of suspicious. The judge picks the assistants that match its OWN norms
+(the link predictor suits a "false facts" norm; the reciprocity query suits a
+"mutual bonds recorded one-way" norm -- the link predictor cannot see that
+kind at all), reads their shortlists a page at a time, and gives each
+candidate a verdict by its norms: anomaly / ok / out of scope / unsure, with
+one line of why. **Code finds, the agent judges** -- code covers the whole
+graph but has no viewpoint; the agent has the viewpoint but cannot cover the
+graph.
+
+---
+
+## 13. Milestone 3 — implementation plan (find and judge, ⑤–⑥)
+
+Ends at verdicts recorded per agent. Evaluation/composition (⑦) is M4.
+
+| # | piece | change | ~lines |
+|---|---|---|---|
+| 1 | `scripts/1_prepare_graph.py` | EXTEND: after merging, sample verified negatives (`--ratio`, `--seed`) into `prepared/kg.tsv` and write `prepared/ground_truth.tsv` (label, kind=verified_false). Guards: a negative must not already be in the graph, no duplicates, all-zeros line printed | +60 |
+| 2 | `scripts/2_train_scorer.py` | NEW: PyKEEN (DistMult default) on the contaminated graph; win32 thread guards; saves model AND `prepared/scores.npy` scoring every triple, plus a manifest (graph hash, model) so a stale score file refuses loudly | 120 |
+| 3 | `tools/generators/` | NEW package, one file per assistant, shared contract `find(scope_ids, ctx) -> [(triple, note)]`, all deterministic: `implausible_links` (reads scores.npy + manifest check) · `reciprocity_gaps` (one-way edges where symmetry ≥ 50%) · `multiplicity_outliers` (>1 value on typically-single-valued relations) · `type_clashes` (types outside the relation's dominant types) | 4 × ~60 |
+| 4 | `tools/find_candidates.py` | NEW, the ONE agent-facing finder: `find_candidates(generator, why, page)` — requires the caller's scope; restricts every generator to it; pages of 10, labels + per-candidate note ("no reverse edge recorded"); assigns stable ids (c1, c2…); records what was served per agent; total capped at the reading budget N | 110 |
+| 5 | `tools/submit_verdicts.py` | NEW: batch of `{id, verdict ∈ anomaly/ok/out_of_scope/unsure, why}`; rejects ids never served to the caller; accumulates `verdicts_N` across batches | 90 |
+| 6 | `agents/sub_agents.py` + `config.py` | EXTEND: phase 3 in the instruction (pick assistants matching YOUR norms, read, judge); budgets: `READING_BUDGET_N = 30`, `PAGE_SIZE = 10`, tool budget → ~16 | ~40 Δ |
+| 7 | `scripts/3_run_audit.py` | RENAME+EXTEND `2_run_setup.py`: same tree, now runs through verdicts; run file adds generators chosen (with why), candidates served, verdicts; blindness proof unchanged | +80 |
+| 8 | `scripts/check_generators.py` | NEW rig, no API: every generator on the full graph and on a sample scope — counts, examples, determinism. The eyeball checkpoint before any agent touches them | 90 |
+
+Unchanged: context store, the four data tools, `assign_perspective`,
+`declare_semantics`, `select_scope`, phase gate (candidate/verdict ordering is
+enforced inside the new tools: no scope -> no candidates; not served -> no
+verdict).
+
+Order: 1 → 8a (generators on the clean merge, pre-contamination sanity) → 2 →
+3–5 → 8 (full rig) → 6–7 → offline suite → live runs.
+
+Quota: setup ~10–13 + per agent ~7–9 (generators + 3 pages + 3 verdict
+batches) → **~28–32 calls/run**, two quota windows; retry absorbs.
+
+OPEN before build: negatives `--ratio` (lean: ~500 planted ≈ 1.4%, keeps
+reading budgets meaningful) · N=30 v1 (agent may lower, never raise) ·
+`implausible_links` model: DistMult is fine for falsehood-hunting even though
+symmetric — its blindness to direction is exactly why reciprocity_gaps exists.
+
+Exit questions:
+1. Do agents pick generators that MATCH their norms (formalist → reciprocity/
+   multiplicity, realist → implausible_links)?
+2. Do the two agents give DIFFERENT verdicts on the same true fact
+   (Russell Brand, double causes of death)?
+3. Does the realist actually catch planted verified-false candidates the
+   generator surfaces?
+
+### Milestone 3 — built and measured (26 Aug 2026)
+
+All pieces built; 36/36 gate checks; firewall clean. One handoff bug found
+live and fixed: select_scope's confirmation still said "you are done" from
+M2, and both auditors obediently stopped before phase 3 -- the tool response
+is the last thing the model reads, and it steers.
+
+**The scorer finding.** DistMult trained ON the contaminated graph cannot
+separate CoDEx's hard negatives: AUC 0.617 (dim 64/100ep) vs 0.617 (dim
+128/500ep) -- not undertraining. Training memorizes the planted triples as
+positives; type-consistent negatives break no regularity. Per-generator
+reachability of the 500 planted: multiplicity_outliers 70 (29% precision),
+reciprocity_gaps 31 (14%), type_clashes 6, implausible_links top-100: **0**.
+Structural generators carry detection; the KGE alone would have been blind.
+
+**First full audit run (075904): everything worked.**
+- Blindness verified both agents; 14 calls, 11.8s.
+- Generator<->norm match EXACT: formalist -> reciprocity_gaps ("topological
+  symmetry"), realist -> implausible_links ("empirical plausibility").
+- Formalist: 10/10 anomaly -- ALL true facts (one-way diplomatic edges),
+  flagged per its norms "regardless of real-world plausibility". The
+  true-but-anomalous class, en masse.
+- Realist: 7 anomaly / 3 ok; **5 of 7 anomalies are planted falsehoods**
+  (Mendelssohn/Tocqueville/Obruchev US citizenship, Sennett born Moscow),
+  each with correct world-knowledge reasoning. One planted missed (Lieberman
+  -- an honest reviewer error, the thing reviewer-validation measures). Two
+  flagged "true" facts may be REAL Wikidata errors (Illich US citizenship)
+  -- kind=real means un-planted, not verified-true.
+- **The scope rescued the weak scorer**: implausible_links top-100 globally
+  holds 0 planted, but the realist's biographical SCOPE filtered the noise
+  -- its served page held 6 planted in 10. norms -> scope -> generator
+  composition turned AUC 0.617 into 71% verdict precision.
+
+Not yet observed: the same candidate judged differently by both agents (the
+scopes and pages did not intersect this run). That is M4's union/disagreement
+report, plus more runs.

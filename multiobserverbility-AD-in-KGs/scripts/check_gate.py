@@ -103,6 +103,40 @@ check("refuses re-selection (scope is a commitment)",
       select_scope(["child"], "w", agent_1).startswith("ERROR"))
 check("stores resolved ids", '"P26"' in state["scope_1"])
 
+print("\nphase 3: finding and judging")
+from tools.find_candidates import find_candidates  # noqa: E402
+from tools.submit_verdicts import submit_verdicts  # noqa: E402
+
+fresh = FakeToolContext("sub_agent_2", {})
+check("find_candidates refuses without a scope",
+      find_candidates("reciprocity_gaps", "w", 1, fresh).startswith("ERROR"))
+check("submit_verdicts refuses before anything is served",
+      submit_verdicts([{"id": "c1", "verdict": "ok", "why": "w"}],
+                      fresh).startswith("ERROR"))
+
+check("unknown assistant is a readable error",
+      find_candidates("psychic", "w", 1, agent_1).startswith("ERROR"))
+check("first call to an assistant requires a why",
+      find_candidates("reciprocity_gaps", "", 1, agent_1).startswith("ERROR"))
+page = find_candidates("reciprocity_gaps",
+                       "my mutuality norm concerns two-way bonds", 1, agent_1)
+check("candidates served with stable ids", "c1." in page)
+check("serving is recorded", "served_1" in state and "c1" in state["served_1"])
+
+check("verdict on an id never served is refused, batch not recorded",
+      submit_verdicts([{"id": "c999", "verdict": "ok", "why": "w"}],
+                      agent_1).startswith("ERROR"))
+check("a made-up verdict word is refused",
+      submit_verdicts([{"id": "c1", "verdict": "guilty", "why": "w"}],
+                      agent_1).startswith("ERROR"))
+check("an empty why is refused",
+      submit_verdicts([{"id": "c1", "verdict": "ok", "why": " "}],
+                      agent_1).startswith("ERROR"))
+ok = submit_verdicts([{"id": "c1", "verdict": "anomaly",
+                       "why": "one-sided record of a mutual bond"}], agent_1)
+check("a valid verdict is recorded", ok.startswith("Recorded"))
+check("progress says what remains", "unjudged" in ok or "done" in ok)
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

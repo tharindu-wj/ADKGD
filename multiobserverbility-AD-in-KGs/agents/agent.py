@@ -1,9 +1,9 @@
-"""What ADK loads: the setup tree.
+"""What ADK loads: the audit tree.
 
-    SequentialAgent "setup"            <- fixed order, never runtime-chosen
+    SequentialAgent "audit"            <- fixed order, never runtime-chosen
       |- Agent          "root"         <- personas from the card alone
       |- ParallelAgent  "auditors"     <- concurrent, isolated branches
-           |- Agent  "sub_agent_1"     <- blind norms, then data, then scope
+           |- Agent  "sub_agent_1"     <- blind norms -> scope -> find -> judge
            |- Agent  "sub_agent_2"
 
 ParallelAgent gives each auditor its own branch and filters sibling events,
@@ -19,15 +19,16 @@ from agents.sub_agents import sub_agents
 
 auditors = ParallelAgent(
     name="auditors",
-    description="Two auditors forming their observability points in parallel.",
+    description="Two auditors auditing the same graph from their own norms.",
     sub_agents=sub_agents,
 )
 
 #: the name ADK looks up in `agents.agent`
 root_agent = SequentialAgent(
-    name="setup",
-    description=("Assign two personas from the card, then let each auditor "
-                 "declare blind norms and map them onto the dataset."),
+    name="audit",
+    description=("Assign two personas from the card; each auditor declares "
+                 "blind norms, maps them to a scope, and judges what its "
+                 "chosen assistants surface."),
     sub_agents=[root, auditors],
 )
 

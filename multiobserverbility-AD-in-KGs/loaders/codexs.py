@@ -31,5 +31,15 @@ TYPE_DEFINITIONS = DATA / "types" / "en" / "types.json"
 #: written by scripts/1_prepare_graph.py -- the ONLY triple file tools read
 KG = ROOT / "prepared" / "kg.tsv"
 
+#: the answer key, written beside the graph by the same run. Read by the
+#: evaluator ALONE -- never by a tool, a generator, or an agent.
+TRUTH = ROOT / "prepared" / "ground_truth.tsv"
+
+#: written by scripts/2_train_scorer.py -- the trained model, the score for
+#: every kg.tsv row (same order), and the manifest binding scores to graph
+MODEL_DIR = ROOT / "prepared" / "model"
+SCORES = ROOT / "prepared" / "scores.npy"
+SCORES_MANIFEST = ROOT / "prepared" / "scores_manifest.json"
+
 #: where scripts/2_run_root.py records its runs
 RUNS = ROOT / "runs"

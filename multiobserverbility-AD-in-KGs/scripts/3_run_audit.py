@@ -1,7 +1,7 @@
-"""Run the setup tree once: personas -> blind norms -> scopes. Record it all.
+"""Run the audit once: personas -> blind norms -> scopes -> verdicts.
 
-    python scripts/2_run_setup.py
-    python scripts/2_run_setup.py --quiet
+    python scripts/3_run_audit.py
+    python scripts/3_run_audit.py --quiet
 
 The trigger message is pinned to "Prepare the audit." on purpose: the dataset
 CARD in the instructions must be the only channel through which any agent
@@ -63,7 +63,8 @@ from google.genai import types  # noqa: E402
 
 from agents import telemetry  # noqa: E402
 from agents.agent import root_agent  # noqa: E402
-from agents.config import NORMS_KEYS, PERSONA_KEYS, SCOPE_KEYS  # noqa: E402
+from agents.config import (GENERATOR_KEYS, NORMS_KEYS, PERSONA_KEYS,  # noqa: E402
+                           SCOPE_KEYS, SERVED_KEYS, VERDICT_KEYS)
 from agents.phase_gate import DATA_TOOL_NAMES  # noqa: E402
 from tools.auditors import SUB_AGENT_NAMES  # noqa: E402
 
@@ -118,6 +119,9 @@ def parsed(state_key):
 personas = [parsed(k) for k in PERSONA_KEYS]
 norms = [parsed(k) for k in NORMS_KEYS]
 scopes = [parsed(k) for k in SCOPE_KEYS]
+generators_used = [parsed(k) or {} for k in GENERATOR_KEYS]
+served = [parsed(k) or {} for k in SERVED_KEYS]
+verdicts = [parsed(k) or {} for k in VERDICT_KEYS]
 
 # ---- the blindness proof --------------------------------------------------
 # Per auditor: position of its norms declaration vs its first data-tool call.
@@ -156,7 +160,15 @@ for entry in blindness:
               f"{entry['first_data_call_at']} -- THIS RUN IS INVALID ***")
 print()
 
-for name, persona, norm, scope in zip(SUB_AGENT_NAMES, personas, norms, scopes):
+import collections  # noqa: E402
+
+from loaders.context import get_context  # noqa: E402
+
+context = get_context()
+
+for name, persona, norm, scope, gens, mine, judged in zip(
+        SUB_AGENT_NAMES, personas, norms, scopes, generators_used, served,
+        verdicts):
     print(f"  {name}")
     print(f"    persona:   {(persona or {}).get('persona', 'MISSING')}")
     if norm:
@@ -167,14 +179,24 @@ for name, persona, norm, scope in zip(SUB_AGENT_NAMES, personas, norms, scopes):
         print("    norms:     MISSING")
     if scope:
         print(f"    scope:     {', '.join(e['label'] for e in scope['scope'])}")
-        print(f"    why:       {scope['why']}")
     else:
         print("    scope:     MISSING")
+    for generator_name, why in gens.items():
+        print(f"    assistant: {generator_name} -- {why}")
+    counts = collections.Counter(v["verdict"] for v in judged.values())
+    print(f"    judged {len(judged)}/{len(mine)} served: "
+          f"{dict(counts) if counts else 'none'}")
+    for cid, v in sorted(judged.items())[:4]:
+        print(f"      {cid} [{v['verdict']:>12}] "
+              f"{context.triple_text(tuple(v['triple']))}")
+        print(f"          {v['why']}")
     print()
 
-everything_placed = all(personas) and all(norms) and all(scopes)
+everything_placed = (all(personas) and all(norms) and all(scopes)
+                     and all(served) and all(verdicts)
+                     and all(len(j) == len(s) for j, s in zip(verdicts, served)))
 stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-out = DATASET.RUNS / f"run_{stamp}_setup.json"
+out = DATASET.RUNS / f"run_{stamp}_audit.json"
 out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(json.dumps({
     "dataset": DATASET.NAME,
@@ -189,6 +211,9 @@ out.write_text(json.dumps({
     "personas": personas,
     "norms": norms,
     "scopes": scopes,
+    "generators": generators_used,
+    "served": served,
+    "verdicts": verdicts,
     "trace": trace,
 }, indent=2), encoding="utf-8")
 print(f"  saved to {out.relative_to(ROOT)}")

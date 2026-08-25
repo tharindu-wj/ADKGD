@@ -63,5 +63,8 @@ def select_scope(relations: list[str], why: str, tool_context) -> str:
 
     labels = ", ".join(entry["label"] for entry in resolved)
     return (f"Recorded. Your scope: {labels}.\n"
-            f"Your observability point is complete -- persona, norms, scope. "
-            f"You are done, stop here.")
+            f"Your observability point is complete -- persona, norms, scope.\n\n"
+            f"Now find and judge: call find_candidates with an assistant that "
+            f"matches your norms, and give a verdict on every candidate it "
+            f"serves you. You are not done until every served candidate is "
+            f"judged through submit_verdicts.")
