@@ -12,6 +12,7 @@ import json
 from google.adk.agents.llm_agent import Agent
 
 from agents.config import BUDGET, GOAL_KEYS, MODEL, PROFILER_TOOLS
+from agents import telemetry
 from agents.parsing import first_json_object, last_text
 from loaders.active import DATASET
 
@@ -73,4 +74,7 @@ root = Agent(
     include_contents="none",
     output_key="goals_raw",
     after_agent_callback=split_goals,
+    # Observation only -- both return None, so nothing about the run changes.
+    after_model_callback=telemetry.record_response,
+    on_model_error_callback=telemetry.record_error,
 )

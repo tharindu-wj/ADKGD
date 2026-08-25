@@ -14,7 +14,7 @@ The architecture diagram was redrawn against the code and now shows only what
 exists. The pipeline and orchestration diagrams predate `declare_semantics` and
 the gate, so neither shows them yet.
 
-1,775 lines of Python across 27 files.
+2,227 lines of Python across 30 files.
 
 ---
 
@@ -60,57 +60,136 @@ the gate, so neither shows them yet.
 
 A script's name says what it is for: **numbered scripts are the pipeline and the
 number is the order**; unnumbered `check_*` scripts are test rigs that exercise
-one scorer or one tool directly, without an agent, and nothing depends on them.
+one part directly and nothing depends on them. `check_agent_turns.py` is the
+newest: it prints every model response with its finish_reason, which is the
+only way to see a turn that ended without a tool call.
 
 ---
 
 ## What the runs show so far
 
-Eight runs are now in `runs/`, all on the same graph with the same prompts.
+### Everything previously recorded here was measured through a broken instrument
 
-**Divergence is not reliable, in either direction.** Some runs give two
-different scorers, some give the same one twice. Nothing in the design forces
-either outcome, and `SPEC.md` says that should be measured rather than forced —
-which makes it a result, not a defect, and the first thing a seed harness would
-turn into a rate instead of an anecdote.
+Read this before trusting any number below it.
 
-**An agent often fails to answer at all.** Counted across every run on disk:
+The free Gemini tier allows **15 requests per minute per model**. This tree
+needs **19** (root 4, each viewpoint 7–8). Runs therefore had their last
+requests refused with a 429 — and until 25 Aug 2026 nothing recorded that. A
+run file's trace records tool CALLS, so these two are indistinguishable in it:
 
-| artifact | how it is captured | landed |
-|---|---|---|
-| the frame | a **tool call** (`declare_semantics`) | **12 / 12** |
-| the spec | scraped from the agent's **final message** | **7 / 12** |
+    an agent that ran a scorer and then chose to stop
+    an agent whose next request the API refused
 
-Two runs produced no usable spec from either agent — they declared a frame, ran
-a scorer, then stopped without answering, and the run recorded nothing to
-evaluate. Nothing retries. Every artifact written by a tool call has landed;
-the one scraped from free text is the only one that goes missing.
+Every earlier finding on this page read the second as the first. Instrumenting
+it (`agents/telemetry.py`, and `scripts/check_agent_turns.py` to watch a run
+live) showed **31 model responses of which ZERO returned nothing** — the agents
+were never failing to answer. Two prompt rewrites were spent on a behaviour
+that does not exist.
 
-**The agents pick deep budgets.** 10-20% of the graph here, against the 1-5%
-ADKGD reports at, and earlier runs went to 30%. High recall, poor precision: at
-20% one agent hit 94.8% recall at 42.7% precision, where the same scorer at 5%
-gives 84.4% precision. Nothing in the prompt frames the budget as a review-cost
-decision.
+Worse, whether a run survived depended on **how long it happened to take**: a
+slow run spans more than one quota window and completes; a fast one does not.
+So run-to-run comparisons were partly comparisons of wall-clock luck.
 
-**Their scorer choices contradict the measured evidence.** They pair
-containment with `plausibility` and adjacency with `neighbourhood`; §2.4 of
-`SPEC.md` measured the opposite to be better on both counts.
+**Consequently the following are UNMEASURED, not established:**
+
+- "the agents do not reliably diverge"
+- "an agent often fails to answer at all" (the 7/12 spec-capture rate)
+- any comparison between prompt versions, including the claim that
+  `submit_spec` made capture worse — it was quota-starved, and in the first
+  clean run since, **both** agents called it successfully
+
+None can be checked retroactively: every run predating telemetry lacks the
+`health` block that would say whether it was truncated.
+
+### What is measured
+
+A run now records `health` and carries a third status, `truncated`, distinct
+from `incomplete`. `4_evaluate_results.py` refuses to read a truncated run as
+evidence. Numbers gathered from here on are trustworthy; numbers from before
+are not.
+
+**Seven runs on 25 Aug 2026, one truncated by quota and excluded. The six that
+completed:**
+
+| | result |
+|---|---|
+| frames captured (`declare_semantics`) | **12 / 12** |
+| specs captured (`submit_spec`) | **12 / 12** |
+| specs that came via the tool, not the text fallback | **12 / 12** |
+| runs where the two agents chose **different** scorers | **6 / 6** |
+| budgets chosen | only **0.10** and **0.15** |
+| model calls per run | 18–19 |
+
+This overturns three things this page previously asserted:
+
+- *"An agent often fails to answer at all"* (7/12) — **false.** 12/12 when the
+  run is not quota-starved. The failures were refused requests.
+- *"Divergence is not reliable"* — **false so far.** Every run split, one agent
+  taking `plausibility` and the other `neighbourhood`.
+- *"The agents pick deep budgets, 10–30%"* — **much tighter now**: nothing above
+  15%. Still above the 1–5% ADKGD reports at, but not wildly.
+
+**What this does NOT establish.** Four things changed between the old runs and
+these: telemetry (no behavioural effect), the four missing tool descriptions,
+`submit_spec`, and the prompt wording around it. The improvement cannot be
+attributed to any one of them, and the old runs cannot be re-classified because
+they have no `health` block. The narrower budgets are *consistent* with
+`run_scorer` and `submit_spec` now describing a budget as review cost, but that
+is a hypothesis, not a measurement.
+
+Six runs is also six. It is enough to retire a claim that something "often"
+fails when it now never does; it is not enough to claim divergence is reliable.
+
+**The budget is still deeper than the convention.** 10–15% of the graph against
+the 1–5% ADKGD reports at. At 10% a run flags 127 triples to catch 91 of 115 —
+79.1% recall at 71.7% precision, where the same scorer at 5% gives 84.4%
+precision. So the agents are buying recall with review cost, deliberately or
+not, and now at least the tools tell them that is the trade.
+
+**Their scorer choices contradict §2.4 of `SPEC.md`.** They pair containment
+with `plausibility` and adjacency with `neighbourhood`; §2.4 measured the
+opposite to be better on both counts. This one has held across every run, old
+and new, which makes it the most durable observation on this page — and the
+sharpest open question, since the frame an agent declares is currently unable
+to influence what its scorer flags at all (`sem["relations"]` is read only by
+the evaluator's print).
+
+**Four of five tools sent the model an empty description.** `list_relations`,
+`describe_relation`, `sample` and `run_scorer` had *module* docstrings, which
+ADK never reads, and no *function* docstring — so ADK transmitted 0 characters
+for each. Only `declare_semantics` had one, which made its geography worked
+example the sole tool guidance in the system. Fixed 25 Aug 2026; every run
+before that date was made by agents inferring four tools from their names.
 
 ---
 
 ## Order of remaining work
 
-| # | build | why here | lines |
+| # | build | why here | effort |
 |---|---|---|---|
-| **0** | **reviewer validation** | With no human downstream, the agent's judgement is the only thing steering the loop. Hand it flagged triples with no labels, ask "is this fact true?", compare to the answer key. **90%+ and the loop has a judge; 60% and the rest is built on noise.** Still not done, still the gate. | ~70 |
-| 1 | seed harness | Loop contamination → train → agents → evaluate over N seeds and report a distribution. Turns "the agents diverged once" into a rate. | ~90 |
-| 2 | budget guidance in the prompt | Tell the agent a budget is review cost. Cheapest fix for the biggest gap between agent and ADKGD numbers. | ~10 |
-| 3 | more scorers (TRIC family) | Two scorers is a menu a `for` loop can exhaust; "the agent chose well" stays indistinguishable from luck until it is bigger. | ~80 each |
-| 4 | domain KB | Only matters on a graph whose entity names are opaque. Not Countries. | ~60 |
+| **0** | **the quota ceiling** | The tree needs ~19 model calls; the free tier allows 15/minute. A run completes only if it happens to be slow. Until this is resolved — throttle the tree, trim the root's 4 profiling calls to 2, honour the API's own `retryDelay`, or pay — **no measurement of agent behaviour is reliable**, because the sample is whichever runs were slow enough to survive. | ~30 lines, or a billing change |
+| **1** | **reviewer validation** | With no human downstream, the agent's judgement is the only thing steering the loop. Hand it flagged triples with no labels, ask "is this fact true?", compare to the answer key. **90%+ and the loop has a judge; 60% and the rest is built on noise.** | ~70 lines |
+| 2 | portability blockers | Guard `corrupt()` on an empty pool (crashes on Nations, 20/20 seeds); refuse a collapsed scorer spread; report the tie block at the budget cut; truncate the "unknown relation" error; derive `KINDS` from the data. None changes a Countries result. | ~40 lines total |
+| 3 | a second dataset | Nations or FB15k-237, to find out what else only works here. Blocked on #2. | ~2 h |
+| 4 | neutralise the prompts | The geography in `ROOT_INSTRUCTION`, `VIEWPOINT_INSTRUCTION` and `declare_semantics`. Then ablate: does the root still write a sound goal when its worked example is not the answer? | ~1 h + runs |
+| 5 | seed harness | Loop contamination → train → agents → evaluate over N seeds. Only worth building after #0, or it measures the quota. | ~90 lines |
+| 6 | more scorers | Two is a menu a `for` loop can exhaust; "the agent chose well" stays indistinguishable from luck until it is bigger. | ~80 each |
+| 7 | domain KB | Only matters on a graph whose entity names are opaque. Not Countries. | ~60 lines |
 
-Steps 1 and 2 are cheap and would sharpen everything already built.
+**#0 moved to the top on 25 Aug 2026** and displaced everything. It is not a
+feature; it is the reason the numbers on this page cannot be believed.
 
-Nothing on this list has been built yet. What has landed beside it:
+What has landed beside this list:
+
+- **Tool descriptions.** Four of five tools were sending the model 0 characters.
+  All five now transmit, and the four new ones are deliberately dataset-neutral.
+  This also delivered the old item 2 for free — `run_scorer` and `submit_spec`
+  now both describe the budget as a review cost.
+- **`submit_spec`.** The spec is handed in by a tool call rather than scraped
+  from the agent's last message. Whether that improves capture is **untested**;
+  every run measuring it was quota-starved.
+- **Telemetry.** `agents/telemetry.py` records model calls and errors;
+  `scripts/check_agent_turns.py` shows every response's finish_reason live.
 
 - **The private semantics store and its gate.** `declare_semantics` writes a
   frame to `sem_a` / `sem_b`, and a `before_tool_callback` refuses `run_scorer`
@@ -144,5 +223,24 @@ advantage here it would not have against real KG errors.
 1,273 triples directly. Scorers earn their place only when the graph cannot be
 read end to end.
 
-***n* = 1 dataset.** Everything measured holds on Countries and nothing says it
-holds elsewhere.
+***n* = 1 dataset — and it is worse than it sounds.** This used to say
+"everything measured holds on Countries and nothing says it holds elsewhere".
+An audit on 25 Aug 2026 pointed the pipeline at PyKEEN's Nations and found the
+problem is not that results might not transfer. **The pipeline does not run.**
+
+| what breaks | where | how |
+|---|---|---|
+| **`1_inject_anomalies.py` crashes** | `corrupt()` | `other[r] = all_tails - own[r]` is empty for 6 of 55 Nations relations, so `rng.integers(0)` raises. **20 of 20 seeds die.** |
+| **`type_invalid` stops meaning anything** | the taxonomy | it means "a tail from another relation's pool", which equals *wrong type* only because Countries' two pools are perfectly disjoint. On Nations every entity is a nation, so 100% of "type_invalid" corruptions are type-CORRECT. On FB15k-237 the other-pool is ~99% of all entities, i.e. uniform random. |
+| **`neighbourhood` becomes a constant** | the scorer | all 1,992 Nations triples score exactly 1.0, std 0.0. `flag_worst` then breaks the tie by row order and returns rows 0–198, which the evaluator scores and reports as a detection. Nothing checks for a collapsed spread, though `2_train_plausibility_scorer.py` already does exactly that check for the model. |
+
+So Countries is not one datapoint among many possible ones: several design
+decisions are only coherent on a graph with exactly two disjoint-vocabulary
+relations. `loaders/active.py` calls itself "the dataset switch: one import
+line" — it is nine lines with no logic, and it does not make this work.
+
+**The prompts are written for Countries too.** `VIEWPOINT_INSTRUCTION` asserts
+*"You know what a country is, what a continent is"* as the world knowledge to
+use, and `ROOT_INSTRUCTION`'s only `good` example is a border audit — which the
+root has been observed paraphrasing back as its goal. Until that example is
+neutral, **"the root writes goals from structure alone" is untestable.**

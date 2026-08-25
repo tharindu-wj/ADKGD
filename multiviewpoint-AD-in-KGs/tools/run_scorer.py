@@ -79,4 +79,9 @@ def run_scorer(scorer: str, budget: float = 0.10, model: str = "distmult") -> st
         lines.append(f"  {h}\t{r}\t{t}\t({v[flagged][i]:.3f})")
     lines.append("")
     lines.append("Judge these yourself. Nothing here says whether they are right.")
+    # The tool's own response is the last thing the model reads before choosing
+    # what to do next, which makes it the strongest place to put this. Agents
+    # were reliably stopping here, having scored but never handed anything in.
+    lines.append("If this is the scorer you want, call submit_spec now -- "
+                 "scoring is not deciding, and nothing is recorded until you do.")
     return "\n".join(lines)

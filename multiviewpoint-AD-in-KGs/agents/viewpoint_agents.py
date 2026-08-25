@@ -14,6 +14,7 @@ import json
 from google.adk.agents.llm_agent import Agent
 
 from agents.config import BUDGET, GATED_TOOLS, MODEL, VIEWPOINT_TOOLS
+from agents import telemetry
 from agents.parsing import first_json_object, last_text
 from loaders.active import DATASET
 from tools.declare_semantics import store_key
@@ -49,12 +50,12 @@ Scorers available to run_scorer:
 You may keep one, keep both, or discard one. Say which, and why, in terms of
 your goal.
 
-Use at most {BUDGET - 2} tool calls, then answer.
+LAST, and you are not finished until you do: call submit_spec with the scorer
+you settled on, the budget, why it serves your goal, and what the scorer told
+you. Running a scorer is not deciding. Nothing you have done is recorded until
+submit_spec is called, so make it the final thing you do.
 
-Answer with JSON only:
-  {{"scorer": "<name>", "budget": <fraction between 0 and 0.5>,
-    "why": "<one or two sentences>",
-    "summary": "<what run_scorer told you: how many flagged, the worst triple>"}}
+Use at most {BUDGET - 2} tool calls in all.
 """
 
 
@@ -85,6 +86,12 @@ def make_capture_spec(spec_key: str):
     Same reason as split_goals -- output_key alone has been seen to miss.
     """
     def capture_spec(callback_context):
+        # submit_spec writes this key directly, and that is the path that is
+        # meant to fire. This stays as a fallback for the agent that describes
+        # its answer without handing it in -- recovering a spec from prose is
+        # worse than being given one, but better than losing the run.
+        if callback_context.state.get(spec_key):
+            return None
         raw = str(callback_context.state.get(spec_key + "_raw") or "") \
             or last_text(callback_context)
         parsed = first_json_object(raw)
@@ -111,4 +118,9 @@ def make_viewpoint(name: str, goal_key: str, spec_key: str) -> Agent:
         include_contents="none",
         output_key=spec_key + "_raw",
         after_agent_callback=make_capture_spec(spec_key),
+        # Observation only -- both return None, so nothing about the run
+        # changes. Without them a refused request is indistinguishable from an
+        # agent that chose to stop, which has already cost real debugging time.
+        after_model_callback=telemetry.record_response,
+        on_model_error_callback=telemetry.record_error,
     )

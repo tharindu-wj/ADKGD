@@ -61,6 +61,7 @@ from google.adk.runners import Runner          # noqa: E402
 from google.adk.sessions import InMemorySessionService  # noqa: E402
 from google.genai import types                 # noqa: E402
 
+from agents import telemetry  # noqa: E402
 from agents.agent import GOAL_KEYS, SEM_KEYS, SPEC_KEYS, root_agent  # noqa: E402
 
 APP, USER, SESSION = "kg_audit", "local", "run"
@@ -74,6 +75,8 @@ runner = Runner(app_name=APP, agent=root_agent, session_service=session_service)
 
 print(f"dataset: {DATASET.NAME}   file: {DATASET.KG.name}")
 print(f"running the ADK tree: {root_agent.name}\n")
+
+telemetry.reset()      # counts are module-level; start this run from zero
 
 trace = []
 for event in runner.run(
@@ -115,7 +118,11 @@ goals = [state.get(k) or "" for k in GOAL_KEYS]
 semantics = [parsed(k) for k in SEM_KEYS]
 specs = [parsed(k) for k in SPEC_KEYS]
 
+health = telemetry.health()
+
 print("\n" + "=" * 68)
+print(telemetry.render(health))
+print()
 for i, goal in enumerate(goals, 1):
     print(f"  goal {i}: {goal or 'MISSING'}")
 print()
@@ -184,8 +191,13 @@ out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(json.dumps({
     "dataset": DATASET.NAME,
     "orchestration": "adk",
-    "status": ("completed" if all(goals) and all(specs) and all(semantics)
+    # "truncated" is not the same failure as "incomplete", and conflating them
+    # is what let a rate limit masquerade as agent behaviour for days. A
+    # truncated run says nothing about how the agents behave.
+    "status": ("truncated" if health["truncated"]
+               else "completed" if all(goals) and all(specs) and all(semantics)
                else "incomplete"),
+    "health": health,
     "goals": goals,
     "semantics": semantics,
     "specs": specs,

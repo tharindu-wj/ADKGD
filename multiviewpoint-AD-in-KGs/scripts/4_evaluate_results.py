@@ -53,10 +53,27 @@ if path is None:
     path = found[-1]
 
 run = json.loads(path.read_text(encoding="utf-8"))
+health = run.get("health") or {}
+if health.get("truncated"):
+    why = ("the API refused a request (quota)" if health.get("quota_exhausted")
+           else "a model call failed")
+    print(f"WARNING: {path.name} is TRUNCATED -- {why}.")
+    print(f"  {health.get('total_model_calls')} model calls completed; "
+          f"{len(health.get('errors') or [])} failed.")
+    for e in (health.get("errors") or [])[:3]:
+        print(f"    {e.get('agent')}: {e.get('type')}")
+    print("  Whatever is missing below is that failure, not a decision an agent")
+    print("  made. Do not read this run as evidence about agent behaviour.\n")
+
 findings = run.get("findings") or []
 if not findings:
     # Two different causes, and blaming the wrong one sends the reader looking
     # for a bug in the file format when the agents simply never answered.
+    if health.get("truncated"):
+        raise SystemExit(
+            f"{path.name} recorded no findings because the run was cut short "
+            f"before the agents finished.\nThis is not an agent failure. "
+            f"Wait for the quota window and run it again.")
     if "findings" not in run:
         raise SystemExit(
             f"{path.name} predates the change that made "

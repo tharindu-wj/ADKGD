@@ -19,13 +19,17 @@ from tools.describe_relation import describe_relation
 from tools.list_relations import list_relations
 from tools.run_scorer import run_scorer
 from tools.sample import sample
+from tools.submit_spec import submit_spec
 
 MODEL_NAME = "gemini-3.5-flash-lite"
 MODEL = Gemini(model=MODEL_NAME)
 
-#: tool budget per agent. The final reply consumes a step and an error retry
-#: costs another, so the wall sits above the number the prompt asks for.
-BUDGET = 8
+#: Tool budget per agent, as ASKED FOR in the prompt. Nothing enforces it --
+#: ADK's own ceiling is max_llm_calls=500 -- but the agents broadly respect it.
+#: Raised from 8 when submit_spec was added: a viewpoint now needs to profile,
+#: declare a frame, score, and hand in, and at 6 an agent could spend its whole
+#: allowance before it had anything to submit.
+BUDGET = 10
 
 #: One key per agent, per artifact. The suffix is what `make_viewpoint` binds
 #: each twin to, and what `store_key` in declare_semantics derives from the
@@ -39,7 +43,9 @@ PROFILER_TOOLS = [list_relations, describe_relation, sample]
 
 #: Both twins get an IDENTICAL list. Any asymmetry in what they can reach would
 #: confound the experiment -- the only difference between them is their goal.
-VIEWPOINT_TOOLS = PROFILER_TOOLS + [declare_semantics, run_scorer]
+#: Note the shape: declare a frame, score against it, hand in. Every artifact
+#: the run needs is written by a tool call, never scraped from a closing message.
+VIEWPOINT_TOOLS = PROFILER_TOOLS + [declare_semantics, run_scorer, submit_spec]
 
 #: Tools that produce a SCORE. These wait behind declare_semantics; everything
 #: else -- the profiler now, a knowledge base later -- stays open, because a
