@@ -1,0 +1,5 @@
+# Generated. Regenerate with the scripts in scripts/.
+prepared/
+runs/
+__pycache__/
+.adk/

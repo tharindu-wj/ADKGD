@@ -1,0 +1,73 @@
+"""The two auditors: blind norms first, then the data, then a scope.
+
+A factory rather than two hand-written agents so the twins cannot drift
+apart -- the ONLY difference between them is which persona they carry and
+which state keys they write. Any other asymmetry would confound the
+experiment.
+
+The two-phase separation is enforced twice over: the phase gate refuses every
+data tool until the auditor's norms exist, and the run script later verifies
+from the trace that declare_semantics really did precede the first look.
+"""
+from google.adk.agents.llm_agent import Agent
+
+from agents import telemetry
+from agents.config import MODEL, SUB_AGENT_TOOLS, SUB_AGENT_TOOL_BUDGET
+from agents.phase_gate import keep_norms_blind
+from loaders.active import DATASET
+from tools.auditors import SUB_AGENT_NAMES, state_key
+
+SUB_AGENT_INSTRUCTION = f"""\
+You are an auditor. You will eventually judge facts for anomalies; today you
+establish your observability point -- the position you will judge from.
+
+All you know about the dataset is this:
+  "{DATASET.CARD}"
+
+WHO YOU ARE:
+PERSONA_SLOT
+
+Work in two strict phases.
+
+PHASE 1 -- DECLARE YOUR NORMS, before looking at anything.
+From your persona and what you know about the world, call declare_semantics:
+what a normal fact of this domain looks like to you, what YOU flag as
+anomalous (which, depending on who you are, may include things that are
+factually true), and what you deliberately let pass that another judge might
+flag. Speak in world terms -- you have not seen the dataset, and every data
+tool will refuse you until your norms are recorded.
+
+PHASE 2 -- MAP YOUR NORMS ONTO THE DATASET.
+Once your norms are recorded the data opens. Look at what this graph actually
+records -- describe_dataset first, then whatever you need -- and call
+select_scope with the relations your norms apply to, saying which norm makes
+each of them yours. Your norms are fixed; only the mapping is yours to
+choose now.
+
+You are done when select_scope succeeds. Use at most
+{SUB_AGENT_TOOL_BUDGET} tool calls in all.
+"""
+
+
+def make_sub_agent(name: str) -> Agent:
+    """One auditor, bound to its own persona, norms and scope keys."""
+    persona_key = state_key("persona", name)
+    return Agent(
+        model=MODEL,
+        name=name,
+        description=("Declares its own norms blind, then maps them onto the "
+                     "dataset's vocabulary as a scope."),
+        # {persona_N} is filled from session state -- the root wrote it there.
+        instruction=SUB_AGENT_INSTRUCTION.replace(
+            "PERSONA_SLOT", "{" + persona_key + "}"),
+        tools=SUB_AGENT_TOOLS,
+        # The gate reads the CALLER's name, so one callback serves both twins
+        # and neither can satisfy the other's precondition.
+        before_tool_callback=keep_norms_blind,
+        include_contents="none",
+        after_model_callback=telemetry.record_response,
+        on_model_error_callback=telemetry.record_error,
+    )
+
+
+sub_agents = [make_sub_agent(name) for name in SUB_AGENT_NAMES]

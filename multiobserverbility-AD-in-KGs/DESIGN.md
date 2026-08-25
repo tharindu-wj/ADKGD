@@ -177,3 +177,231 @@ Exit question this milestone answers: **asked for two OPs with differing norms
 over a shared scope, does the root produce coherent ones?** (Self-written
 frames converged 44/44; root assignment is the fix under test.)
 Run cost ~5–7 model calls.
+
+### Milestone 1 — built and measured (26 Aug 2026)
+
+All 17 files built; every offline check passes (parse, ADK discovery, all 5
+tool descriptions transmit, firewall grep clean, OP-tool validation incl. the
+punctuation-proof norms guard). Two live runs, both `completed`, 4–6 model
+calls, 8–10s — nowhere near quota.
+
+**Exit question — does the root produce two coherent, differing norms?**
+
+| | run 002523 | run 002553 |
+|---|---|---|
+| OPs placed | 2/2, via tool calls | 2/2 |
+| scopes | disjoint partition (biographic vs geographic) | **overlapping** (3 shared relations) |
+| norms differ | yes — symmetry-stance vs geo-consistency | yes — logical-consistency vs reciprocity/topology |
+| "anomalous even if true" stance | partially (unreciprocated spouse = anomaly) | no |
+
+Verdict: **the machinery works and the norms guard holds, but the full
+same-scope/different-norms pair has not yet appeared** — the root leans toward
+partitioning by relation, and neither run produced a clean norm of the
+"flag it even if correctly recorded" kind. n=2. Options if this persists:
+strengthen the instruction (ask for shared scope explicitly rather than
+calling it "most valuable"), or have the tool enforce scope overlap. Decide
+after more runs, not from two.
+
+Also observed: run 1's norm for sub_agent_1 mentions "places of birth", which
+is not in that agent's scope — the tool validates scope names, not norm prose.
+Acceptable; the sub agent's out_of_scope verdict handles stray prose later.
+
+---
+
+## 9. Blind norms — the two-phase observability point (brainstormed 26 Aug)
+
+**The principle.** Like people: a person's sense of what a normal relationship
+looks like is formed by their background BEFORE they meet the community they
+judge. The data teaches them the local vocabulary and where their values
+apply; it does not supply the values. So:
+
+    PHASE 1  who I am      norms from world knowledge alone
+                           sees: DATASET_CARD (domain, 2-3 sentences)
+                           never: relations, counts, samples
+            -- the gate, inverted --
+    PHASE 2  where I look  inspect the dataset, map norms onto its
+                           vocabulary -> scope (relevant relations)
+
+**Why structural, not prompted — our own evidence.** Both Milestone-1 runs
+produced norms soaked in dataset vocabulary ("diplomatic relations",
+"spouses", even "degree distributions" — data statistics, explicitly ruled
+out). A root that browses first reverse-engineers "what would be anomalous
+given this schema". Same failure family as frames-after-scores; same fix:
+ordering enforced in code.
+
+**Generalised gate rule (replaces the v1 rule).** A tool is blocked while it
+could contaminate a commitment not yet made. Phase 1: context tools blocked.
+Phase 2: context open, scoring (later) still gated behind scope.
+
+**PROPOSED — personas solve the convergence problem.** Blind self-derived
+norms would reconverge (44/44 precedent). The root — seeing ONLY the card,
+needing no tools at all — assigns each sub agent a differing PERSONA (a
+stance, e.g. legal formalist vs descriptive empiricist); each sub agent then
+articulates its OWN norms from its persona. The root is the circumstance that
+makes people different, not the author of their views.
+
+**"Clearly show the separation" = three proofs.**
+1. Code: per-agent phase gate on the context tools.
+2. Trace: run script mechanically verifies first-context-call > norms-commit,
+   per run, and marks violations invalid (like the firewall grep).
+3. Artifact: blind norms contain no dataset vocabulary by construction, so
+   they are PORTABLE across datasets — re-run phase 2 on another graph with
+   the same norms. Norms that transfer are proof they never came from one.
+
+**Build delta.** DATASET_CARD in the loader (domain + subject kinds, never
+attribute kinds); root loses all tools, `assign_perspective` x2 with the
+differing guard; sub agents get `declare_semantics` (blind, first) then
+context tools then `select_scope`; OP splits into persona/norms/scope, each
+stamped with call order.
+
+**OPEN.**
+1. Card grain — proposed line: name the domain and subjects, never attributes.
+2. Personas: root-generated per run (agentic, variable) vs a fixed pair in
+   config (reproducible, less agentic)? Lean: root-generated, seed-harness
+   later measures variance.
+3. Does phase 2 allow `sample()`? Seeing instances teaches vocabulary but also
+   leaks "what is common" — norms are already fixed by then, so yes, allow.
+
+**DECIDED (26 Aug) — card delivery.** The card is a `CARD` constant in the
+dataset loader, injected into agent instructions like `{DATASET.NAME}` --
+never the typed user prompt (unowned, leakable, unprovable) and never a tool
+(costs calls, skippable). The run script pins the trigger message to a fixed
+"Prepare the audit." so the card is the only domain channel, and records the
+card verbatim in the run JSON as provenance. Residual hole, accepted: in
+`adk web` a human can type schema into the chat; the scripted pipeline is the
+measured path. Card text: "An encyclopedic knowledge graph about notable real
+people, organisations and places." -- "encyclopedic" and "notable" kept
+deliberately (they anchor the right world-knowledge prior); subjects only,
+never attributes.
+
+---
+
+## 10. The pipeline on real data — worked example (all triples real)
+
+**STEP 0 — the card** (the only thing phase 1 may see):
+"An encyclopedic knowledge graph about notable real people, organisations and
+places."
+
+**PHASE 1a — root assigns personas** (sees the card, has no tools):
+
+    sub_agent_1  FORMALIST   "a relationship is defined by its rules --
+                              mutuality, exclusivity, consistency of record.
+                              A rule violation is an anomaly even when every
+                              fact in it is accurate."
+    sub_agent_2  EMPIRICIST  "only a factually false claim can be wrong.
+                              Unusual or incomplete arrangements that really
+                              happened are not your concern."
+
+**PHASE 1b — blind norms.** A peek is refused by the gate:
+
+    -> describe_dataset()
+    <- ERROR: you have not formed your view yet. Declare what YOU consider
+       a normal relationship before looking at any data.
+
+    formalist:  "a marriage is mutual by definition -- a record of an
+                 inherently two-way bond held by one party only is anomalous
+                 EVEN IF the underlying fact is real"
+    empiricist: "a claim is anomalous only when false in the world;
+                 incomplete but real relationships pass"
+
+Note the vocabulary: "marriage", "two-way bond" -- world words. Neither agent
+knows the dataset calls anything `spouse`.
+
+**PHASE 2 — the gate lifts; norms map onto the actual vocabulary.**
+`describe_dataset()` reveals the 42 relations; each agent selects the scope
+its norms apply to:
+
+    formalist:  spouse, unmarried partner, sibling, diplomatic relation
+    empiricist: spouse, unmarried partner, sibling, child
+
+Same slice, different reasons -- shared-scope/different-norms by construction.
+
+**PHASES 5-6 — judged candidates** (later milestones; the triples are real):
+
+| candidate | truth | formalist | empiricist |
+|---|---|---|---|
+| Mariah Carey --spouse-- Sean Penn | verified false | anomaly | anomaly |
+| Russell Brand --spouse-- Katy Perry | TRUE, but the graph's one unreciprocated spouse edge | **anomaly** (mutuality violated) | **ok** (really married) |
+| Katharine McPhee --spouse-- David Foster | true, both ways | ok | ok |
+
+**7 — composed final list:**
+
+    A AND B agree   Mariah Carey --spouse-- Sean Penn     <- scores both agents
+    A only          Russell Brand --spouse-- Katy Perry   <- THE DISAGREEMENT SET
+    B only          (empty here)
+
+The disagreement row is the architecture's product: a true fact, anomalous
+from one observability point, unremarkable from another.
+
+**Portability, one line:** hand the formalist's norms to the Countries graph
+and phase 2 maps them to `neighbor` (borders are mutual). Same norms, new
+dataset, new scope -- the viewpoint never came from either dataset.
+
+---
+
+## 11. Milestone 2 — implementation plan (blind setup, ①–④)
+
+Rebuild of the setup stage on the §9 design. Ends at scopes selected; scorer,
+candidates and verdicts stay out of scope.
+
+| # | piece | change | ~lines |
+|---|---|---|---|
+| 1 | `loaders/codexs.py` | add `CARD` (the §9-grain text, exactly as in §10) | +6 |
+| 2 | `tools/assign_perspective.py` | NEW, replaces `assign_observability_point` (deleted): root's only tool; validates agent name, non-empty persona, differing-personas `_essence` guard; writes `persona_1/2` | 80 |
+| 3 | `tools/declare_semantics.py` | NEW, sub agent, phase 1b: `(normal, anomalous, lets_pass)`; caller-keyed → `norms_1/2`; NOT validated against the dataset (it is blind); immutable once set; cross-agent identical-norms guard | 90 |
+| 4 | `tools/select_scope.py` | NEW, sub agent, phase 2: `(relations, why)`; requires own norms first; validates labels via context; writes `scope_1/2` with ids+labels | 70 |
+| 5 | `agents/phase_gate.py` | NEW: `before_tool_callback` — no norms yet → only `declare_semantics` allowed, context tools refused with the teaching error; norms set → context + `select_scope` open, re-declaration refused | 60 |
+| 6 | `agents/root_agent.py` | REWRITE: no context tools — `[assign_perspective]` only; instruction = card + "two genuinely differing personas" | 60 |
+| 7 | `agents/sub_agents.py` | NEW factory (twin discipline as before): instruction = card + persona via `{persona_N}` state templating + the two-phase contract; tools = `[declare_semantics, select_scope]` + context tools; gate + telemetry callbacks | 110 |
+| 8 | `agents/config.py` | update keys (`PERSONA/NORMS/SCOPE_KEYS`), tool lists, budgets | ~30 Δ |
+| 9 | `agents/agent.py` | tree becomes `SequentialAgent(root, ParallelAgent(sub_1, sub_2))` | ~15 Δ |
+| 10 | `scripts/2_run_setup.py` | replaces `2_run_root.py`: runs the tree; prints personas/norms/scopes; records the card verbatim; **ordering proof** — per agent, verify from the trace that `declare_semantics` precedes the first context call, print BLINDNESS VERIFIED or mark the run invalid | 140 |
+| 11 | `scripts/check_gate.py` | NEW rig, no API: gate blocks/opens correctly, immutability, persona guard, scope-requires-norms | 80 |
+
+Unchanged: `1_prepare_graph.py`, `check_context.py`, the four context tools,
+`context.py`, `telemetry.py`, `graph.py`, `active.py`.
+
+Order: 1–2 + 6 (root testable alone, ~3 calls) → 3–5 → 11 (offline gate
+proof) → 7–9 → 10 → offline suite (parse, ADK load, declaration transmission,
+firewall, check_context, check_gate) → 2–3 live runs.
+
+Quota: root ~3 + each sub agent ~5–7 → **~15–17 calls/run**, at the ceiling;
+retry absorbs it.
+
+Exit questions this milestone answers:
+1. Do blind norms come out free of dataset vocabulary and data-statistics
+   language? (Milestone 1's did not -- that is the regression test.)
+2. Do persona-derived norms actually differ, or reconverge despite personas?
+3. Does phase-2 mapping choose sensible, overlapping scopes?
+
+### Milestone 2 — built and measured (26 Aug 2026)
+
+All 11 pieces built. Offline: 25/25 gate checks pass; tree loads; all 7 tool
+descriptions transmit; no cross-key leak; no schema words in the root's
+instruction; firewall clean. Two live runs, both `completed`:
+
+| | run 072336 | run 072441 |
+|---|---|---|
+| calls / time | 10 / 12.3s | 13 / 44.4s (4 retries -- ceiling absorbed) |
+| **blindness proof** | **VERIFIED both agents** (norms at #2/#3, first data call at #4/#5) | **VERIFIED both agents** |
+| personas | structural formalist vs empirical realist | structural formalist vs empirical historian |
+| norms differ | yes -- and BOTH carry the "may flag what is factually true" stance | yes |
+| scope overlap | 6 relations shared (spouse, sibling, diplomatic relation, citizenship, birth, death) | agent 1's scope (spouse, sibling, diplomatic relation) is a SUBSET of agent 2's 14 |
+
+Exit questions:
+1. **Blind norms free of dataset vocabulary?** Yes, and mechanically proven
+   per run. Norms speak in world/ontology terms ("cardinality", "birthplaces")
+   -- no codex-s labels, no data statistics. The Milestone-1 regression
+   (norms soaked in schema) is gone.
+2. **Do persona-derived norms differ?** Yes, sharply: the formalist flags
+   structural violations "regardless of real-world plausibility" (= flags
+   TRUE facts); the realist flags falsehoods "even if the graph schema is
+   formally unbroken". The worked example's target pair, produced unprompted.
+3. **Sensible overlapping scopes?** Yes -- substantial overlap both runs,
+   including the disagreement-relevant symmetric relations. The
+   Russell Brand one-way spouse edge falls in BOTH agents' scopes in both
+   runs: the disagreement case is live.
+
+Observed, for the seed harness later: the root's persona AXIS was
+formalist-vs-external-truth in both runs. Within-run difference is what the
+design needs and it is strong; across-run persona variance is unmeasured.
