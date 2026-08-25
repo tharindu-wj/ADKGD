@@ -5,6 +5,20 @@ from utils import profile
 
 
 def describe_relation(relation: str) -> str:
+    """Everything countable about one relation.
+
+    Returns its triple count, how many distinct heads and tails it has, its
+    cardinality, what share of its triples also appear reversed (symmetry),
+    how exclusive its tail vocabulary is to it rather than shared with other
+    relations, how many tails occur only once, and its commonest tails.
+
+    Use it on any relation your goal concerns. Symmetry and cardinality say
+    what SHAPE a sound triple has; the commonest tails show you what kind of
+    thing sits in that slot. None of it is evidence about a specific triple.
+
+    Args:
+        relation: the relation name, exactly as list_relations spells it.
+    """
     triples = graph.load_triples(DATASET.KG)
     d = profile.relation_detail(triples, relation)
     if d is None:

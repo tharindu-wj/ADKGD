@@ -9,6 +9,16 @@ from utils import profile
 
 
 def list_relations() -> str:
+    """Every relation in the graph, with its size and shape. Start here.
+
+    Returns the totals for the whole graph, then one row per relation: how many
+    triples use it, how many distinct heads and tails it has, and whether it is
+    one-to-one, many-to-one or many-to-many.
+
+    This is the only view of the whole graph you get. It tells you what the
+    relations ARE called and how they behave; it tells you nothing about
+    whether any particular triple is right.
+    """
     triples = graph.load_triples(DATASET.KG)
     g = profile.graph_summary(triples)
     rows = profile.relation_summary(triples)

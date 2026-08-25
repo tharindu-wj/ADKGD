@@ -20,6 +20,26 @@ SHOW = 8
 
 
 def run_scorer(scorer: str, budget: float = 0.10, model: str = "distmult") -> str:
+    """Score every triple with one scorer and show you the worst of them.
+
+    This is the only way to get a number out of this graph. Returns how many
+    triples were flagged, the spread of scores across the whole graph and
+    across the flagged slice, and a handful of the flagged triples themselves.
+
+    Nothing it returns says whether a flag is CORRECT. There is no answer key
+    here and none will be offered. Judging the triples it hands back is your
+    job, and the reason it hands them back at all.
+
+    You must call declare_semantics before this will answer you.
+
+    Args:
+        scorer: which scorer to run. Ask for one that exists; the error tells
+            you the menu if you get it wrong.
+        budget: the fraction of the graph to flag, above 0 and at most 0.5.
+            This is a review cost -- every flagged triple is one someone would
+            have to check.
+        model: which trained model to use, for scorers that need one.
+    """
     if scorer not in SCORERS:
         return (f"ERROR: no scorer '{scorer}'. "
                 f"Available: {', '.join(sorted(SCORERS))}.")
