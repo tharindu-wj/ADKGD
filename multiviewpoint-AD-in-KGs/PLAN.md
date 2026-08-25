@@ -124,8 +124,11 @@ This overturns three things this page previously asserted:
 
 - *"An agent often fails to answer at all"* (7/12) — **false.** 12/12 when the
   run is not quota-starved. The failures were refused requests.
-- *"Divergence is not reliable"* — **false so far.** Every run split, one agent
-  taking `plausibility` and the other `neighbourhood`.
+- *"Divergence is not reliable"* — **overturned, then partly restored.** Six of
+  six split, one agent taking `plausibility` and the other `neighbourhood`. A
+  seventh clean run afterwards gave `neighbourhood` twice, so it is 6/7, not
+  6/6. Divergence is common here, not guaranteed — which is what §2.5 said
+  should be measured rather than forced.
 - *"The agents pick deep budgets, 10–30%"* — **much tighter now**: nothing above
   15%. Still above the 1–5% ADKGD reports at, but not wildly.
 
@@ -167,7 +170,7 @@ before that date was made by agents inferring four tools from their names.
 
 | # | build | why here | effort |
 |---|---|---|---|
-| **0** | **the quota ceiling** | The tree needs ~19 model calls; the free tier allows 15/minute. A run completes only if it happens to be slow. Until this is resolved — throttle the tree, trim the root's 4 profiling calls to 2, honour the API's own `retryDelay`, or pay — **no measurement of agent behaviour is reliable**, because the sample is whichever runs were slow enough to survive. | ~30 lines, or a billing change |
+| ~~0~~ | ~~the quota ceiling~~ | **Done 25 Aug 2026.** `agents/config.py` now passes `HttpRetryOptions` to the model. 429 was always in google-genai's retriable codes, but retry is OFF unless you pass options, and the defaults (1,2,4,8s) are too shallow for a window the API says needs ~53s. Waits are now 10/20/40/70s. Verified by burning 14 of 15 quota requests and then running: 19 calls, 5 retried, **run completed** in 126.6s where it would previously have been truncated. Costs nothing when under the limit. | done |
 | **1** | **reviewer validation** | With no human downstream, the agent's judgement is the only thing steering the loop. Hand it flagged triples with no labels, ask "is this fact true?", compare to the answer key. **90%+ and the loop has a judge; 60% and the rest is built on noise.** | ~70 lines |
 | 2 | portability blockers | Guard `corrupt()` on an empty pool (crashes on Nations, 20/20 seeds); refuse a collapsed scorer spread; report the tie block at the budget cut; truncate the "unknown relation" error; derive `KINDS` from the data. None changes a Countries result. | ~40 lines total |
 | 3 | a second dataset | Nations or FB15k-237, to find out what else only works here. Blocked on #2. | ~2 h |
@@ -176,8 +179,13 @@ before that date was made by agents inferring four tools from their names.
 | 6 | more scorers | Two is a menu a `for` loop can exhaust; "the agent chose well" stays indistinguishable from luck until it is bigger. | ~80 each |
 | 7 | domain KB | Only matters on a graph whose entity names are opaque. Not Countries. | ~60 lines |
 
-**#0 moved to the top on 25 Aug 2026** and displaced everything. It is not a
-feature; it is the reason the numbers on this page cannot be believed.
+**#0 was fixed the same day it was found.** Trimming calls could never have
+worked: two viewpoints at 6-7 each is 12-14 before the root does anything, so
+the tree cannot fit under a 15/minute ceiling — it has to wait instead. A run
+now records `retries` and `seconds`, because a retry that SUCCEEDS never
+reaches the error callback, and without that a run at the ceiling would just
+quietly get slower. **A run with retries > 0 is a run that would have been
+truncated before**; one with retries = 0 got lucky on timing.
 
 What has landed beside this list:
 
@@ -186,8 +194,8 @@ What has landed beside this list:
   This also delivered the old item 2 for free — `run_scorer` and `submit_spec`
   now both describe the budget as a review cost.
 - **`submit_spec`.** The spec is handed in by a tool call rather than scraped
-  from the agent's last message. Whether that improves capture is **untested**;
-  every run measuring it was quota-starved.
+  from the agent's last message. Measured over six clean runs: **12/12 specs,
+  all of them via the tool**, none falling back to text-scraping.
 - **Telemetry.** `agents/telemetry.py` records model calls and errors;
   `scripts/check_agent_turns.py` shows every response's finish_reason live.
 
@@ -197,8 +205,9 @@ What has landed beside this list:
   the evidence, not a description of it. This was item 4 on the old list.
 - **A label-free metric.** Because a frame names its relations, the evaluator
   can report what share of an agent's flags actually used them, against the base
-  rate. One run has already scored **&minus;21.8 points** — an agent flagging the
-  relation it declared it was *not* auditing.
+  rate. It has a sign and it moves: one run scored **&minus;21.8 points** (an
+  agent flagging the relation it said it was *not* auditing), a later one
+  **+16.3**. No labels are involved in either.
 - `.env` now says `GOOGLE_API_KEY`, not `GEMINI_KEY`. ADK loads `.env` fine, but
   the `google-genai` client underneath only reads `GOOGLE_API_KEY` or
   `GEMINI_API_KEY` — the invented name was silently ignored, so `adk web` came

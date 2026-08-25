@@ -25,18 +25,44 @@ what makes this observation rather than handling -- the error propagates
 exactly as it would without us.
 """
 import collections
+import logging
+import time
 
 CALLS = collections.Counter()
 ERRORS = []
+RETRIES = []
+_started = [None]
 
 #: Substrings that mean "the API refused", not "the agent decided".
 _QUOTA = ("RESOURCE_EXHAUSTED", "429", "quota", "rate limit")
+
+#: The client logs one INFO line per backoff before it sleeps. A retry that
+#: SUCCEEDS never reaches on_model_error_callback -- ADK sits above the retry --
+#: so without this a run would just quietly get slower and the fact that we are
+#: sitting on the rate-limit ceiling would be invisible again.
+_GENAI_LOGGER = "google_genai._api_client"
+
+
+class _RetryWatcher(logging.Handler):
+    def emit(self, record):
+        msg = record.getMessage()
+        if "Retrying" in msg:
+            RETRIES.append(" ".join(msg.split())[:200])
+
+
+_watcher = _RetryWatcher(level=logging.INFO)
 
 
 def reset():
     """Call before a run. Otherwise counts accumulate across runs."""
     CALLS.clear()
     ERRORS.clear()
+    RETRIES.clear()
+    _started[0] = time.monotonic()
+    lg = logging.getLogger(_GENAI_LOGGER)
+    if _watcher not in lg.handlers:
+        lg.addHandler(_watcher)
+    lg.setLevel(min(lg.level or logging.INFO, logging.INFO))
 
 
 def record_response(callback_context, llm_response):
@@ -59,19 +85,32 @@ def record_error(callback_context, llm_request, error):
 
 def health():
     """What happened to this run's model calls, for the run file."""
+    started = _started[0]
     return {
         "model_calls": dict(CALLS),
         "total_model_calls": sum(CALLS.values()),
         "errors": list(ERRORS),
         "truncated": bool(ERRORS),
         "quota_exhausted": any(e["quota"] for e in ERRORS),
+        # A run that had to wait is a run at the ceiling, even if it completed.
+        "retries": len(RETRIES),
+        "seconds": round(time.monotonic() - started, 1) if started else None,
     }
 
 
 def render(h):
     """One human-readable verdict on whether the run is worth believing."""
     calls = ", ".join(f"{a} {n}" for a, n in sorted(h["model_calls"].items()))
-    lines = [f"  model calls: {h['total_model_calls']} ({calls})"]
+    took = f" in {h['seconds']}s" if h.get("seconds") else ""
+    lines = [f"  model calls: {h['total_model_calls']} ({calls}){took}"]
+
+    if h.get("retries"):
+        lines.append(f"  {h['retries']} request(s) were rate limited and RETRIED. "
+                     f"The run is")
+        lines.append("  intact -- the waiting is why it took this long -- but the")
+        lines.append("  tree is sitting on the quota ceiling, so a run that is not")
+        lines.append("  retried is a run that got lucky on timing.")
+
     if not h["errors"]:
         lines.append("  every model call completed -- this run is complete.")
         return "\n".join(lines)
