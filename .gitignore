@@ -17,3 +17,6 @@ experiments/kgsage/outputs
 .env
 multi-observerbility-AD/runs
 multi-observerbility-AD/agent_adk_single/.adk/
+
+ADKGD
+KGSAGE
