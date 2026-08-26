@@ -58,6 +58,7 @@ def review_candidates(tool_context=None) -> str:
             break
         review_id = f"r{added + 1}"
         served[review_id] = {"triple": list(triple),
+                             "text": ctx.triple_text(triple),
                              "note": "additional candidate for your review",
                              "generator": "second_opinion"}
         already.add(triple)

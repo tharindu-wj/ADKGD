@@ -109,8 +109,9 @@ def find_candidates(generator: str, why: str = "", page: int = 1,
             budget_hit = True
             break
         candidate_id = f"c{len(served) + 1}"
-        served[candidate_id] = {"triple": list(triple), "note": note,
-                                "generator": generator}
+        served[candidate_id] = {"triple": list(triple),
+                                "text": ctx.triple_text(triple),
+                                "note": note, "generator": generator}
         id_of_triple[triple] = candidate_id
         lines.append(f"  {candidate_id}. {ctx.triple_text(triple)}  [{note}]")
 

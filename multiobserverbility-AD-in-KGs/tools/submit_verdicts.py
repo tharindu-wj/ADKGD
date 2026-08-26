@@ -73,6 +73,7 @@ def submit_verdicts(verdicts: list[dict], tool_context=None) -> str:
     for candidate_id, verdict, why in accepted:
         judged[candidate_id] = {"verdict": verdict, "why": why,
                                 "triple": served[candidate_id]["triple"],
+                                "text": served[candidate_id].get("text", ""),
                                 "generator": served[candidate_id]["generator"]}
     tool_context.state[judged_key] = json.dumps(judged)
 
