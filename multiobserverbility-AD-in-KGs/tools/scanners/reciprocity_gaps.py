@@ -1,9 +1,9 @@
-"""Generator: one-way records of relations that are mostly two-way.
+"""Scanner: one-way records of relations that are mostly two-way.
 
 If 98% of a relation's triples appear in both directions, that relation is
 mutual by usage -- and the remaining one-way edges are exactly what a
 mutuality norm is about. Note that a planted FALSE fact on a mutual relation
-is usually one-way too (nobody planted its reverse), so this generator can
+is usually one-way too (nobody planted its reverse), so this scanner can
 surface falsehoods as a side effect. The judge decides which is which.
 
 Deterministic, no model, no labels.

@@ -1,7 +1,7 @@
 """Tool: ask one assistant for suspicious facts, a page at a time.
 
 THE ONLY WAY AN OBSERVER REACHES THE GRAPH'S CONTENTS AT SCALE. The
-generators sweep all 37,043 triples deterministically; this tool serves what
+scanners sweep all 37,043 triples deterministically; this tool serves what
 they found -- restricted to the caller's scope, resolved to labels, in pages
 sized for reading, capped at the observer's total reading budget.
 
@@ -9,27 +9,27 @@ Every served candidate gets a stable id (c1, c2, ...). submit_verdicts only
 accepts ids that were really served to the caller -- an observer cannot pass
 judgement on a fact it was never shown.
 
-Adding a generator to the menu does NOT change any agent's tool list -- the
+Adding a scanner to the menu does NOT change any agent's tool list -- the
 predecessor's lesson: the menu lives behind one tool.
 """
 import json
 
 from loaders.context import get_context
 from tools.observers import OBSERVER_NAMES, state_key
-from tools.generators import (implausible_links, multiplicity_outliers,
+from tools.scanners import (implausible_links, multiplicity_outliers,
                               reciprocity_gaps, type_clashes)
 
-#: the menu. Each generator knows ONE kind of suspicious.
-GENERATORS = {g.NAME: g for g in (implausible_links, reciprocity_gaps,
+#: the menu. Each scanner knows ONE kind of suspicious.
+SCANNERS = {g.NAME: g for g in (implausible_links, reciprocity_gaps,
                                   multiplicity_outliers, type_clashes)}
 
 PAGE_SIZE = 10
 
-#: an observer's total reading budget, across all generators and pages
+#: an observer's total reading budget, across all scanners and pages
 READING_BUDGET = 30
 
 
-def find_candidates(generator: str, why: str = "", page: int = 1,
+def find_suspects(scanner: str, why: str = "", page: int = 1,
                     tool_context=None) -> str:
     """Get a page of suspicious facts from one assistant. Judge every one.
 
@@ -49,7 +49,7 @@ def find_candidates(generator: str, why: str = "", page: int = 1,
     judged by YOU via submit_verdicts.
 
     Args:
-        generator: which assistant to ask.
+        scanner: which assistant to ask.
         why: first call to each assistant only -- one sentence connecting it
             to your norms.
         page: 1 for the first ten candidates, 2 for the next ten, and so on.
@@ -65,23 +65,23 @@ def find_candidates(generator: str, why: str = "", page: int = 1,
                 "the relations your norms apply to.")
     scope_ids = {entry["id"] for entry in json.loads(scope_raw)["scope"]}
 
-    if generator not in GENERATORS:
-        return (f"ERROR: no assistant named '{generator}'. "
-                f"The menu: {', '.join(sorted(GENERATORS))}.")
+    if scanner not in SCANNERS:
+        return (f"ERROR: no assistant named '{scanner}'. "
+                f"The menu: {', '.join(sorted(SCANNERS))}.")
 
     # First use of each assistant must be tied to a norm -- recorded, so the
     # run file shows WHY this agent hunted the way it did.
-    used_key = state_key("generators", agent)
+    used_key = state_key("scanners", agent)
     used = json.loads(tool_context.state.get(used_key) or "{}")
-    if generator not in used:
+    if scanner not in used:
         if not why or not why.strip():
-            return (f"ERROR: first call to {generator} -- say in one sentence "
+            return (f"ERROR: first call to {scanner} -- say in one sentence "
                     f"which of your norms this assistant serves (why=...).")
-        used[generator] = why.strip()
+        used[scanner] = why.strip()
         tool_context.state[used_key] = json.dumps(used)
 
     try:
-        found = GENERATORS[generator].find(scope_ids, ctx)
+        found = SCANNERS[scanner].find(scope_ids, ctx)
     except RuntimeError as refusal:
         return f"ERROR: {refusal}"
 
@@ -92,10 +92,10 @@ def find_candidates(generator: str, why: str = "", page: int = 1,
     page = max(1, int(page))
     page_rows = found[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
     if not page_rows:
-        return (f"{generator} has nothing on page {page} -- it found "
+        return (f"{scanner} has nothing on page {page} -- it found "
                 f"{len(found)} candidates in your scope in total.")
 
-    lines = [f"{generator}: page {page} of "
+    lines = [f"{scanner}: page {page} of "
              f"{(len(found) + PAGE_SIZE - 1) // PAGE_SIZE} "
              f"({len(found)} candidates in your scope)."]
     budget_hit = False
@@ -111,7 +111,7 @@ def find_candidates(generator: str, why: str = "", page: int = 1,
         candidate_id = f"c{len(served) + 1}"
         served[candidate_id] = {"triple": list(triple),
                                 "text": ctx.triple_text(triple),
-                                "note": note, "generator": generator}
+                                "note": note, "scanner": scanner}
         id_of_triple[triple] = candidate_id
         lines.append(f"  {candidate_id}. {ctx.triple_text(triple)}  [{note}]")
 

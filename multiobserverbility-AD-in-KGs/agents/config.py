@@ -7,9 +7,9 @@ from tools.observers import OBSERVER_NAMES, state_key
 from tools.declare_semantics import declare_semantics
 from tools.describe_dataset import describe_dataset
 from tools.describe_relation import describe_relation
-from tools.find_candidates import find_candidates
-from tools.lookup import lookup
-from tools.sample import sample
+from tools.find_suspects import find_suspects
+from tools.explain_term import explain_term
+from tools.show_examples import show_examples
 from tools.select_scope import select_scope
 from tools.submit_verdicts import submit_verdicts
 
@@ -30,19 +30,19 @@ ROOT_TOOL_BUDGET = 4         # two assign_perspective calls + retry room
 OBSERVER_TOOL_BUDGET = 16   # declare, look, select, then find and judge
 
 #: the dataset tools -- open in phase 2 only, the phase gate holds the door
-DATA_TOOLS = [describe_dataset, describe_relation, lookup, sample]
+DATA_TOOLS = [describe_dataset, describe_relation, explain_term, show_examples]
 
 #: the root sees the dataset CARD in its instruction and nothing else --
 #: no data tools AT ALL, so its personas cannot be schema-shaped
 ROOT_TOOLS = [assign_perspective]
 
 OBSERVER_TOOLS = ([declare_semantics, select_scope] + DATA_TOOLS
-                   + [find_candidates, submit_verdicts])
+                   + [find_suspects, submit_verdicts])
 
 #: session-state keys the run script reads after the tree finishes
 PERSONA_KEYS = tuple(state_key("persona", n) for n in OBSERVER_NAMES)
 NORMS_KEYS = tuple(state_key("norms", n) for n in OBSERVER_NAMES)
 SCOPE_KEYS = tuple(state_key("scope", n) for n in OBSERVER_NAMES)
-GENERATOR_KEYS = tuple(state_key("generators", n) for n in OBSERVER_NAMES)
+SCANNER_KEYS = tuple(state_key("scanners", n) for n in OBSERVER_NAMES)
 SERVED_KEYS = tuple(state_key("served", n) for n in OBSERVER_NAMES)
 VERDICT_KEYS = tuple(state_key("verdicts", n) for n in OBSERVER_NAMES)

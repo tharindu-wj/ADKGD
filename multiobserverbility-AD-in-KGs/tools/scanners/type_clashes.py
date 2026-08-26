@@ -1,4 +1,4 @@
-"""Generator: entities whose kind does not fit the slot they sit in.
+"""Scanner: entities whose kind does not fit the slot they sit in.
 
 If 97% of a relation's heads are humans, a non-human head is what a typing
 norm is about. Dominance is measured from the data (no schema file exists),

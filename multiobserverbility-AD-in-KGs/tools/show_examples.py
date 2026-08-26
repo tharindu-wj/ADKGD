@@ -11,7 +11,7 @@ from loaders.context import get_context
 MAX_TRIPLES = 10
 
 
-def sample(relation: str = None, n: int = 5, seed: int = 0) -> str:
+def show_examples(relation: str = None, n: int = 5, seed: int = 0) -> str:
     """A few real triples, so you can see what the data looks like.
 
     Returns up to 10 triples drawn at random, optionally from one relation,

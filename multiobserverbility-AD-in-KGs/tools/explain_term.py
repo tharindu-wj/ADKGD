@@ -1,11 +1,11 @@
 """Tool: the definitions store, made queryable -- one name at a time."""
 from loaders.context import get_context
 
-#: how many close names to offer when a lookup misses
+#: how many close names to offer when a term is not found
 MAX_SUGGESTIONS = 8
 
 
-def lookup(term: str) -> str:
+def explain_term(term: str) -> str:
     """What one name means: its description, its kind, and how it is used.
 
     Works for entities and relations alike. For an entity: its Wikidata

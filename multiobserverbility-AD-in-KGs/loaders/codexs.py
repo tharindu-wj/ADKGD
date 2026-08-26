@@ -32,7 +32,7 @@ TYPE_DEFINITIONS = DATA / "types" / "en" / "types.json"
 KG = ROOT / "prepared" / "kg.tsv"
 
 #: the answer key, written beside the graph by the same run. Read by the
-#: evaluator ALONE -- never by a tool, a generator, or an agent.
+#: evaluator ALONE -- never by a tool, a scanner, or an agent.
 TRUTH = ROOT / "prepared" / "ground_truth.tsv"
 
 #: written by scripts/2_train_scorer.py -- the trained model, the score for

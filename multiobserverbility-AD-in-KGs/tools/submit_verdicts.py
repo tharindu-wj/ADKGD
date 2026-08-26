@@ -1,12 +1,12 @@
 """Tool: the observer's judgement, one verdict per served candidate.
 
 The only place an observer's opinion becomes part of the run. Verdicts refer
-to candidate ids from find_candidates, and an id never served to THIS caller
+to candidate ids from find_suspects, and an id never served to THIS caller
 is refused -- no judging facts you were not shown, no judging the other
 observer's stack.
 
 Verdicts remove and explain; they never score, rank, or reorder. The kept
-order downstream is the generators' order -- an LLM output is never a
+order downstream is the scanners' order -- an LLM output is never a
 ranking key.
 """
 import json
@@ -41,7 +41,7 @@ def submit_verdicts(verdicts: list[dict], tool_context=None) -> str:
 
     served = json.loads(tool_context.state.get(state_key("served", agent)) or "{}")
     if not served:
-        return "ERROR: nothing has been served to you yet. find_candidates first."
+        return "ERROR: nothing has been served to you yet. find_suspects first."
 
     if not verdicts:
         return "ERROR: an empty batch judges nothing."
@@ -74,7 +74,7 @@ def submit_verdicts(verdicts: list[dict], tool_context=None) -> str:
         judged[candidate_id] = {"verdict": verdict, "why": why,
                                 "triple": served[candidate_id]["triple"],
                                 "text": served[candidate_id].get("text", ""),
-                                "generator": served[candidate_id]["generator"]}
+                                "scanner": served[candidate_id]["scanner"]}
     tool_context.state[judged_key] = json.dumps(judged)
 
     remaining = [cid for cid in served if cid not in judged]

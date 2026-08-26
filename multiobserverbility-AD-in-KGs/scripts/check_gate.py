@@ -59,7 +59,7 @@ check("accepts a genuinely different persona", second.startswith("Recorded"))
 check("announces completion", "done" in second)
 
 print("\nphase 1: the data is locked until norms exist")
-for tool_name in ("describe_dataset", "describe_relation", "lookup", "sample"):
+for tool_name in ("describe_dataset", "describe_relation", "explain_term", "show_examples"):
     blocked = keep_norms_blind(FakeTool(tool_name), {}, agent_1)
     check(f"{tool_name} blocked before norms", blocked is not None)
 check("declare_semantics itself is never blocked",
@@ -104,21 +104,21 @@ check("refuses re-selection (scope is a commitment)",
 check("stores resolved ids", '"P26"' in state["scope_1"])
 
 print("\nphase 3: finding and judging")
-from tools.find_candidates import find_candidates  # noqa: E402
+from tools.find_suspects import find_suspects  # noqa: E402
 from tools.submit_verdicts import submit_verdicts  # noqa: E402
 
 fresh = FakeToolContext("observer_2", {})
-check("find_candidates refuses without a scope",
-      find_candidates("reciprocity_gaps", "w", 1, fresh).startswith("ERROR"))
+check("find_suspects refuses without a scope",
+      find_suspects("reciprocity_gaps", "w", 1, fresh).startswith("ERROR"))
 check("submit_verdicts refuses before anything is served",
       submit_verdicts([{"id": "c1", "verdict": "ok", "why": "w"}],
                       fresh).startswith("ERROR"))
 
 check("unknown assistant is a readable error",
-      find_candidates("psychic", "w", 1, agent_1).startswith("ERROR"))
+      find_suspects("psychic", "w", 1, agent_1).startswith("ERROR"))
 check("first call to an assistant requires a why",
-      find_candidates("reciprocity_gaps", "", 1, agent_1).startswith("ERROR"))
-page = find_candidates("reciprocity_gaps",
+      find_suspects("reciprocity_gaps", "", 1, agent_1).startswith("ERROR"))
+page = find_suspects("reciprocity_gaps",
                        "my mutuality norm concerns two-way bonds", 1, agent_1)
 check("candidates served with stable ids", "c1." in page)
 check("serving is recorded", "served_1" in state and "c1" in state["served_1"])

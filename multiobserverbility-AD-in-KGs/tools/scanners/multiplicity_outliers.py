@@ -1,4 +1,4 @@
-"""Generator: entities with several values where one is the rule.
+"""Scanner: entities with several values where one is the rule.
 
 A person has one place of birth. If a relation is single-valued for at least
 MOSTLY_SINGLE of its heads, then heads carrying two or more values are what a

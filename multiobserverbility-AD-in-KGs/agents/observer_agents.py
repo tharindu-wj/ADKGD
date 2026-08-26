@@ -46,7 +46,7 @@ choose now.
 
 PHASE 3 -- FIND AND JUDGE.
 You cannot read the whole graph, so assistants sweep it for you: call
-find_candidates with a generator whose kind of suspicious MATCHES YOUR NORMS
+find_suspects with a scanner whose kind of suspicious MATCHES YOUR NORMS
 (its description lists the menu), and say which norm it serves. Then judge --
 every candidate you are served gets a verdict through submit_verdicts, by
 YOUR norms alone: anomaly, ok, out_of_scope, or unsure, each with one

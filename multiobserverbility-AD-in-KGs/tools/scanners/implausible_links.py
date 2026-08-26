@@ -1,6 +1,6 @@
-"""Generator: facts the trained link predictor finds unlikely.
+"""Scanner: facts the trained link predictor finds unlikely.
 
-The one generator that needs a model. scripts/2_train_scorer.py trains a KGE
+The one scanner that needs a model. scripts/2_train_scorer.py trains a KGE
 model on the (contaminated) graph and scores EVERY triple once, offline, into
 prepared/scores.npy -- so at run time this is an array lookup, no torch, no
 40-second model load inside an agent's turn, and the scores are identical
@@ -10,7 +10,7 @@ A false fact tends to break the regularities the embedding learned, so a low
 score is a falsehood LEAD -- serving "false in the world" norms. It is only a
 lead: rare-but-true facts also score low, which is exactly why a judge reads
 the shortlist. Note the model cannot see direction on symmetric relations --
-that blindness is why reciprocity_gaps exists as a separate generator.
+that blindness is why reciprocity_gaps exists as a separate scanner.
 
 The manifest check refuses a score file computed for a different graph: a
 stale file would silently score triples that no longer exist.
@@ -30,7 +30,7 @@ def find(scope_ids, ctx):
     if not DATASET.SCORES.exists():
         raise RuntimeError(
             "no score file. Run scripts/2_train_scorer.py first -- "
-            "this generator reads its scores precomputed.")
+            "this scanner reads its scores precomputed.")
 
     manifest = json.loads(DATASET.SCORES_MANIFEST.read_text(encoding="utf-8"))
     kg_hash = hashlib.sha256(DATASET.KG.read_bytes()).hexdigest()

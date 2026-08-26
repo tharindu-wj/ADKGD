@@ -599,3 +599,13 @@ message is "Begin the observation." `agents/reviewer_agents.py` holds the
 returning observers (second opinions). "Audit"/"auditor" survive only in
 historical sections of this document and in old run filenames, which the
 evaluator still accepts via --run.
+
+**Tool naming, tightened (26 Aug).** `sample` -> `show_examples` (actionable,
+matches the describe_ family), `lookup` -> `explain_term` (says what it looks
+up), `find_candidates` -> `find_suspects`, and the generators package ->
+`tools/scanners/` -- they scan the whole graph for one kind of suspicious
+each and hand the observer suspects to judge. "Scanner" kept over "scorer
+assistant" deliberately: three of the four produce no scores at all, only the
+KGE-backed one does, and calling them scorers would smuggle back the idea
+that the machinery ranks while the observer rubber-stamps. The observer is
+the only judge; scanners only point.
