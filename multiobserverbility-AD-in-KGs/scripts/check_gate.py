@@ -38,6 +38,33 @@ class FakeToolContext:
         self.state = state
 
 
+# Relation probes come from the loaded dataset, so the rig ports with it.
+# REL_A must be one the one_way_links scanner can fire on (mostly two-way,
+# with at least one one-way edge), because the phase-3 checks below serve a
+# candidate from it. Derived by the scanner's own criterion, not by name.
+import collections  # noqa: E402
+
+from loaders.context import get_context  # noqa: E402
+
+_ctx = get_context()
+_by_relation = collections.defaultdict(list)
+for _t in _ctx.triples:
+    _by_relation[_t[1]].append(_t)
+_gappy = []
+for _rid, _triples in _by_relation.items():
+    _present = set(_triples)
+    _one_way = sum(1 for t in _triples if (t[2], t[1], t[0]) not in _present)
+    _symmetry = 1 - _one_way / len(_triples)
+    if _symmetry >= 0.5 and _one_way:
+        _gappy.append((_symmetry, _rid))
+if not _gappy:
+    raise SystemExit("this rig needs a mostly-two-way relation with at least "
+                     "one one-way edge; the loaded dataset has none.")
+REL_A_ID = max(_gappy)[1]
+REL_A = _ctx.relation_label(REL_A_ID)
+_others = [l for l in _ctx.all_relation_labels() if l != REL_A]
+REL_B, REL_C = _others[0], _others[1 % len(_others)]
+
 state = {}
 agent_1 = FakeToolContext("observer_1", state)
 agent_2 = FakeToolContext("observer_2", state)
@@ -65,7 +92,7 @@ for tool_name in ("describe_dataset", "describe_relation", "explain_term", "insp
 check("declare_semantics itself is never blocked",
       keep_norms_blind(FakeTool("declare_semantics"), {}, agent_1) is None)
 check("select_scope refuses before norms",
-      select_scope(["spouse"], "w", agent_1).startswith("ERROR"))
+      select_scope([REL_A], "w", agent_1).startswith("ERROR"))
 
 print("\ndeclaring norms")
 check("rejects an empty field",
@@ -93,15 +120,15 @@ check("data still locked for observer_2 (no norms yet)",
 
 print("\nselecting scope")
 check("rejects an unknown relation",
-      select_scope(["marriage"], "w", agent_1).startswith("ERROR"))
+      select_scope(["zz_no_such_relation"], "w", agent_1).startswith("ERROR"))
 check("rejects an empty why",
-      select_scope(["spouse"], "  ", agent_1).startswith("ERROR"))
-ok = select_scope(["spouse", "unmarried partner", "sibling"],
+      select_scope([REL_A], "  ", agent_1).startswith("ERROR"))
+ok = select_scope([REL_A, REL_B, REL_C],
                   "my mutuality norm concerns inherently two-way bonds", agent_1)
 check("accepts a valid scope", ok.startswith("Recorded"))
 check("refuses re-selection (scope is a commitment)",
-      select_scope(["child"], "w", agent_1).startswith("ERROR"))
-check("stores resolved ids", '"P26"' in state["scope_1"])
+      select_scope([REL_B], "w", agent_1).startswith("ERROR"))
+check("stores resolved ids", REL_A_ID in state["scope_1"])
 
 print("\nphase 3: finding and judging")
 from tools.find_suspects import find_suspects  # noqa: E402

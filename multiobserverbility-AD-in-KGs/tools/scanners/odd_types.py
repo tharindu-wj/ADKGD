@@ -1,7 +1,7 @@
 """Scanner: entities whose kind does not fit the slot they sit in.
 
-If 97% of a relation's heads are humans, a non-human head is what a typing
-norm is about. Dominance is measured from the data (no schema file exists),
+If nearly all of a relation's heads share one type, a head without that
+type is what a typing norm is about. Dominance is measured from the data (no schema file exists),
 so this is "unusual for this graph", not "invalid by decree" -- the judge
 decides whether unusual is wrong.
 
@@ -37,10 +37,11 @@ def find(scope_ids, ctx):
             dominant, covered = counts.most_common(1)[0]
             if covered / len(occupants) < DOMINANCE:
                 continue                # no dominant type, nothing to clash with
-            # One candidate PER OFFENDING ENTITY, not per edge. Taiwan sits
-            # in a hundred diplomatic-relation edges and clashes identically
-            # in all of them -- a judge with a 30-candidate budget must not
-            # be handed a hundred copies of one question.
+            # One candidate PER OFFENDING ENTITY, not per edge. A single
+            # entity can sit in dozens of edges of one relation and clash
+            # identically in all of them (measured; see DESIGN.md) -- a judge
+            # with a bounded budget must not be handed dozens of copies of
+            # one question.
             edges_of_entity = collections.defaultdict(list)
             for triple in ctx.triples:
                 if triple[1] != relation_id:

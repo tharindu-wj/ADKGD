@@ -27,33 +27,39 @@ def banner(title):
 banner("describe_dataset()")
 print(describe_dataset())
 
-banner("describe_relation('spouse')")
-print(describe_relation("spouse"))
+# Probes are drawn from whatever dataset is loaded -- this rig must work
+# unchanged when loaders/active.py points somewhere else.
+from loaders.context import get_context  # noqa: E402
+ctx = get_context()
+probe_relation = ctx.all_relation_labels()[0]
+probe_entity = sorted(info["label"] for info in ctx.entities.values()
+                      if len(info["label"]) >= 6)[0]
+near_miss = probe_entity[:4]
 
-banner("describe_relation('diplomatic relation')")
-print(describe_relation("diplomatic relation"))
+banner(f"describe_relation('{probe_relation}')")
+print(describe_relation(probe_relation))
 
-banner("describe_relation('borders')  -- must be a readable error")
-print(describe_relation("borders"))
+banner("describe_relation('zz_no_such_relation')  -- must be a readable error")
+print(describe_relation("zz_no_such_relation"))
 
-banner("explain_term('Leonhard Euler')")
-print(explain_term("Leonhard Euler"))
+banner(f"explain_term('{probe_entity}')")
+print(explain_term(probe_entity))
 
-banner("explain_term('sibling')")
-print(explain_term("sibling"))
+banner(f"explain_term('{probe_relation}')")
+print(explain_term(probe_relation))
 
-banner("explain_term('Marie')  -- a near-miss, must suggest close names")
-print(explain_term("Marie"))
+banner(f"explain_term('{near_miss}')  -- a near-miss, must suggest close names")
+print(explain_term(near_miss))
 
-banner("inspect_triples('spouse', 5)")
-print(inspect_triples("spouse", 5))
+banner(f"inspect_triples('{probe_relation}', 5)")
+print(inspect_triples(probe_relation, 5))
 
 banner("inspect_triples(n=5)  -- whole graph")
 print(inspect_triples(n=5))
 
 banner("determinism -- same seed twice, then a different seed")
-a = inspect_triples("spouse", 3, seed=7)
-b = inspect_triples("spouse", 3, seed=7)
-c = inspect_triples("spouse", 3, seed=8)
+a = inspect_triples(probe_relation, 3, seed=7)
+b = inspect_triples(probe_relation, 3, seed=7)
+c = inspect_triples(probe_relation, 3, seed=8)
 print(f"  same seed identical: {a == b}")
 print(f"  different seed differs: {a != c}")

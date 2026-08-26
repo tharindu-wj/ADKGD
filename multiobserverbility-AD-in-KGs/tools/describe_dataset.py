@@ -6,6 +6,7 @@ itself instead of crashing the run.
 """
 import collections
 
+from loaders.active import DATASET
 from loaders.context import get_context
 
 
@@ -29,9 +30,11 @@ def describe_dataset() -> str:
         heads_of[relation].add(head)
         tails_of[relation].add(tail)
 
+    # The one sentence of domain comes from the dataset's own CARD -- the
+    # single sanctioned home for dataset-specific text. Hardcoding it here
+    # once leaked one dataset's domain into every dataset's tool.
     lines = [f"{len(ctx.triples)} triples, {len(ctx.entities)} entities, "
-             f"{len(ctx.relations)} relations. "
-             f"Facts about real people, places and organisations.", ""]
+             f"{len(ctx.relations)} relations. {DATASET.CARD}", ""]
     lines.append(f"{'relation':<42}{'triples':>9}{'heads':>8}{'tails':>8}")
     for relation_id, count in triples_using.most_common():
         label = ctx.relation_label(relation_id)

@@ -1,8 +1,8 @@
 """Scanner: entities with several values where one is the rule.
 
-A person has one place of birth. If a relation is single-valued for at least
-MOSTLY_SINGLE of its heads, then heads carrying two or more values are what a
-cardinality norm is about. Each offending EDGE is a candidate (verdicts are
+Some relations hold one value per entity in almost every record. Where a
+relation is single-valued for at least MOSTLY_SINGLE of its heads, heads
+carrying two or more values are what a cardinality norm is about. Each offending EDGE is a candidate (verdicts are
 per triple); its note lists all the values, because the anomaly is the pair,
 not either edge alone.
 

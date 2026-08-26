@@ -36,8 +36,8 @@ def find(scope_ids, ctx):
     kg_hash = hashlib.sha256(DATASET.KG.read_bytes()).hexdigest()
     if manifest["kg_sha256"] != kg_hash:
         raise RuntimeError(
-            "STALE SCORES: prepared/scores.npy was computed for a different "
-            "graph than prepared/kg.tsv. Re-run scripts/2_train_scorer.py.")
+            f"STALE SCORES: {DATASET.SCORES.name} was computed for a different "
+            f"graph than {DATASET.KG.name}. Re-run scripts/2_train_scorer.py.")
 
     scores = np.load(DATASET.SCORES)
     if len(scores) != len(ctx.triples):

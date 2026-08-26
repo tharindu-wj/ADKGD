@@ -8,7 +8,7 @@ MAX_SUGGESTIONS = 8
 def explain_term(term: str) -> str:
     """What one name means: its description, its kind, and how it is used.
 
-    Works for entities and relations alike. For an entity: its Wikidata
+    Works for entities and relations alike. For an entity: its shipped
     description, what KINDS of thing it is (its types), and how often it
     appears in the graph. For a relation: its description and usage.
 

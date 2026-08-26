@@ -1,7 +1,7 @@
 """Tool: ask one assistant for suspicious facts, a page at a time.
 
 THE ONLY WAY AN OBSERVER REACHES THE GRAPH'S CONTENTS AT SCALE. The
-scanners sweep all 37,043 triples deterministically; this tool serves what
+scanners sweep the whole graph deterministically; this tool serves what
 they found -- restricted to the caller's scope, resolved to labels, in pages
 sized for reading, capped at the observer's total reading budget.
 
@@ -45,7 +45,7 @@ def find_suspects(scanner: str, why: str = "", page: int = 1,
 
     Pick assistants that match YOUR norms -- each surfaces only its own kind
     of suspicious, and none of them judges anything. Candidates come back as
-    "c1. Alice --spouse-- Bob [note]"; every one, suspicious or not, is
+    "c1. <head> --<relation>-- <tail>  [note]"; every one, suspicious or not, is
     judged by YOU via submit_verdicts.
 
     Args:

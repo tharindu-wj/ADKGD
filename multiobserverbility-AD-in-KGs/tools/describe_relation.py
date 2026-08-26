@@ -7,7 +7,7 @@ from loaders.context import get_context
 def describe_relation(relation: str) -> str:
     """What one relation means, and how it behaves in this graph.
 
-    Returns its Wikidata description (what the relation MEANS in the world),
+    Returns the description shipped with the dataset (what the relation MEANS),
     then what the data shows: triple count, distinct heads and tails, how many
     tails a head usually has and vice versa, how often triples appear reversed
     (symmetry), the commonest tails, and a few real examples.
@@ -31,7 +31,7 @@ def describe_relation(relation: str) -> str:
     tail_counts = collections.Counter(t for h, r, t in using)
 
     # Symmetry: how many triples have their reverse present under the SAME
-    # relation. High for genuinely mutual relations (sibling, diplomatic).
+    # relation. High for relations that are mutual by nature.
     present = set(using)
     reversed_too = sum(1 for h, r, t in using if (t, r, h) in present)
 

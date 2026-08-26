@@ -1,16 +1,18 @@
 """The definitions store: what every id in the graph MEANS, loaded once.
 
-CoDEx stores triples as Wikidata ids (Q7604, P26). The ids are exact but
-unreadable; the labels ("Leonhard Euler", "spouse") are what an agent can
-reason about. This module loads the four definition files a single time,
-keeps only the entities that actually appear in the prepared graph
-(2,034 of 77,951), and translates between the two languages:
+A dataset stores triples as opaque ids -- exact but unreadable. The labels
+its definition files ship are what an agent can reason about. This module
+loads the definition files a single time, keeps only the entities that
+actually appear in the prepared graph, and translates between the two
+languages:
 
     ids     -- used in files and run records, because they are exact
     labels  -- used by every tool and agent, because they mean something
 
-Labels are unique inside the CoDEx-S vocabulary (verified 26 Aug 2026,
-see DESIGN.md), so translating a label back to its id is unambiguous.
+Tools accept labels as INPUT, which requires labels to be unique. That is a
+property of a dataset, not of this code -- so it is CHECKED at load, and a
+dataset with colliding labels fails loudly here instead of resolving
+ambiguously somewhere downstream.
 """
 import json
 
@@ -54,7 +56,7 @@ class DatasetContext:
                 "description": record.get("description") or "",
             }
 
-        #: entity id -> its type LABELS ("human", "city"), not type ids
+        #: entity id -> its type LABELS (readable words), not type ids
         self.entity_types = {}
         for entity_id in entity_ids:
             labels = []
@@ -62,11 +64,9 @@ class DatasetContext:
                 labels.append(all_types.get(type_id, {}).get("label") or type_id)
             self.entity_types[entity_id] = labels
 
-        # Reverse maps, case-insensitive. Safe because labels are unique here.
-        self._entity_id_by_label = {
-            info["label"].lower(): eid for eid, info in self.entities.items()}
-        self._relation_id_by_label = {
-            info["label"].lower(): rid for rid, info in self.relations.items()}
+        # Reverse maps, case-insensitive. Uniqueness is checked, not assumed.
+        self._entity_id_by_label = _reverse_map(self.entities, "entity")
+        self._relation_id_by_label = _reverse_map(self.relations, "relation")
 
     # ---- translating -----------------------------------------------------
 
@@ -91,7 +91,7 @@ class DatasetContext:
         return self._relation_id_by_label.get(term.lower())
 
     def triple_text(self, triple):
-        """One triple as readable text: 'Leonhard Euler --spouse-- ...'."""
+        """One triple as readable text: '<head> --<relation>-- <tail>'."""
         head, relation, tail = triple
         return (f"{self.entity_label(head)} "
                 f"--{self.relation_label(relation)}-- "
@@ -102,9 +102,29 @@ class DatasetContext:
         return sorted(info["label"] for info in self.relations.values())
 
 
+def _reverse_map(items, what):
+    """label (lowercased) -> id, refusing a dataset whose labels collide."""
+    by_label = {}
+    collisions = set()
+    for item_id, info in items.items():
+        key = info["label"].lower()
+        if key in by_label:
+            collisions.add(info["label"])
+        by_label[key] = item_id
+    if collisions:
+        shown = ", ".join(sorted(collisions)[:5])
+        raise SystemExit(
+            f"{len(collisions)} {what} labels collide in this dataset "
+            f"(e.g. {shown}). Tools accept labels as input, which needs them "
+            f"unique -- disambiguate the labels in the dataset's definition "
+            f"files before running.")
+    return by_label
+
+
 def _read_json(path):
     if not path.exists():
-        raise SystemExit(f"missing {path} -- the CoDEx data folder is incomplete.")
+        raise SystemExit(f"missing {path} -- the dataset's definition files "
+                         "are incomplete.")
     return json.loads(path.read_text(encoding="utf-8"))
 
 

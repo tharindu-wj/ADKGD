@@ -3,9 +3,9 @@
     python scripts/1_prepare_graph.py
     python scripts/1_prepare_graph.py --negatives 500 --seed 42
 
-Merges train + valid + test, then plants a sample of CoDEx's HAND-VERIFIED
-false triples (real people, wrong facts -- "Mariah Carey --spouse-- Sean
-Penn") and writes the answer key beside the graph:
+Merges train + valid + test, then plants a sample of the dataset's HAND-VERIFIED
+false triples (true-looking, human-checked falsehoods -- see DESIGN.md for
+examples) and writes the answer key beside the graph:
 
     prepared/kg.tsv            what every tool and agent reads
     prepared/ground_truth.tsv  what ONLY the evaluator may read
@@ -49,12 +49,11 @@ for split_file in DATASET.TRIPLE_SPLITS:
     print(f"  {split_file.name}: {len(triples)} triples, {len(fresh)} new")
 
 # ---- plant verified-false triples -----------------------------------------
-negative_files = [
-    DATASET.DATA / "triples" / "codex-s" / "valid_negatives.txt",
-    DATASET.DATA / "triples" / "codex-s" / "test_negatives.txt",
-]
+# The loader says where a dataset keeps its negatives; this script only asks.
+# A dataset module without NEGATIVE_SPLITS needs a different contamination
+# protocol, and should fail here, loudly, rather than inherit this one.
 negative_pool = []
-for negative_file in negative_files:
+for negative_file in DATASET.NEGATIVE_SPLITS:
     negative_pool.extend(graph.load_triples(negative_file))
 
 rng = random.Random(args.seed)

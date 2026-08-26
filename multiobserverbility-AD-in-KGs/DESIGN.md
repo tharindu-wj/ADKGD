@@ -619,3 +619,34 @@ multiplicity_outliers -> `too_many_values`, type_clashes -> `odd_types`
 inspection family (describe_dataset, describe_relation, explain_term,
 inspect_triples). Old run files keep historical scanner names in their
 records; the evaluator only displays them.
+
+---
+
+## 15. Dataset-leak audit and purge (27 Aug 2026)
+
+Principle enforced: dataset-specific content lives ONLY in the dataset's
+loader module (`loaders/codexs.py`: CARD, paths, NEGATIVE_SPLITS) and in what
+the inspection tools return from the loaded data at runtime. A 5-lens audit
+(model-facing strings, agent instructions, comments, behavioral hardcoding,
+plus a synthetic-dataset switch test) found and fixed:
+
+- **Model-facing (7)**: `describe_dataset` hardcoded a CARD-like sentence
+  (now interpolates `DATASET.CARD`); `declare_semantics` hinted the domain
+  ("marriages, careers, places" -- deleted; "people or places" -> "entities");
+  `describe_relation`/`explain_term` said "Wikidata description" (-> "the
+  description shipped with the dataset"); `find_suspects` used
+  "Alice --spouse-- Bob" (-> "<head> --<relation>-- <tail>");
+  `unlikely_facts`' stale error hardcoded paths (-> loader values).
+- **Behavioral (6)**: negatives paths moved into the loader as
+  `NEGATIVE_SPLITS`; label uniqueness is now CHECKED at load (a colliding
+  dataset fails loudly) instead of assumed from one dataset's audit; all
+  three rigs derive their probes from the loaded dataset -- check_gate picks
+  its scope relation by the scanner's own criterion, so the rigs port with
+  the switch.
+- **Human-facing (12)**: scanner and loader docstrings de-specified
+  (mechanisms stay, anecdotes point to this document, which keeps them).
+
+Verified after: transmitted tool descriptions contain no dataset words
+(checked via FunctionTool declarations), all rigs pass, prepare runs with
+guards at zero. Note for future audits: the workflow's limit-killed verify
+agents were mislabeled "refuted" -- treat a null verdict as UNVERIFIED.

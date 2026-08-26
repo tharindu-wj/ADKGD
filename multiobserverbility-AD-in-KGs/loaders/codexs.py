@@ -43,3 +43,11 @@ SCORES_MANIFEST = ROOT / "prepared" / "scores_manifest.json"
 
 #: where scripts/2_run_root.py records its runs
 RUNS = ROOT / "runs"
+
+#: hand-verified FALSE triples shipped beside the graph -- the contamination
+#: source AND the answer key. Read by scripts/1_prepare_graph.py alone;
+#: the firewall forbids tools/ and agents/ from ever naming these.
+NEGATIVE_SPLITS = [
+    DATA / "triples" / "codex-s" / "valid_negatives.txt",
+    DATA / "triples" / "codex-s" / "test_negatives.txt",
+]

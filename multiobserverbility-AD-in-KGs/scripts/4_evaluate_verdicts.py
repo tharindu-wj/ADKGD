@@ -17,8 +17,8 @@ Two halves, kept strictly apart:
               disagreement on a true fact has no answer key by construction
               -- it is reported with both reasons, never scored.
 
-A caution baked into the numbers: kind=real means CoDEx did not plant the
-triple, not that it is true -- the graph carries Wikidata's own mistakes.
+A caution baked into the numbers: kind=real means the preparation did not plant the
+triple, not that it is true -- the graph carries its source's own mistakes.
 A "false positive" here may be a discovery.
 """
 import json
@@ -92,8 +92,8 @@ for name in OBSERVER_NAMES:
             if truth.get(tuple(v["triple"])) == 1}
     if flagged:
         print(f"  anomaly precision vs planted: {len(hits)}/{len(flagged)} "
-              f"({len(hits) / len(flagged):.0%})  -- an unplanted flag may "
-              f"still be a real Wikidata error")
+              f"({len(hits) / len(flagged):.0%})  -- a flag on an unplanted triple may "
+              f"still be a real error inherited from the source data")
     missed = [v for v in judged.values()
               if truth.get(tuple(v["triple"])) == 1 and v["verdict"] != "anomaly"]
     print(f"  planted seen but not flagged: {len(missed)}")

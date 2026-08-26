@@ -40,7 +40,12 @@ for scanner in (one_way_links, too_many_values, odd_types,
     if len(found) > 6:
         print(f"    ... and {len(found) - 6} more")
 
-print("\nscoped run -- one_way_links on spouse only:")
-spouse_only = {ctx.find_relation("spouse")}
-for triple, note in one_way_links.find(spouse_only, ctx):
+# The scoped probe uses the loaded dataset's rarest relation, so this rig
+# works unchanged when loaders/active.py points somewhere else.
+import collections  # noqa: E402
+
+counts = collections.Counter(r for _, r, _ in ctx.triples)
+probe_id, _ = counts.most_common()[-1]
+print(f"\nscoped run -- one_way_links on '{ctx.relation_label(probe_id)}' only:")
+for triple, note in one_way_links.find({probe_id}, ctx)[:8]:
     print(f"    {ctx.triple_text(triple)}   [{note}]")

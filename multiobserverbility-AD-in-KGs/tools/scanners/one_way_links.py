@@ -21,8 +21,8 @@ def find(scope_ids, ctx):
     """All one-way edges on mostly-symmetric relations, INTERLEAVED.
 
     Round-robin across relations rather than exhausting one at a time.
-    Measured reason: diplomatic relation alone has 180 gaps, so sorting by
-    relation buried every spouse gap 18 pages deep -- a 30-candidate reading
+    Measured reason (see DESIGN.md): one bulky relation can hold hundreds of
+    gaps, burying every other relation's gaps pages deep -- a bounded reading
     budget never saw them. A page should be a cross-section of the scope,
     not the front of its largest queue.
     """

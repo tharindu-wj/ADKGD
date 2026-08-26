@@ -27,9 +27,9 @@ def declare_semantics(normal: str, anomalous: str, lets_pass: str,
     your persona. You have not seen the dataset and you do not need it for
     this: a judge's values exist before the case.
 
-    Speak in world terms (marriages, careers, places), never in terms of any
-    dataset's fields. Each norm must hold no matter which particular people
-    or places turn out to be involved.
+    Speak in world terms, never in terms of any
+    dataset's fields. Each norm must hold no matter which particular entities
+    turn out to be involved.
 
     Args:
         normal: what a normal, unremarkable fact of this domain looks like
