@@ -1,5 +1,30 @@
 """Scanner: entities whose kind does not fit the slot they sit in.
 
+This scanner never reads meanings -- it only counts TYPE LABELS. "Odd"
+means exactly one thing: the KIND of entity in this seat is not the kind
+that fills most of this seat.
+
+WORKED EXAMPLE (invented entities -- no dataset supplies these):
+
+    tails of "stored at":   95% carry the type "warehouse"
+    X --stored at-- lorry   <- "lorry" carries the type "vehicle"
+
+A vehicle in a warehouse-seat may be an error or an unusual-but-true
+record -- "odd", never "wrong"; the observer settles it. The signal earns
+its keep because a genuinely WRONG fact often puts the wrong KIND of thing
+in a slot: a disease sitting in a place-seat looks bad from the type
+labels alone, no world knowledge required.
+
+HOW IT COUNTS:
+    1. For each relation in scope, collect the entities in each slot
+       (heads and tails separately).
+    2. Count type labels across the slot. dominant = the commonest type,
+       covered = its share. Keep the slot only if covered is at least
+       DOMINANCE -- with no dominant kind there is nothing to clash with.
+    3. Point at each entity in that slot NOT carrying the dominant type --
+       ONCE per entity, however many edges it sits in, so one repeat
+       offender cannot flood a reading budget with copies of one question.
+
 If nearly all of a relation's heads share one type, a head without that
 type is what a typing norm is about. Dominance is measured from the data (no schema file exists),
 so this is "unusual for this graph", not "invalid by decree" -- the judge

@@ -1,5 +1,26 @@
 """Scanner: one-way records of relations that are mostly two-way.
 
+WORKED EXAMPLE (invented entities -- no dataset supplies these):
+
+    recorded:  A --linked with-- B    and    B --linked with-- A
+    recorded:  A --linked with-- C    but NOT C --linked with-- A
+
+If "linked with" appears reversed for 90% of its edges, the A--C edge is
+the odd one out: a bond of a mostly-two-way kind, written down on one side
+only. Whether that is a half-recorded TRUE fact or a fabricated edge (fakes
+are usually one-way -- nobody plants the reverse) is the observer's call,
+never this scanner's.
+
+HOW IT COUNTS:
+    1. Group the scope's triples by relation.
+    2. Put each relation's (head, tail) pairs in a set; an edge is ONE-WAY
+       when its (tail, head) mirror is absent from that set.
+    3. symmetry = 1 - one_way/total. Keep the relation only if symmetry is
+       at least MIN_SYMMETRY -- below that, one-way IS the relation's
+       normal shape, not a gap.
+    4. Emit every one-way edge, round-robin across relations, so one bulky
+       relation cannot bury the others' gaps pages deep.
+
 If 98% of a relation's triples appear in both directions, that relation is
 mutual by usage -- and the remaining one-way edges are exactly what a
 mutuality norm is about. Note that a planted FALSE fact on a mutual relation

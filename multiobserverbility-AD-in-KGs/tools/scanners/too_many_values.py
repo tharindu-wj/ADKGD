@@ -1,5 +1,26 @@
 """Scanner: entities with several values where one is the rule.
 
+WORKED EXAMPLE (invented entities -- no dataset supplies these):
+
+    M1 --serial number-- SN-100
+    M1 --serial number-- SN-733     <- two serials, on a relation where
+                                       96% of entities have exactly one
+
+BOTH edges are served, and the note lists both values, because the anomaly
+is the PAIR -- either edge alone looks perfectly normal. A duplicate can be
+a recording error, a planted extra value, or a legitimately double-valued
+case; the observer decides which. (Planting a fake value onto an entity
+that already has a real one CREATES this pattern, which is why this simple
+count often out-catches cleverer machinery.)
+
+HOW IT COUNTS:
+    1. Group the scope's triples by relation, then by head entity.
+    2. Count heads holding exactly one value. Keep the relation only if
+       that share is at least MOSTLY_SINGLE -- otherwise several values is
+       the relation's normal shape.
+    3. For every kept relation, emit each edge of every head holding two
+       or more values, noting all of that head's values.
+
 Some relations hold one value per entity in almost every record. Where a
 relation is single-valued for at least MOSTLY_SINGLE of its heads, heads
 carrying two or more values are what a cardinality norm is about. Each offending EDGE is a candidate (verdicts are

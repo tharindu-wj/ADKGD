@@ -1,5 +1,26 @@
 """Scanner: facts the trained link predictor finds unlikely.
 
+WORKED EXAMPLE (invented entities -- no dataset supplies these):
+
+    A --built by-- W    scores 0.97   the model saw many facts shaped
+                                      like this one
+    A --built by-- Q    scores 0.03   bottom 0.1% -- the model is surprised
+
+Surprise is a LEAD on falsehood, never a verdict. It cuts both ways:
+rare-but-TRUE facts also surprise the model and score low, while a planted
+FAKE the model memorised during training scores comfortably high. Both
+failure modes are real and measured (see DESIGN.md) -- which is exactly why
+a judge reads the shortlist instead of trusting the ranking.
+
+HOW IT COUNTS:
+    1. Load the scores 2_train_scorer.py wrote offline -- one per kg.tsv
+       row, same order -- after checking the manifest hash binds them to
+       THIS graph (stale scores refuse loudly).
+    2. Rank ALL rows ascending. The percentile in each note is against the
+       whole graph, so "bottom 0.4%" means the same thing whatever scope
+       the observer chose.
+    3. Emit the in-scope triples in that order, least plausible first.
+
 The one scanner that needs a model. scripts/2_train_scorer.py trains a KGE
 model on the (contaminated) graph and scores EVERY triple once, offline, into
 prepared/scores.npy -- so at run time this is an array lookup, no torch, no
