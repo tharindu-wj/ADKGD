@@ -15,7 +15,7 @@ predecessor's lesson: the menu lives behind one tool.
 import json
 
 from loaders.context import get_context
-from tools.observers import OBSERVER_NAMES, state_key
+from tools._observers import OBSERVER_NAMES, state_key
 from tools.scanners import (unlikely_facts, too_many_values,
                               one_way_links, odd_types)
 

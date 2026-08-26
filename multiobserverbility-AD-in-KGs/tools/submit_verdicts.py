@@ -11,7 +11,7 @@ ranking key.
 """
 import json
 
-from tools.observers import OBSERVER_NAMES, principal_of, state_key
+from tools._observers import OBSERVER_NAMES, principal_of, state_key
 
 VERDICTS = ("anomaly", "ok", "out_of_scope", "unsure")
 

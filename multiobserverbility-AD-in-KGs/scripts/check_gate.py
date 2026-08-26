@@ -167,7 +167,7 @@ check("progress says what remains", "unjudged" in ok or "done" in ok)
 # Second-opinion guards -- reuses the state above (agent_1 judged c1 'anomaly').
 print("\nsecond opinions")
 from tools.review_candidates import review_candidates  # noqa: E402
-from tools.observers import principal_of  # noqa: E402
+from tools._observers import principal_of  # noqa: E402
 
 check("principal resolution", principal_of("observer_1_reviewer") == "observer_1")
 check("a principal cannot fetch reviews",

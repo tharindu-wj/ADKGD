@@ -8,7 +8,7 @@ from the data; the data only tells the judge where its values are relevant.
 import json
 
 from loaders.context import get_context
-from tools.observers import OBSERVER_NAMES, state_key
+from tools._observers import OBSERVER_NAMES, state_key
 
 
 def select_scope(relations: list[str], why: str, tool_context) -> str:

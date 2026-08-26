@@ -66,7 +66,7 @@ from agents.agent import root_agent  # noqa: E402
 from agents.config import (SCANNER_KEYS, NORMS_KEYS, PERSONA_KEYS,  # noqa: E402
                            SCOPE_KEYS, SERVED_KEYS, VERDICT_KEYS)
 from agents.phase_gate import DATA_TOOL_NAMES  # noqa: E402
-from tools.observers import OBSERVER_NAMES  # noqa: E402
+from tools._observers import OBSERVER_NAMES  # noqa: E402
 
 APP, USER, SESSION = "multi_observer", "local", "run"
 

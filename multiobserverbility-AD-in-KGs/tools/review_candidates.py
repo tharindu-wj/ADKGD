@@ -14,7 +14,7 @@ isolation rule the whole tree is built on.
 import json
 
 from loaders.context import get_context
-from tools.observers import is_reviewer, other_agent, principal_of, state_key
+from tools._observers import is_reviewer, other_agent, principal_of, state_key
 
 #: how many second-opinion candidates an observer can be handed
 REVIEW_CAP = 15

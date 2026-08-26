@@ -3,7 +3,7 @@ from google.adk.models.google_llm import Gemini
 from google.genai import types
 
 from tools.assign_perspective import assign_perspective
-from tools.observers import OBSERVER_NAMES, state_key
+from tools._observers import OBSERVER_NAMES, state_key
 from tools.declare_semantics import declare_semantics
 from tools.describe_dataset import describe_dataset
 from tools.describe_relation import describe_relation

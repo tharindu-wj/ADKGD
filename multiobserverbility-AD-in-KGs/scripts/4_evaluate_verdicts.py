@@ -34,7 +34,7 @@ import collections  # noqa: E402
 from loaders import graph  # noqa: E402
 from loaders.active import DATASET  # noqa: E402
 from loaders.context import get_context  # noqa: E402
-from tools.observers import OBSERVER_NAMES  # noqa: E402
+from tools._observers import OBSERVER_NAMES  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--run", default=None, help="run file; default is newest")

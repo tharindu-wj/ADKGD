@@ -15,7 +15,7 @@ from agents import telemetry
 from agents.config import MODEL, OBSERVER_TOOLS, OBSERVER_TOOL_BUDGET
 from agents.phase_gate import keep_norms_blind
 from loaders.active import DATASET
-from tools.observers import OBSERVER_NAMES, state_key
+from tools._observers import OBSERVER_NAMES, state_key
 
 OBSERVER_INSTRUCTION = f"""\
 You are an observer. You will eventually judge facts for anomalies; today you

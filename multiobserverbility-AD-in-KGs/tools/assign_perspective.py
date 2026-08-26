@@ -14,7 +14,7 @@ asking for it is only a suggestion.
 """
 import json
 
-from tools.observers import OBSERVER_NAMES, essence, other_agent, state_key
+from tools._observers import OBSERVER_NAMES, essence, other_agent, state_key
 
 
 def assign_perspective(agent: str, persona: str, tool_context) -> str:

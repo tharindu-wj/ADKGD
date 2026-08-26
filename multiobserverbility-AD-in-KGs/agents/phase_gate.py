@@ -13,7 +13,7 @@ Returning a dict makes ADK skip the tool and hand the dict back as the
 response, so a blocked call reads as an ordinary tool error the agent can
 learn from. Returning None lets the call through.
 """
-from tools.observers import state_key
+from tools._observers import state_key
 
 #: every tool that reveals the dataset -- locked until norms exist
 DATA_TOOL_NAMES = {"describe_dataset", "describe_relation", "explain_term", "inspect_triples"}

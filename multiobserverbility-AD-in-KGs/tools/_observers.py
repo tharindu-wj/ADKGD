@@ -1,4 +1,12 @@
-"""Who the observers are, and where each one's artifacts live in state.
+"""NOT A TOOL -- the shared registry every tool leans on.
+
+No agent can call this module and it performs no action, which is why its
+name does not carry a verb: it answers "who are the observers, and where do
+their artifacts live", nothing more. The underscore is the convention that
+says so, the same way tools/scanners/ marks modules an agent cannot call
+directly.
+
+Who the observers are, and where each one's artifacts live in state.
 
 Three tools share these names (assign_perspective, declare_semantics,
 select_scope), so they live once, here. An observer's artifacts are keyed by

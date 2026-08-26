@@ -16,7 +16,7 @@ looking at the data is not a commitment.
 """
 import json
 
-from tools.observers import OBSERVER_NAMES, essence, other_agent, state_key
+from tools._observers import OBSERVER_NAMES, essence, other_agent, state_key
 
 
 def declare_semantics(normal: str, anomalous: str, lets_pass: str,

@@ -15,7 +15,7 @@ from google.adk.agents.llm_agent import Agent
 from agents import telemetry
 from agents.config import MODEL
 from loaders.active import DATASET
-from tools.observers import REVIEWER_SUFFIX, OBSERVER_NAMES, state_key
+from tools._observers import REVIEWER_SUFFIX, OBSERVER_NAMES, state_key
 from tools.review_candidates import review_candidates
 from tools.submit_verdicts import submit_verdicts
 
