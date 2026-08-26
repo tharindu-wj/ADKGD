@@ -10,7 +10,7 @@ Deterministic, no model, no labels.
 """
 import collections
 
-NAME = "reciprocity_gaps"
+NAME = "one_way_links"
 
 #: a relation must be at least this symmetric before its one-way edges count.
 #: Below this, one-way is the relation's normal shape, not a gap.

@@ -9,7 +9,7 @@ Deterministic, no model, no labels.
 """
 import collections
 
-NAME = "type_clashes"
+NAME = "odd_types"
 
 #: a type must cover this share of a slot before an outsider is a clash
 DOMINANCE = 0.8

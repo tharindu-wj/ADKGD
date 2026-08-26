@@ -13,7 +13,7 @@ Writes three things to prepared/:
     scores.npy       one score per kg.tsv row, SAME ORDER
     scores_manifest.json   binds the scores to this exact graph by hash
 
-The manifest is the stale-model guard: implausible_links refuses scores
+The manifest is the stale-model guard: unlikely_facts refuses scores
 computed for a different graph, because a stale file silently scores triples
 that no longer exist -- measured in the predecessor as a fake 100%-recall
 result that looked like a triumph.

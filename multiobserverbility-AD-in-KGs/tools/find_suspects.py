@@ -16,12 +16,12 @@ import json
 
 from loaders.context import get_context
 from tools.observers import OBSERVER_NAMES, state_key
-from tools.scanners import (implausible_links, multiplicity_outliers,
-                              reciprocity_gaps, type_clashes)
+from tools.scanners import (unlikely_facts, too_many_values,
+                              one_way_links, odd_types)
 
 #: the menu. Each scanner knows ONE kind of suspicious.
-SCANNERS = {g.NAME: g for g in (implausible_links, reciprocity_gaps,
-                                  multiplicity_outliers, type_clashes)}
+SCANNERS = {g.NAME: g for g in (unlikely_facts, one_way_links,
+                                  too_many_values, odd_types)}
 
 PAGE_SIZE = 10
 
@@ -34,13 +34,13 @@ def find_suspects(scanner: str, why: str = "", page: int = 1,
     """Get a page of suspicious facts from one assistant. Judge every one.
 
     Assistants and the kind of suspicious each one knows:
-      implausible_links      facts a link predictor trained on this graph
+      unlikely_facts      facts a link predictor trained on this graph
                              finds unlikely -- leads on FALSE facts
-      reciprocity_gaps       one-way records on relations that are almost
+      one_way_links       one-way records on relations that are almost
                              always two-way -- leads on MUTUALITY violations
-      multiplicity_outliers  entities with several values where one is the
+      too_many_values  entities with several values where one is the
                              rule -- leads on CARDINALITY violations
-      type_clashes           entities whose kind does not fit the slot --
+      odd_types           entities whose kind does not fit the slot --
                              leads on TYPE violations
 
     Pick assistants that match YOUR norms -- each surfaces only its own kind

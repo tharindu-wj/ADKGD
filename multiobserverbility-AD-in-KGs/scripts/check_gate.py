@@ -59,7 +59,7 @@ check("accepts a genuinely different persona", second.startswith("Recorded"))
 check("announces completion", "done" in second)
 
 print("\nphase 1: the data is locked until norms exist")
-for tool_name in ("describe_dataset", "describe_relation", "explain_term", "show_examples"):
+for tool_name in ("describe_dataset", "describe_relation", "explain_term", "inspect_triples"):
     blocked = keep_norms_blind(FakeTool(tool_name), {}, agent_1)
     check(f"{tool_name} blocked before norms", blocked is not None)
 check("declare_semantics itself is never blocked",
@@ -109,7 +109,7 @@ from tools.submit_verdicts import submit_verdicts  # noqa: E402
 
 fresh = FakeToolContext("observer_2", {})
 check("find_suspects refuses without a scope",
-      find_suspects("reciprocity_gaps", "w", 1, fresh).startswith("ERROR"))
+      find_suspects("one_way_links", "w", 1, fresh).startswith("ERROR"))
 check("submit_verdicts refuses before anything is served",
       submit_verdicts([{"id": "c1", "verdict": "ok", "why": "w"}],
                       fresh).startswith("ERROR"))
@@ -117,8 +117,8 @@ check("submit_verdicts refuses before anything is served",
 check("unknown assistant is a readable error",
       find_suspects("psychic", "w", 1, agent_1).startswith("ERROR"))
 check("first call to an assistant requires a why",
-      find_suspects("reciprocity_gaps", "", 1, agent_1).startswith("ERROR"))
-page = find_suspects("reciprocity_gaps",
+      find_suspects("one_way_links", "", 1, agent_1).startswith("ERROR"))
+page = find_suspects("one_way_links",
                        "my mutuality norm concerns two-way bonds", 1, agent_1)
 check("candidates served with stable ids", "c1." in page)
 check("serving is recorded", "served_1" in state and "c1" in state["served_1"])

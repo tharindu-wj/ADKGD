@@ -9,7 +9,7 @@ from tools.describe_dataset import describe_dataset
 from tools.describe_relation import describe_relation
 from tools.find_suspects import find_suspects
 from tools.explain_term import explain_term
-from tools.show_examples import show_examples
+from tools.inspect_triples import inspect_triples
 from tools.select_scope import select_scope
 from tools.submit_verdicts import submit_verdicts
 
@@ -30,7 +30,7 @@ ROOT_TOOL_BUDGET = 4         # two assign_perspective calls + retry room
 OBSERVER_TOOL_BUDGET = 16   # declare, look, select, then find and judge
 
 #: the dataset tools -- open in phase 2 only, the phase gate holds the door
-DATA_TOOLS = [describe_dataset, describe_relation, explain_term, show_examples]
+DATA_TOOLS = [describe_dataset, describe_relation, explain_term, inspect_triples]
 
 #: the root sees the dataset CARD in its instruction and nothing else --
 #: no data tools AT ALL, so its personas cannot be schema-shaped

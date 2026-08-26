@@ -10,7 +10,7 @@ A false fact tends to break the regularities the embedding learned, so a low
 score is a falsehood LEAD -- serving "false in the world" norms. It is only a
 lead: rare-but-true facts also score low, which is exactly why a judge reads
 the shortlist. Note the model cannot see direction on symmetric relations --
-that blindness is why reciprocity_gaps exists as a separate scanner.
+that blindness is why one_way_links exists as a separate scanner.
 
 The manifest check refuses a score file computed for a different graph: a
 stale file would silently score triples that no longer exist.
@@ -22,7 +22,7 @@ import numpy as np
 
 from loaders.active import DATASET
 
-NAME = "implausible_links"
+NAME = "unlikely_facts"
 
 
 def find(scope_ids, ctx):

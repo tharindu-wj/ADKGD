@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 from tools.describe_dataset import describe_dataset  # noqa: E402
 from tools.describe_relation import describe_relation  # noqa: E402
 from tools.explain_term import explain_term  # noqa: E402
-from tools.show_examples import show_examples  # noqa: E402
+from tools.inspect_triples import inspect_triples  # noqa: E402
 
 
 def banner(title):
@@ -45,15 +45,15 @@ print(explain_term("sibling"))
 banner("explain_term('Marie')  -- a near-miss, must suggest close names")
 print(explain_term("Marie"))
 
-banner("show_examples('spouse', 5)")
-print(show_examples("spouse", 5))
+banner("inspect_triples('spouse', 5)")
+print(inspect_triples("spouse", 5))
 
-banner("show_examples(n=5)  -- whole graph")
-print(show_examples(n=5))
+banner("inspect_triples(n=5)  -- whole graph")
+print(inspect_triples(n=5))
 
 banner("determinism -- same seed twice, then a different seed")
-a = show_examples("spouse", 3, seed=7)
-b = show_examples("spouse", 3, seed=7)
-c = show_examples("spouse", 3, seed=8)
+a = inspect_triples("spouse", 3, seed=7)
+b = inspect_triples("spouse", 3, seed=7)
+c = inspect_triples("spouse", 3, seed=8)
 print(f"  same seed identical: {a == b}")
 print(f"  different seed differs: {a != c}")

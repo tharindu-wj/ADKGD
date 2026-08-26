@@ -609,3 +609,13 @@ assistant" deliberately: three of the four produce no scores at all, only the
 KGE-backed one does, and calling them scorers would smuggle back the idea
 that the machinery ranks while the observer rubber-stamps. The observer is
 the only judge; scanners only point.
+
+**Plain-word scanner names (26 Aug).** The scanner menu and the inspection
+tool are model-facing vocabulary -- the observer TYPES these as arguments --
+so academic words became plain ones: reciprocity_gaps -> `one_way_links`,
+multiplicity_outliers -> `too_many_values`, type_clashes -> `odd_types`
+("odd", not "wrong": scanners point, they do not judge), implausible_links ->
+`unlikely_facts`, and show_examples -> `inspect_triples`, completing the
+inspection family (describe_dataset, describe_relation, explain_term,
+inspect_triples). Old run files keep historical scanner names in their
+records; the evaluator only displays them.

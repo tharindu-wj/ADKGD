@@ -16,7 +16,7 @@ learn from. Returning None lets the call through.
 from tools.observers import state_key
 
 #: every tool that reveals the dataset -- locked until norms exist
-DATA_TOOL_NAMES = {"describe_dataset", "describe_relation", "explain_term", "show_examples"}
+DATA_TOOL_NAMES = {"describe_dataset", "describe_relation", "explain_term", "inspect_triples"}
 
 
 def keep_norms_blind(tool, args, tool_context):

@@ -10,7 +10,7 @@ Deterministic, no model, no labels.
 """
 import collections
 
-NAME = "multiplicity_outliers"
+NAME = "too_many_values"
 
 #: a relation counts as "typically single-valued" when this share of its
 #: heads carry exactly one value
