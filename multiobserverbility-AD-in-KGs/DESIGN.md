@@ -650,3 +650,26 @@ Verified after: transmitted tool descriptions contain no dataset words
 (checked via FunctionTool declarations), all rigs pass, prepare runs with
 guards at zero. Note for future audits: the workflow's limit-killed verify
 agents were mislabeled "refuted" -- treat a null verdict as UNVERIFIED.
+
+### §15 closure — the two remaining audit items (27 Aug 2026)
+
+**Empirical switch test: PASSED.** A scratch copy of the machinery was
+pointed at a synthetic "machines and parts" dataset (9 entities, 3 relations,
+its own CARD, its own negatives file) by editing only loaders/active.py plus
+a new 25-line loader module. Results: 1_prepare ran with guards at zero;
+describe_dataset opened with the MACHINES card; all 42 gate checks passed
+with probes the rig derived itself (it found "linked with" as its gappy
+relation); the scanners ran deterministically (one_way_links caught the
+planted one-way edge); the ADK tree loaded; and a word-boundary sweep of
+every instruction and every transmitted tool description found ZERO
+people-domain words reaching any agent. The one caution for future sweeps:
+"persona" contains "person" -- use word boundaries.
+
+**Re-baseline run (027_ era, purged text): complete**, blindness verified,
+20 calls, 6 retries absorbed. Notable: this run caught 0 planted falsehoods
+-- the observers' scanner and scope choices simply never reached them
+(observer_1 flagged 12 structural one-ways, all unplanted; observer_2 passed
+18 of 20). Against the earlier run's 5/7 precision this is the variance the
+seed harness exists to measure: per-run objective performance swings on
+which observability points the root deals out. The disagreement set (10)
+remains rich either way.
