@@ -1,9 +1,9 @@
-"""Run the audit once: personas -> blind norms -> scopes -> verdicts.
+"""Run one observation: personas -> blind norms -> scopes -> verdicts.
 
-    python scripts/3_run_audit.py
-    python scripts/3_run_audit.py --quiet
+    python scripts/3_run_observers.py
+    python scripts/3_run_observers.py --quiet
 
-The trigger message is pinned to "Prepare the audit." on purpose: the dataset
+The trigger message is pinned to "Begin the observation." on purpose: the dataset
 CARD in the instructions must be the only channel through which any agent
 learns the domain, and a free-form message here could leak schema into
 phase 1.
@@ -68,7 +68,7 @@ from agents.config import (GENERATOR_KEYS, NORMS_KEYS, PERSONA_KEYS,  # noqa: E4
 from agents.phase_gate import DATA_TOOL_NAMES  # noqa: E402
 from tools.observers import OBSERVER_NAMES  # noqa: E402
 
-APP, USER, SESSION = "kg_audit", "local", "run"
+APP, USER, SESSION = "multi_observer", "local", "run"
 
 session_service = InMemorySessionService()
 asyncio.run(session_service.create_session(app_name=APP, user_id=USER,
@@ -86,7 +86,7 @@ tool_calls = []        # (agent, tool_name) in event order, for the proof
 for event in runner.run(
         user_id=USER, session_id=SESSION,
         new_message=types.Content(role="user", parts=[types.Part(
-            text="Prepare the audit.")])):
+            text="Begin the observation.")])):
     author = getattr(event, "author", "?")
     content = getattr(event, "content", None)
     for part in getattr(content, "parts", None) or []:
@@ -196,7 +196,7 @@ everything_placed = (all(personas) and all(norms) and all(scopes)
                      and all(served) and all(verdicts)
                      and all(len(j) == len(s) for j, s in zip(verdicts, served)))
 stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-out = DATASET.RUNS / f"run_{stamp}_audit.json"
+out = DATASET.RUNS / f"run_{stamp}_observers.json"
 out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(json.dumps({
     "dataset": DATASET.NAME,

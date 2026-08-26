@@ -32,7 +32,7 @@ def review_candidates(tool_context=None) -> str:
     caller = tool_context.agent_name
     if not is_reviewer(caller):
         return ("ERROR: this phase is not yours. Reviewing happens after "
-                "both audits are complete.")
+                "both observers have finished.")
 
     principal = principal_of(caller)
     counterpart = other_agent(principal)

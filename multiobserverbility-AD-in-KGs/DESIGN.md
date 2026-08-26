@@ -590,3 +590,12 @@ observability point is where an observer stands. Code names: observer_1/2,
 observer_1_reviewer for the second-opinion phase. Old run files store agent
 names positionally, so they still evaluate; their stored "agent" fields keep
 the historical name.
+
+**Naming, completed (26 Aug).** The whole vocabulary is now the observer
+family: the tree is `observation`, one run is an observation, scripts are
+`3_run_observers.py` / `4_evaluate_verdicts.py`, run files are
+`run_*_observers.json`, the ADK app is `multi_observer`, and the trigger
+message is "Begin the observation." `agents/reviewer_agents.py` holds the
+returning observers (second opinions). "Audit"/"auditor" survive only in
+historical sections of this document and in old run filenames, which the
+evaluator still accepts via --run.

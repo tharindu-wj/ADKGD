@@ -1,6 +1,6 @@
-"""What ADK loads: the audit tree.
+"""What ADK loads: the observation tree.
 
-    SequentialAgent "audit"            <- fixed order, never runtime-chosen
+    SequentialAgent "observation"            <- fixed order, never runtime-chosen
       |- Agent          "root"         <- personas from the card alone
       |- ParallelAgent  "observers"     <- concurrent, isolated branches
            |- Agent  "observer_1"     <- blind norms -> scope -> find -> judge
@@ -14,17 +14,17 @@ the other's keys.
 from google.adk.agents.parallel_agent import ParallelAgent
 from google.adk.agents.sequential_agent import SequentialAgent
 
-from agents.reviewers import reviewers
+from agents.reviewer_agents import reviewers
 from agents.root_agent import root
 from agents.observer_agents import observers as observer_list
 
 observers = ParallelAgent(
     name="observers",
-    description="Two observers auditing the same graph from their own norms.",
+    description="Two observers watching the same graph from their own norms.",
     sub_agents=observer_list,
 )
 
-#: the second-opinion phase runs only after BOTH audits are complete --
+#: the second-opinion phase runs only after BOTH observers have finished --
 #: SequentialAgent is what guarantees that ordering
 second_opinions = ParallelAgent(
     name="second_opinions",
@@ -34,7 +34,7 @@ second_opinions = ParallelAgent(
 
 #: the name ADK looks up in `agents.agent`
 root_agent = SequentialAgent(
-    name="audit",
+    name="observation",
     description=("Assign two personas from the card; each observer declares "
                  "blind norms, maps them to a scope, judges what its chosen "
                  "assistants surface, then judges the other's flags blind."),

@@ -20,7 +20,7 @@ from tools.review_candidates import review_candidates
 from tools.submit_verdicts import submit_verdicts
 
 REVIEWER_INSTRUCTION = f"""\
-You are an observer of a knowledge graph called {DATASET.NAME}, mid-audit.
+You are an observer of a knowledge graph called {DATASET.NAME}, mid-observation.
 Your norms are declared and fixed; you have already judged one set of
 candidates.
 

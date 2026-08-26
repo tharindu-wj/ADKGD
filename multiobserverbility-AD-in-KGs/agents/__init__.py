@@ -1,16 +1,19 @@
-"""The audit agents. Milestone 1: the root alone.
+"""The observer agents.
 
-    adk web .                     serves this package
-    adk run agents                runs it in the terminal
-    python scripts/2_run_root.py  runs it and records what it produced
+    adk web .                        serves this package
+    adk run agents                   runs it in the terminal
+    python scripts/3_run_observers.py    runs one observation and records it
 
 ADK imports `agents.agent` and reads `root_agent` out of it, so that module
 stays the front door. The rest is split by job:
 
-    config.py      the model, retry policy, budgets, tool lists
-    telemetry.py   did every model call actually happen?
-    root_agent.py  the root and its instruction
-    agent.py       what ADK loads
+    config.py           the model, retry policy, budgets, tool lists
+    telemetry.py        did every model call actually happen?
+    phase_gate.py       the data stays locked until an observer's norms exist
+    root_agent.py       assigns each observer its perspective, from the card
+    observer_agents.py  the two observers: blind norms -> scope -> find -> judge
+    reviewer_agents.py  the same observers returning for blind second opinions
+    agent.py            assembles the tree ADK loads
 
 THIS FILE EXISTS FOR ONE REASON. The submodules import `loaders` and `tools`,
 which live at the repo root rather than in this package. Python runs a

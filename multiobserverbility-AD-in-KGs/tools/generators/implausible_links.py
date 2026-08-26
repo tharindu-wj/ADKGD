@@ -2,7 +2,7 @@
 
 The one generator that needs a model. scripts/2_train_scorer.py trains a KGE
 model on the (contaminated) graph and scores EVERY triple once, offline, into
-prepared/scores.npy -- so at audit time this is an array lookup, no torch, no
+prepared/scores.npy -- so at run time this is an array lookup, no torch, no
 40-second model load inside an agent's turn, and the scores are identical
 across runs by construction.
 

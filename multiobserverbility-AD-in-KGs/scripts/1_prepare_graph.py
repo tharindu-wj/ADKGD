@@ -1,4 +1,4 @@
-"""Build the graph the audit runs on -- with known-false facts planted in it.
+"""Build the graph the observers work on -- with known-false facts planted in it.
 
     python scripts/1_prepare_graph.py
     python scripts/1_prepare_graph.py --negatives 500 --seed 42

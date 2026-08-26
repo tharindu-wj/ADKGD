@@ -1,7 +1,7 @@
-"""Score a recorded audit against the answer key. Nothing is judged here.
+"""Score a recorded observation run against the answer key. Nothing is judged here.
 
-    python scripts/4_evaluate_audit.py                    the newest run
-    python scripts/4_evaluate_audit.py --run runs/run_...json
+    python scripts/4_evaluate_verdicts.py                    the newest run
+    python scripts/4_evaluate_verdicts.py --run runs/run_...json
 
 THE ONLY READER OF ground_truth.tsv. The agents never saw it; this script
 checks what they decided, after every decision is frozen in the run file.
@@ -44,9 +44,9 @@ path = Path(args.run) if args.run else None
 if path and not path.is_absolute():
     path = ROOT / path
 if path is None:
-    found = sorted(DATASET.RUNS.glob("run_*_audit.json"))
+    found = sorted(DATASET.RUNS.glob("run_*_observers.json"))
     if not found:
-        raise SystemExit("no audit runs yet. Run scripts/3_run_audit.py first.")
+        raise SystemExit("no observation runs yet. Run scripts/3_run_observers.py first.")
     path = found[-1]
 
 run = json.loads(path.read_text(encoding="utf-8"))

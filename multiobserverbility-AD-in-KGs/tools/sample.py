@@ -19,7 +19,7 @@ def sample(relation: str = None, n: int = 5, seed: int = 0) -> str:
     relation before deciding anything about it.
 
     The triples that come back are ordinary ones, not suspicious ones -- this
-    shows the data's shape, and you cannot audit the graph through it.
+    shows the data's shape, and you cannot survey the whole graph through it.
 
     Args:
         relation: restrict to one relation. Omit for the whole graph.

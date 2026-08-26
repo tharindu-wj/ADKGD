@@ -4,7 +4,7 @@
     python scripts/2_train_scorer.py --model ComplEx --epochs 200
 
 Trains on the CONTAMINATED graph deliberately -- planted falsehoods included,
-as positives. That is what real auditing looks like (you have one dirty
+as positives. That is the real setting (you have one dirty
 graph, not a clean one), and training on clean data then scoring planted
 rows would measure memorisation, not implausibility.
 
