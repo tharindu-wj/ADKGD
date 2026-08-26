@@ -1,9 +1,9 @@
-"""Tool: the auditor's judgement, one verdict per served candidate.
+"""Tool: the observer's judgement, one verdict per served candidate.
 
-The only place an auditor's opinion becomes part of the run. Verdicts refer
+The only place an observer's opinion becomes part of the run. Verdicts refer
 to candidate ids from find_candidates, and an id never served to THIS caller
 is refused -- no judging facts you were not shown, no judging the other
-auditor's stack.
+observer's stack.
 
 Verdicts remove and explain; they never score, rank, or reorder. The kept
 order downstream is the generators' order -- an LLM output is never a
@@ -11,7 +11,7 @@ ranking key.
 """
 import json
 
-from tools.auditors import SUB_AGENT_NAMES, principal_of, state_key
+from tools.observers import OBSERVER_NAMES, principal_of, state_key
 
 VERDICTS = ("anomaly", "ok", "out_of_scope", "unsure")
 
@@ -33,11 +33,11 @@ def submit_verdicts(verdicts: list[dict], tool_context=None) -> str:
     Args:
         verdicts: a list of {"id", "verdict", "why"} objects.
     """
-    # A reviewer is the same auditor returning for the second-opinion phase;
+    # A reviewer is the same observer returning for the second-opinion phase;
     # its verdicts land in its principal's store like any others.
     agent = principal_of(tool_context.agent_name)
-    if agent not in SUB_AGENT_NAMES:
-        return f"ERROR: only an auditor judges; '{agent}' is not one."
+    if agent not in OBSERVER_NAMES:
+        return f"ERROR: only an observer judges; '{agent}' is not one."
 
     served = json.loads(tool_context.state.get(state_key("served", agent)) or "{}")
     if not served:

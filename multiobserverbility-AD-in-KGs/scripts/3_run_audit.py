@@ -9,7 +9,7 @@ learns the domain, and a free-form message here could leak schema into
 phase 1.
 
 Besides recording the run, this script PROVES the separation for it: from the
-trace, for each auditor, declare_semantics must come before that auditor's
+trace, for each observer, declare_semantics must come before that observer's
 first data-tool call. A run that violates the ordering is stamped invalid.
 """
 import json
@@ -66,7 +66,7 @@ from agents.agent import root_agent  # noqa: E402
 from agents.config import (GENERATOR_KEYS, NORMS_KEYS, PERSONA_KEYS,  # noqa: E402
                            SCOPE_KEYS, SERVED_KEYS, VERDICT_KEYS)
 from agents.phase_gate import DATA_TOOL_NAMES  # noqa: E402
-from tools.auditors import SUB_AGENT_NAMES  # noqa: E402
+from tools.observers import OBSERVER_NAMES  # noqa: E402
 
 APP, USER, SESSION = "kg_audit", "local", "run"
 
@@ -124,10 +124,10 @@ served = [parsed(k) or {} for k in SERVED_KEYS]
 verdicts = [parsed(k) or {} for k in VERDICT_KEYS]
 
 # ---- the blindness proof --------------------------------------------------
-# Per auditor: position of its norms declaration vs its first data-tool call.
+# Per observer: position of its norms declaration vs its first data-tool call.
 # Event order within one agent is preserved, so index comparison is the proof.
 blindness = []
-for name in SUB_AGENT_NAMES:
+for name in OBSERVER_NAMES:
     declared_at = first_data_at = None
     for position, (agent, tool_name) in enumerate(tool_calls):
         if agent != name:
@@ -167,7 +167,7 @@ from loaders.context import get_context  # noqa: E402
 context = get_context()
 
 for name, persona, norm, scope, gens, mine, judged in zip(
-        SUB_AGENT_NAMES, personas, norms, scopes, generators_used, served,
+        OBSERVER_NAMES, personas, norms, scopes, generators_used, served,
         verdicts):
     print(f"  {name}")
     print(f"    persona:   {(persona or {}).get('persona', 'MISSING')}")

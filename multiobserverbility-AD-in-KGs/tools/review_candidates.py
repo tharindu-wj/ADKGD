@@ -1,22 +1,22 @@
-"""Tool: the second-opinion fetch -- the other auditor's flags, blind.
+"""Tool: the second-opinion fetch -- the other observer's flags, blind.
 
-THE DISAGREEMENT MECHANISM. Two auditors reading different shortlists rarely
+THE DISAGREEMENT MECHANISM. Two observers reading different shortlists rarely
 judge the same fact, so same-fact disagreement -- the architecture's whole
-product -- would be left to luck. This serves each auditor the TRIPLES its
+product -- would be left to luck. This serves each observer the TRIPLES its
 counterpart flagged as anomalous, so every flag ends up with two independent
 verdicts.
 
 Blind on purpose: the candidates arrive with a neutral note and NO hint of
-the other auditor's verdict, reasoning, or even that another auditor exists.
+the other observer's verdict, reasoning, or even that another observer exists.
 A second opinion anchored on the first is one opinion twice -- the same
 isolation rule the whole tree is built on.
 """
 import json
 
 from loaders.context import get_context
-from tools.auditors import is_reviewer, other_agent, principal_of, state_key
+from tools.observers import is_reviewer, other_agent, principal_of, state_key
 
-#: how many second-opinion candidates an auditor can be handed
+#: how many second-opinion candidates an observer can be handed
 REVIEW_CAP = 15
 
 
@@ -53,7 +53,7 @@ def review_candidates(tool_context=None) -> str:
     added = 0
     for triple in flagged:
         if triple in already:
-            continue                    # this auditor has already judged it
+            continue                    # this observer has already judged it
         if added >= REVIEW_CAP:
             break
         review_id = f"r{added + 1}"

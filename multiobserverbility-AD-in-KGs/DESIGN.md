@@ -5,7 +5,9 @@ awaiting agreement, **OPEN** needs a decision before code.
 
 Target architecture: <https://claude.ai/code/artifact/3a99a9c7-9adf-4372-92c1-12ca1079ea49>
 (the technical redraw of the 26/02 whiteboard sketch — numbering ①–⑦ below
-matches it). Predecessor project: `../multiviewpoint-AD-in-KGs/`, whose
+matches it). Worked-run transcript — the same pipeline as the LLMs actually
+saw it, every prompt and output verbatim from run_20260826_082940:
+<https://claude.ai/code/artifact/69a217f6-6016-4f11-a861-ced5563edb0c>. Predecessor project: `../multiviewpoint-AD-in-KGs/`, whose
 mechanics we port, not its tools.
 
 ---
@@ -578,3 +580,13 @@ M4 exit questions: (1) same-fact dual verdicts -- YES, 8. (2) numbers --
 10/12 flags) though both caught the same 7 planted, BECAUSE second opinions
 propagate every flag to both judges. (3) disagreements read as viewpoints --
 yes: coherent norm-grounded reasons on both sides, n=1 run.
+
+**Naming (DECIDED 26 Aug).** The sub agents are OBSERVERS, not auditors.
+"Auditor" implied an external standard of correctness; the architecture's
+claim is the opposite -- anomaly is a property of the standpoint, and an
+observer sees according to who it is. It is also the thesis's own word: the
+project is multi-observerbility, the predecessor multi-observer, and an
+observability point is where an observer stands. Code names: observer_1/2,
+observer_1_reviewer for the second-opinion phase. Old run files store agent
+names positionally, so they still evaluate; their stored "agent" fields keep
+the historical name.

@@ -39,22 +39,22 @@ class FakeToolContext:
 
 
 state = {}
-agent_1 = FakeToolContext("sub_agent_1", state)
-agent_2 = FakeToolContext("sub_agent_2", state)
+agent_1 = FakeToolContext("observer_1", state)
+agent_2 = FakeToolContext("observer_2", state)
 root = FakeToolContext("root", state)
 
 print("\nassign_perspective (the root's guard rails)")
-check("rejects an unknown auditor",
+check("rejects an unknown observer",
       assign_perspective("agent_x", "p", root).startswith("ERROR"))
 check("rejects an empty persona",
-      assign_perspective("sub_agent_1", "  ", root).startswith("ERROR"))
-first = assign_perspective("sub_agent_1", "You judge by the rules.", root)
+      assign_perspective("observer_1", "  ", root).startswith("ERROR"))
+first = assign_perspective("observer_1", "You judge by the rules.", root)
 check("accepts the first persona", first.startswith("Recorded"))
 check("refuses rewriting a placed persona",
-      assign_perspective("sub_agent_1", "Changed my mind.", root).startswith("ERROR"))
+      assign_perspective("observer_1", "Changed my mind.", root).startswith("ERROR"))
 check("refuses an identical persona for the twin (punctuation-proof)",
-      assign_perspective("sub_agent_2", "You judge, by the rules!", root).startswith("ERROR"))
-second = assign_perspective("sub_agent_2", "You judge only facts.", root)
+      assign_perspective("observer_2", "You judge, by the rules!", root).startswith("ERROR"))
+second = assign_perspective("observer_2", "You judge only facts.", root)
 check("accepts a genuinely different persona", second.startswith("Recorded"))
 check("announces completion", "done" in second)
 
@@ -85,10 +85,10 @@ check("refuses identical norms for the twin",
           "a one-sided record of an inherently mutual bond -- even if the fact is real",
           "unusual arrangements that are honestly recorded!", agent_2).startswith("ERROR"))
 
-print("\nphase 2: the data opens for the declared auditor only")
-check("data open for sub_agent_1 after its norms",
+print("\nphase 2: the data opens for the declared observer only")
+check("data open for observer_1 after its norms",
       keep_norms_blind(FakeTool("describe_dataset"), {}, agent_1) is None)
-check("data still locked for sub_agent_2 (no norms yet)",
+check("data still locked for observer_2 (no norms yet)",
       keep_norms_blind(FakeTool("describe_dataset"), {}, agent_2) is not None)
 
 print("\nselecting scope")
@@ -107,7 +107,7 @@ print("\nphase 3: finding and judging")
 from tools.find_candidates import find_candidates  # noqa: E402
 from tools.submit_verdicts import submit_verdicts  # noqa: E402
 
-fresh = FakeToolContext("sub_agent_2", {})
+fresh = FakeToolContext("observer_2", {})
 check("find_candidates refuses without a scope",
       find_candidates("reciprocity_gaps", "w", 1, fresh).startswith("ERROR"))
 check("submit_verdicts refuses before anything is served",
@@ -140,15 +140,15 @@ check("progress says what remains", "unjudged" in ok or "done" in ok)
 # Second-opinion guards -- reuses the state above (agent_1 judged c1 'anomaly').
 print("\nsecond opinions")
 from tools.review_candidates import review_candidates  # noqa: E402
-from tools.auditors import principal_of  # noqa: E402
+from tools.observers import principal_of  # noqa: E402
 
-check("principal resolution", principal_of("sub_agent_1_reviewer") == "sub_agent_1")
+check("principal resolution", principal_of("observer_1_reviewer") == "observer_1")
 check("a principal cannot fetch reviews",
       review_candidates(agent_1).startswith("ERROR"))
-reviewer_2 = FakeToolContext("sub_agent_2_reviewer", state)
+reviewer_2 = FakeToolContext("observer_2_reviewer", state)
 page = review_candidates(reviewer_2)
 check("reviewer 2 receives agent 1's flag, blind",
-      "r1." in page and "anomaly" not in page and "auditor" not in page.split("review")[0])
+      "r1." in page and "anomaly" not in page and "observer" not in page.split("review")[0])
 check("review serving lands in the PRINCIPAL's store", "r1" in state["served_2"])
 ok = submit_verdicts([{"id": "r1", "verdict": "ok",
                        "why": "really married; a one-sided record is still a real fact"}],

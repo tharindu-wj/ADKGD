@@ -3,7 +3,7 @@ from google.adk.models.google_llm import Gemini
 from google.genai import types
 
 from tools.assign_perspective import assign_perspective
-from tools.auditors import SUB_AGENT_NAMES, state_key
+from tools.observers import OBSERVER_NAMES, state_key
 from tools.declare_semantics import declare_semantics
 from tools.describe_dataset import describe_dataset
 from tools.describe_relation import describe_relation
@@ -27,7 +27,7 @@ MODEL = Gemini(model=MODEL_NAME, retry_options=RETRY)
 
 #: tool-call budgets the prompts ask for. Nothing enforces them; guidance.
 ROOT_TOOL_BUDGET = 4         # two assign_perspective calls + retry room
-SUB_AGENT_TOOL_BUDGET = 16   # declare, look, select, then find and judge
+OBSERVER_TOOL_BUDGET = 16   # declare, look, select, then find and judge
 
 #: the dataset tools -- open in phase 2 only, the phase gate holds the door
 DATA_TOOLS = [describe_dataset, describe_relation, lookup, sample]
@@ -36,13 +36,13 @@ DATA_TOOLS = [describe_dataset, describe_relation, lookup, sample]
 #: no data tools AT ALL, so its personas cannot be schema-shaped
 ROOT_TOOLS = [assign_perspective]
 
-SUB_AGENT_TOOLS = ([declare_semantics, select_scope] + DATA_TOOLS
+OBSERVER_TOOLS = ([declare_semantics, select_scope] + DATA_TOOLS
                    + [find_candidates, submit_verdicts])
 
 #: session-state keys the run script reads after the tree finishes
-PERSONA_KEYS = tuple(state_key("persona", n) for n in SUB_AGENT_NAMES)
-NORMS_KEYS = tuple(state_key("norms", n) for n in SUB_AGENT_NAMES)
-SCOPE_KEYS = tuple(state_key("scope", n) for n in SUB_AGENT_NAMES)
-GENERATOR_KEYS = tuple(state_key("generators", n) for n in SUB_AGENT_NAMES)
-SERVED_KEYS = tuple(state_key("served", n) for n in SUB_AGENT_NAMES)
-VERDICT_KEYS = tuple(state_key("verdicts", n) for n in SUB_AGENT_NAMES)
+PERSONA_KEYS = tuple(state_key("persona", n) for n in OBSERVER_NAMES)
+NORMS_KEYS = tuple(state_key("norms", n) for n in OBSERVER_NAMES)
+SCOPE_KEYS = tuple(state_key("scope", n) for n in OBSERVER_NAMES)
+GENERATOR_KEYS = tuple(state_key("generators", n) for n in OBSERVER_NAMES)
+SERVED_KEYS = tuple(state_key("served", n) for n in OBSERVER_NAMES)
+VERDICT_KEYS = tuple(state_key("verdicts", n) for n in OBSERVER_NAMES)

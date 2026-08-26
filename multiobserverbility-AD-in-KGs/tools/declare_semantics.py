@@ -1,4 +1,4 @@
-"""Tool: an auditor states its norms -- BEFORE it has seen any data.
+"""Tool: an observer states its norms -- BEFORE it has seen any data.
 
 This is phase 1 of the separation the whole design turns on. Like a person:
 your sense of what a normal relationship looks like comes from who you are,
@@ -16,7 +16,7 @@ looking at the data is not a commitment.
 """
 import json
 
-from tools.auditors import SUB_AGENT_NAMES, essence, other_agent, state_key
+from tools.observers import OBSERVER_NAMES, essence, other_agent, state_key
 
 
 def declare_semantics(normal: str, anomalous: str, lets_pass: str,
@@ -40,8 +40,8 @@ def declare_semantics(normal: str, anomalous: str, lets_pass: str,
             flag. This is where your viewpoint shows -- one sentence.
     """
     agent = tool_context.agent_name
-    if agent not in SUB_AGENT_NAMES:
-        return f"ERROR: only an auditor declares norms; '{agent}' is not one."
+    if agent not in OBSERVER_NAMES:
+        return f"ERROR: only an observer declares norms; '{agent}' is not one."
 
     for field_name, value in (("normal", normal), ("anomalous", anomalous),
                               ("lets_pass", lets_pass)):
@@ -55,7 +55,7 @@ def declare_semantics(normal: str, anomalous: str, lets_pass: str,
                 "commitment made before seeing data -- they cannot be "
                 "rewritten after.")
 
-    # Two auditors reciting the same norms are one auditor twice.
+    # Two observers reciting the same norms are one observer twice.
     other_norms_raw = tool_context.state.get(
         state_key("norms", other_agent(agent)))
     if other_norms_raw:
@@ -66,7 +66,7 @@ def declare_semantics(normal: str, anomalous: str, lets_pass: str,
                   + essence(other_norms["lets_pass"]))
         if mine == theirs:
             return ("ERROR: these norms are identical to the other "
-                    "auditor's. Your persona is different -- your norms "
+                    "observer's. Your persona is different -- your norms "
                     "must be too.")
 
     tool_context.state[own_key] = json.dumps({

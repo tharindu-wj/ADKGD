@@ -1,12 +1,12 @@
 """Tool: ask one assistant for suspicious facts, a page at a time.
 
-THE ONLY WAY AN AUDITOR REACHES THE GRAPH'S CONTENTS AT SCALE. The
+THE ONLY WAY AN OBSERVER REACHES THE GRAPH'S CONTENTS AT SCALE. The
 generators sweep all 37,043 triples deterministically; this tool serves what
 they found -- restricted to the caller's scope, resolved to labels, in pages
-sized for reading, capped at the auditor's total reading budget.
+sized for reading, capped at the observer's total reading budget.
 
 Every served candidate gets a stable id (c1, c2, ...). submit_verdicts only
-accepts ids that were really served to the caller -- an auditor cannot pass
+accepts ids that were really served to the caller -- an observer cannot pass
 judgement on a fact it was never shown.
 
 Adding a generator to the menu does NOT change any agent's tool list -- the
@@ -15,7 +15,7 @@ predecessor's lesson: the menu lives behind one tool.
 import json
 
 from loaders.context import get_context
-from tools.auditors import SUB_AGENT_NAMES, state_key
+from tools.observers import OBSERVER_NAMES, state_key
 from tools.generators import (implausible_links, multiplicity_outliers,
                               reciprocity_gaps, type_clashes)
 
@@ -25,7 +25,7 @@ GENERATORS = {g.NAME: g for g in (implausible_links, reciprocity_gaps,
 
 PAGE_SIZE = 10
 
-#: an auditor's total reading budget, across all generators and pages
+#: an observer's total reading budget, across all generators and pages
 READING_BUDGET = 30
 
 
@@ -56,8 +56,8 @@ def find_candidates(generator: str, why: str = "", page: int = 1,
     """
     ctx = get_context()
     agent = tool_context.agent_name
-    if agent not in SUB_AGENT_NAMES:
-        return f"ERROR: only an auditor asks for candidates; '{agent}' is not one."
+    if agent not in OBSERVER_NAMES:
+        return f"ERROR: only an observer asks for candidates; '{agent}' is not one."
 
     scope_raw = tool_context.state.get(state_key("scope", agent))
     if not scope_raw:

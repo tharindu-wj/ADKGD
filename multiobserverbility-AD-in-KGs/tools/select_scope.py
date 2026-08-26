@@ -1,6 +1,6 @@
-"""Tool: an auditor maps its norms onto the dataset's actual vocabulary.
+"""Tool: an observer maps its norms onto the dataset's actual vocabulary.
 
-Phase 2 of the separation. The norms were written blind; now the auditor has
+Phase 2 of the separation. The norms were written blind; now the observer has
 looked at what this graph actually records, and says WHERE its norms apply --
 which relations are the ones its values are about. The values did not come
 from the data; the data only tells the judge where its values are relevant.
@@ -8,7 +8,7 @@ from the data; the data only tells the judge where its values are relevant.
 import json
 
 from loaders.context import get_context
-from tools.auditors import SUB_AGENT_NAMES, state_key
+from tools.observers import OBSERVER_NAMES, state_key
 
 
 def select_scope(relations: list[str], why: str, tool_context) -> str:
@@ -16,7 +16,7 @@ def select_scope(relations: list[str], why: str, tool_context) -> str:
 
     Your norms are fixed; this maps them onto this particular dataset's
     vocabulary. Pick every relation your norms have something to say about,
-    and no relation they are silent on. The other auditor may pick the same
+    and no relation they are silent on. The other observer may pick the same
     ones -- shared scope with different norms is the most valuable overlap
     there is.
 
@@ -26,8 +26,8 @@ def select_scope(relations: list[str], why: str, tool_context) -> str:
             which norm makes each of these relations yours.
     """
     agent = tool_context.agent_name
-    if agent not in SUB_AGENT_NAMES:
-        return f"ERROR: only an auditor selects a scope; '{agent}' is not one."
+    if agent not in OBSERVER_NAMES:
+        return f"ERROR: only an observer selects a scope; '{agent}' is not one."
 
     if not tool_context.state.get(state_key("norms", agent)):
         return ("ERROR: declare your norms first. A scope is where your "

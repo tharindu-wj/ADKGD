@@ -12,7 +12,7 @@ Two halves, kept strictly apart:
               is false by human verification, so calling it an anomaly is
               measurably right, whatever the caller's norms.
 
-  VIEWPOINT   the composed picture: what each auditor flagged, where they
+  VIEWPOINT   the composed picture: what each observer flagged, where they
               agree, and where the SAME fact got DIFFERENT verdicts. A norm
               disagreement on a true fact has no answer key by construction
               -- it is reported with both reasons, never scored.
@@ -34,7 +34,7 @@ import collections  # noqa: E402
 from loaders import graph  # noqa: E402
 from loaders.active import DATASET  # noqa: E402
 from loaders.context import get_context  # noqa: E402
-from tools.auditors import SUB_AGENT_NAMES  # noqa: E402
+from tools.observers import OBSERVER_NAMES  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--run", default=None, help="run file; default is newest")
@@ -71,10 +71,10 @@ print(f"run: {path.name}")
 print(f"{DATASET.NAME}: {len(truth)} triples, {planted_total} planted "
       f"verified-false")
 
-# ---- OBJECTIVE: each auditor vs the planted falsehoods --------------------
-verdicts_by_agent = dict(zip(SUB_AGENT_NAMES, run["verdicts"]))
+# ---- OBJECTIVE: each observer vs the planted falsehoods --------------------
+verdicts_by_agent = dict(zip(OBSERVER_NAMES, run["verdicts"]))
 
-for name in SUB_AGENT_NAMES:
+for name in OBSERVER_NAMES:
     judged = verdicts_by_agent[name]
     print("\n" + "=" * 70)
     print(f"  {name} -- OBJECTIVE")
@@ -105,14 +105,14 @@ for name in SUB_AGENT_NAMES:
 
 # ---- VIEWPOINT: composition and disagreement ------------------------------
 verdict_of = {}
-for name in SUB_AGENT_NAMES:
+for name in OBSERVER_NAMES:
     for v in verdicts_by_agent[name].values():
         verdict_of.setdefault(tuple(v["triple"]), {})[name] = v
 
 flags = {name: {t for t, by in verdict_of.items()
                 if by.get(name, {}).get("verdict") == "anomaly"}
-         for name in SUB_AGENT_NAMES}
-agent_1, agent_2 = SUB_AGENT_NAMES
+         for name in OBSERVER_NAMES}
+agent_1, agent_2 = OBSERVER_NAMES
 both_judged = [t for t, by in verdict_of.items() if len(by) == 2]
 
 print("\n" + "=" * 70)
@@ -138,6 +138,6 @@ print("   reported, never scored)")
 for triple, by in disagreements:
     planted = "planted-false" if truth.get(triple) == 1 else "unplanted"
     print(f"\n    {ctx.triple_text(triple)}   [{planted}]")
-    for name in SUB_AGENT_NAMES:
+    for name in OBSERVER_NAMES:
         v = by[name]
         print(f"      {name}: [{v['verdict']:>12}] {v['why'][:76]}")

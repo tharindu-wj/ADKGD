@@ -1,10 +1,10 @@
-"""The gate that keeps an auditor's norms blind.
+"""The gate that keeps an observer's norms blind.
 
 The general rule, carried from the predecessor and inverted here: a tool is
 blocked while it could contaminate a commitment not yet made. Norms must come
-from world knowledge and persona alone -- so until an auditor has declared
+from world knowledge and persona alone -- so until an observer has declared
 them, every tool that shows it DATA is refused. Once norms exist, the data
-opens and the auditor maps its (now fixed) norms onto the vocabulary.
+opens and the observer maps its (now fixed) norms onto the vocabulary.
 
 Enforced in code, not asked for in a prompt: a prompt that says "decide
 before looking" is a suggestion, and the ordering is the only thing that
@@ -13,14 +13,14 @@ Returning a dict makes ADK skip the tool and hand the dict back as the
 response, so a blocked call reads as an ordinary tool error the agent can
 learn from. Returning None lets the call through.
 """
-from tools.auditors import state_key
+from tools.observers import state_key
 
 #: every tool that reveals the dataset -- locked until norms exist
 DATA_TOOL_NAMES = {"describe_dataset", "describe_relation", "lookup", "sample"}
 
 
 def keep_norms_blind(tool, args, tool_context):
-    """before_tool_callback on each auditor."""
+    """before_tool_callback on each observer."""
     if tool.name not in DATA_TOOL_NAMES:
         return None                       # declaring and selecting police themselves
 
