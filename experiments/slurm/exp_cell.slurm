@@ -3,8 +3,10 @@
 # The single matrix-cell launcher (former exp1-4 named cells map to
 # NEG_SOURCE/TEST_SOURCE pairs below; those scripts were removed).
 #
-#   NEG_SOURCE  in {random, gan}   -- training negatives
-#   TEST_SOURCE in {random, gan}   -- injected eval anomalies
+#   NEG_SOURCE  in {random, gan}          -- training negatives
+#   TEST_SOURCE in {random, gan, codex}   -- injected eval anomalies
+#     ('codex' = CoDEx's human-verified false triples; needs a dataset that
+#      ships {valid,test}_negatives.txt, and needs NO GAN_CKPT.)
 #
 # "negative" and "anomaly" are the detector's names for what KGSAGE emits as a
 # CORRUPTION -- same object, different side of the seam. These env var names,
@@ -17,8 +19,11 @@
 #   NEG_SOURCE=gan    TEST_SOURCE=gan    SEED=0 GAN_CKPT=... sbatch ...                    # proposed
 #   NEG_SOURCE=gan    TEST_SOURCE=random SEED=0 GAN_CKPT=... sbatch ...                    # cross-check
 #
-# Env knobs: DATASET (FB15K-237|WN18RR), SEED, MAX_EPOCH, ANOMALY_RATIO,
-#   GAN_CKPT (required when a source is 'gan'; use the locked generator_<ds>.pt).
+# Env knobs: DATASET (FB15K-237|WN18RR|codex-s), SEED, MAX_EPOCH, ANOMALY_RATIO,
+#   GAN_CKPT (required when a source is 'gan'; use the locked generator_<ds>.pt),
+#   ANOMALY_FILE (freeze/share the eval anomaly set -- first run writes it, later
+#     runs load it verbatim, so both train-negative variants and KGMVAD score the
+#     SAME anomalies. One file per test-anomaly source.).
 # Results: RESULTS table + AUC/AUPRC in this job's .out.txt, plus a per-run
 #   JSON under checkpoints/<dataset>/ for experiments/aggregate_results.py.
 
@@ -44,6 +49,7 @@ ANOMALY_RATIO="${ANOMALY_RATIO:-0.05}"
 NEG_SOURCE="${NEG_SOURCE:-random}"
 TEST_SOURCE="${TEST_SOURCE:-random}"
 GAN_CKPT="${GAN_CKPT:-}"
+ANOMALY_FILE="${ANOMALY_FILE:-}"
 
 echo "Job $SLURM_JOB_ID on $(hostname) starting $(date)"
 echo "Cell: dataset=$DATASET  neg=$NEG_SOURCE  test=$TEST_SOURCE  seed=$SEED  max_epoch=$MAX_EPOCH  ratio=$ANOMALY_RATIO"
@@ -78,6 +84,12 @@ if [[ "$NEG_SOURCE" == "gan" || "$TEST_SOURCE" == "gan" ]]; then
         echo "  Then resubmit with GAN_CKPT=artifacts/kgsage/run_${DATASET}_s${SEED}.pt" >&2
         exit 1; }
     CMD+=( --gan_path "$GAN_CKPT" )
+fi
+
+# Explicit if, not `[[ ]] && ...`: under `set -e` a false test on the last
+# command of a && list would abort the job.
+if [[ -n "$ANOMALY_FILE" ]]; then
+    CMD+=( --anomaly_file "$ANOMALY_FILE" )
 fi
 
 echo "Command: ${CMD[*]}"
