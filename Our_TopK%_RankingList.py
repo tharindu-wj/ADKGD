@@ -96,10 +96,19 @@ def main():
                         help="source of TRAINING negatives (set C); default 'random' = baseline behaviour")
     # Source of the INJECTED eval anomalies (Reader.inject_anomaly). Independent of
     # --neg_source, so the experiment matrix (train x test) is a pair of flags.
-    parser.add_argument('--test_anomaly_source', default='random', choices=['random', 'gan'],
-                        help="source of the INJECTED eval anomalies; 'random' = baseline")
+    parser.add_argument('--test_anomaly_source', default='random', choices=['random', 'gan', 'codex'],
+                        help="source of the INJECTED eval anomalies; 'random' = baseline; "
+                             "'codex' = CoDEx's human-verified false triples, read from "
+                             "{valid,test}_negatives.txt in the dataset folder (real errors, "
+                             "not generated -- pool size caps --anomaly_ratio)")
     parser.add_argument('--gan_path', default='artifacts/kgsage/generator_fb15k237.pt',
                         help="path to the KGSAGE GAN .pt checkpoint (used when EITHER --neg_source or --test_anomaly_source is 'gan'; missing file is a hard error)")
+    parser.add_argument('--anomaly_file', default=None,
+                        help="freeze the injected eval anomaly set to this path. If the file "
+                             "exists it is loaded verbatim and --test_anomaly_source is not "
+                             "consulted; otherwise the set is generated and written there. "
+                             "Stored as surface names so another detector (KGMVAD) can score "
+                             "the identical anomalies.")
     args = parser.parse_args()
 
     # data_name = args.dataset

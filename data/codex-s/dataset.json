@@ -1,0 +1,20 @@
+{
+  "name": "codex-s",
+  "title": "CoDEx-S",
+  "card": "An encyclopedic knowledge graph about notable real people, organisations and places.",
+  "card_note": "The ONLY thing a detector's phase 1 may know about this dataset. Subjects, never attributes: naming 'family ties' or 'citizenship' here would whisper the schema into norms that must not have seen it. Recorded verbatim in every run record, so each run proves exactly what its phase 1 could see.",
+  "triple_splits": [
+    "triples/train.txt",
+    "triples/valid.txt",
+    "triples/test.txt"
+  ],
+  "negative_splits": [
+    "triples/valid_negatives.txt",
+    "triples/test_negatives.txt"
+  ],
+  "negatives_note": "Hand-verified FALSE triples shipped with CoDEx. The injector's 'codex' source reads these; no other component may.",
+  "entity_definitions": "entities/en/entities.json",
+  "relation_definitions": "relations/en/relations.json",
+  "entity_types": "types/entity2types.json",
+  "type_definitions": "types/en/types.json"
+}

@@ -135,11 +135,18 @@ def main() -> int:
     ap.add_argument("--neg_source", default="random", choices=["random", "gan"],
                     help="source of the ADKGD TRAINING negatives: 'random' = ADKGD's own uniform "
                          "corruption (baseline, default), 'gan' = KGSAGE corruptions")
-    ap.add_argument("--test_anomaly_source", default="random", choices=["random", "gan"],
-                    help="source of the INJECTED eval anomalies; 'random' = baseline (default). "
+    ap.add_argument("--test_anomaly_source", default="random", choices=["random", "gan", "codex"],
+                    help="source of the INJECTED eval anomalies; 'random' = baseline (default), "
+                         "'codex' = CoDEx's human-verified false triples (real errors, not "
+                         "generated; needs a dataset that ships them). "
                          "The (train-neg x test-anom) pair names the matrix cell.")
     ap.add_argument("--gan_path", default="artifacts/kgsage/generator_fb15k237.pt",
                     help="path to the trained KGSAGE generator checkpoint (used when EITHER axis is 'gan'; missing file is a hard error)")
+    ap.add_argument("--anomaly_file", default=None,
+                    help="freeze the injected eval anomaly set to this path: first run writes "
+                         "it, later runs load it verbatim. Use one file per test-anomaly source "
+                         "so both train-negative variants -- and KGMVAD -- score the same "
+                         "anomalies. Forwarded to both the train and the test subprocess.")
     args = ap.parse_args()
 
     # Cell hygiene: encode the matrix cell in the model label so checkpoint and
@@ -186,6 +193,9 @@ def main() -> int:
                 "--test_anomaly_source", args.test_anomaly_source]
     if args.neg_source == "gan" or args.test_anomaly_source == "gan":
         gan_args += ["--gan_path", args.gan_path]
+    # Both subprocesses build their own Reader, so both need the frozen set.
+    if args.anomaly_file:
+        gan_args += ["--anomaly_file", args.anomaly_file]
 
     # Train -- cwd=project_root so ADKGD's "./data/..." / "./checkpoints/..." resolve correctly.
     _run([
