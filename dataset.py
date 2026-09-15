@@ -376,6 +376,60 @@ class Reader:
     def toarray(self, x):
         return torch.from_numpy(np.array(list(x)).astype(np.int32))
 
+    def _codex_negatives(self):
+        """CoDEx's human-annotated false triples, as (h_id, r_id, t_id).
+
+        The only anomaly source here that we do not generate: these are
+        plausible completions a human marked false, so they carry no
+        corruption-process fingerprint for the detector to latch onto. The
+        pool is a fixed size shipped with the dataset (CoDEx-S: 3,655 over
+        36,543 triples), which caps anomaly_ratio at ~10%.
+        """
+        pool = []
+        for fname in ('valid_negatives.txt', 'test_negatives.txt'):
+            fpath = os.path.join(self.path, fname)
+            if not os.path.isfile(fpath):
+                raise FileNotFoundError(
+                    'test_anomaly_source=codex needs %s\n'
+                    'Only CoDEx ships human-verified negatives; for other '
+                    "datasets use --test_anomaly_source random or gan." % fpath)
+            with open(fpath, 'r') as f:
+                for line in f:
+                    head, rel, tail = line.strip().split('\t')
+                    # Direct indexing: CoDEx negatives reuse the positive
+                    # vocabulary, so a KeyError here means the dataset folder
+                    # is internally inconsistent and should fail loudly.
+                    pool.append((self.ent2id[head], self.rel2id[rel],
+                                 self.ent2id[tail]))
+        random.shuffle(pool)
+        return pool
+
+    def _load_anomalies(self, path):
+        """Read a frozen anomaly set (surface names) back into id triples."""
+        out = []
+        with open(path, 'r') as f:
+            for line in f:
+                head, rel, tail = line.strip().split('\t')
+                out.append((self.ent2id[head], self.rel2id[rel],
+                            self.ent2id[tail]))
+        return out
+
+    def _save_anomalies(self, path, anomalies):
+        """Freeze the realised anomaly set to disk as SURFACE NAMES.
+
+        Entity ids are assigned by read order and mean nothing outside this
+        process, so a shared set has to travel as names for another detector
+        (KGMVAD) to score the identical triples.
+        """
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, 'w') as f:
+            for h, r, t in anomalies:
+                f.write('%s\t%s\t%s\n'
+                        % (self.id2ent[h], self.id2rel[r], self.id2ent[t]))
+        print('[test-anomaly] froze %d anomalies to %s' % (len(anomalies), path))
+
     def inject_anomaly(self, args):
         print("Inject anomalies!")
         original_triples = self.triples
@@ -399,8 +453,23 @@ class Reader:
         #               corruptions (differ from their source) so no real triple is
         #               mislabelled as an anomaly -- the single-shot generator keeps
         #               the original triple on a self-loop/collision (used_original).
+        #   'codex'  -> CoDEx's human-verified false triples. Not generated, so no
+        #               oversample/filter is needed: they are disjoint from the
+        #               positives by construction. Fixed pool, so the realised count
+        #               can fall short of the request (reconciled below).
+        #
+        # --anomaly_file freezes the realised set: the first run writes it, and
+        # every later run loads it verbatim. That is what makes a column of the
+        # matrix comparable -- both ADKGD train-negative variants and KGMVAD
+        # score the SAME anomalies instead of each drawing their own.
         test_source = getattr(args, 'test_anomaly_source', 'random')
-        if test_source == 'gan':
+        anomaly_file = getattr(args, 'anomaly_file', None)
+        frozen = bool(anomaly_file) and os.path.isfile(anomaly_file)
+        if frozen:
+            anomalies = self._load_anomalies(anomaly_file)
+            print('[test-anomaly %s] loaded %d frozen anomalies from %s'
+                  % (test_source, len(anomalies), anomaly_file))
+        elif test_source == 'gan':
             over = min(self.num_original_triples, int(self.num_anomalies * 1.5) + 1)
             idx = random.sample(range(0, self.num_original_triples), over)
             selected_triples = [original_triples[i] for i in idx]
@@ -413,6 +482,17 @@ class Reader:
                 print('[test-anomaly %s] only %d/%d genuine anomalies '
                       '(generator collided on the rest)'
                       % (test_source, len(anomalies), self.num_anomalies))
+        elif test_source == 'codex':
+            pool = self._codex_negatives()
+            anomalies = pool[:self.num_anomalies]
+            print('[test-anomaly codex] %d verified negatives available, using %d'
+                  % (len(pool), len(anomalies)))
+            if len(anomalies) < self.num_anomalies:
+                print('[test-anomaly codex] pool exhausted: %d/%d requested -- '
+                      'lower --anomaly_ratio to stay within the shipped pool '
+                      '(max ratio = %.4f)'
+                      % (len(anomalies), self.num_anomalies,
+                         len(pool) / float(self.num_original_triples)))
         else:
             # 随机选择一半的异常数量对应的索引，从原始三元组中生成第一部分异常数据
             idx = random.sample(range(0, self.num_original_triples - 1), self.num_anomalies // 2)
@@ -430,6 +510,10 @@ class Reader:
                   'num_anomalies updated' % (len(anomalies), self.num_anomalies))
         self.num_anomalies = len(anomalies)
         args.num_anomaly_num = self.num_anomalies
+
+        # Written AFTER reconciliation so the file holds exactly what was used.
+        if anomaly_file and not frozen:
+            self._save_anomalies(anomaly_file, anomalies)
 
         triple_label = [(original_triples[i], 0) for i in range(len(original_triples))]
         anomaly_label = [(anomalies[i], 1) for i in range(len(anomalies))]
